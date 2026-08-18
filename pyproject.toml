@@ -1,0 +1,70 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "converter"
+version = "2.0.0"
+description = "Batch media conversion driven by the ffmpeg command-line program"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [{ name = "Bendix Hemsen" }]
+keywords = ["ffmpeg", "convert", "mkv", "mp4", "opus", "wav"]
+classifiers = [
+  "Environment :: Console",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Multimedia :: Video :: Conversion",
+]
+# 4.66.3 is the security floor (CVE-2024-34062).
+dependencies = ["tqdm>=4.66.3"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+
+[project.scripts]
+converter = "converter.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/bhemsen/converter"
+
+[tool.hatch.build.targets.wheel]
+packages = ["converter"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+# Selected explicitly rather than relying on Ruff's defaults, which changed
+# substantially in 0.16 -- this way an upgrade cannot silently alter the rule set.
+select = [
+  "E",   # pycodestyle errors
+  "F",   # pyflakes
+  "W",   # pycodestyle warnings
+  "I",   # import sorting
+  "UP",  # pyupgrade
+  "B",   # bugbear
+  "SIM", # simplification
+  "C4",  # comprehensions
+  "RET", # return statements
+  "PTH", # prefer pathlib
+  "ARG", # unused arguments
+  "RUF", # ruff-specific
+  "S",   # bandit security rules
+]
+
+[tool.ruff.lint.per-file-ignores]
+# `assert` is the point of a test, and pytest fixtures are declared as arguments
+# even when they are only there for their side effects.
+"tests/*" = ["S101", "ARG"]
+# One test deliberately compares against the buggy os.path.join() behaviour.
+"tests/test_paths.py" = ["PTH118"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+# So the tests import the package straight from the working tree, installed or not.
+pythonpath = ["."]
+addopts = "-ra"
