@@ -1,4 +1,12 @@
-tqdm==4.62.3
-ffmpeg==1.4.0
-ffmpeg-python==0.2.0
-pydub==0.25.1
+# Runtime dependencies.
+#
+# ffmpeg itself is an external program, not a Python package -- see the README.
+# Removed on purpose:
+#   ffmpeg==1.4.0        unrelated third-party stub, unused, and it installs into
+#                        the same site-packages/ffmpeg/ directory as ffmpeg-python
+#   ffmpeg-python==0.2.0 no release since 2019; replaced by subprocess + argv list
+#   pydub==0.25.1        abandoned, and imports the audioop module that PEP 594
+#                        removed in Python 3.13
+#
+# 4.66.3 is the security floor (CVE-2024-34062); pip resolves to the newest.
+tqdm>=4.66.3
