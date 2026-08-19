@@ -13,7 +13,8 @@ Two deliberate departures from the code this replaces:
 import enum
 import os
 import sys
-from collections.abc import Iterable, Sequence
+import threading
+from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -109,6 +110,40 @@ def convert_one(job: Job, task: Task, tools: Tools, *, overwrite: bool) -> Resul
         return Result(task, Outcome.FAILED, error=f"{type(exc).__name__}: {exc}")
 
 
+def _interruptible(
+    job: Job,
+    tools: Tools,
+    *,
+    overwrite: bool,
+    interrupted: threading.Event,
+) -> Callable[[Task], Result]:
+    """Wrap :func:`convert_one` so a worker stops itself after any Ctrl+C.
+
+    ``cancel_futures`` on the pool is not enough on its own: every file is
+    submitted up front, and the interrupt only reaches the main thread when it
+    consumes the future carrying it -- by which time a fast worker has already
+    pulled the rest of the queue and converted it.  A worker that checks a shared
+    flag before starting does not depend on that timing, which is why the same
+    batch used to abort on one platform and drain to the end on another.
+    """
+
+    def work(task: Task) -> Result:
+        if interrupted.is_set():
+            # Raise rather than fabricate a Result: this file was never touched,
+            # and SKIPPED already means "the output was already there", which is
+            # a different statement.  KeyboardInterrupt specifically, so that
+            # whichever future the main thread happens to consume first still
+            # aborts the batch for the right reason.
+            raise KeyboardInterrupt
+        try:
+            return convert_one(job, task, tools, overwrite=overwrite)
+        except KeyboardInterrupt:
+            interrupted.set()
+            raise
+
+    return work
+
+
 def run_batch(
     job: Job,
     tasks: Sequence[Task],
@@ -129,15 +164,15 @@ def run_batch(
         ensure_directory(task.dst.parent)
 
     results: list[Result] = []
+    work = _interruptible(job, tools, overwrite=overwrite, interrupted=threading.Event())
+
     # Not ThreadPoolExecutor's own context manager: its __exit__ shuts down with
     # wait=True and no cancellation, so after Ctrl+C every queued file would
     # still be converted before the interrupt was ever noticed.
     pool = ThreadPoolExecutor(max_workers=workers)
     try:
         with tqdm(total=len(tasks), desc=job.name, unit="file", disable=not progress) as bar:
-            futures = [
-                pool.submit(convert_one, job, task, tools, overwrite=overwrite) for task in tasks
-            ]
+            futures = [pool.submit(work, task) for task in tasks]
             try:
                 # as_completed, so the bar advances when a file is actually done
                 # rather than in submission order.

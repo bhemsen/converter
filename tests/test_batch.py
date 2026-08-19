@@ -229,7 +229,15 @@ class TestRunBatch:
     def test_interrupt_drops_work_that_has_not_started(self, tmp_path, monkeypatch):
         """Ctrl+C used to be noticed only after every queued file had converted:
         ThreadPoolExecutor's context manager shuts down with wait=True and no
-        cancellation, so the whole batch drained before the interrupt surfaced."""
+        cancellation, so the whole batch drained before the interrupt surfaced.
+
+        Asserted as an exact count, not as "fewer than all".  Cancelling the
+        futures alone left this timing-dependent -- the single worker can drain
+        the queue before the main thread ever consumes the future carrying the
+        interrupt -- so the loose bound passed on Windows while the same batch
+        ran to completion on Linux.  With one worker and the interrupt on the
+        third file, exactly three conversions may ever start.
+        """
         tasks = [make_task(tmp_path, f"clip{i:02d}") for i in range(12)]
         calls: list[list[str]] = []
 
@@ -244,7 +252,7 @@ class TestRunBatch:
         with pytest.raises(KeyboardInterrupt):
             run_batch(MKV_TO_MP4, tasks, TOOLS, jobs=1, progress=False)
 
-        assert len(calls) < len(tasks)
+        assert len(calls) == 3
 
 
 class TestSummarise:
