@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "converter"
-version = "2.0.0"
+dynamic = ["version"]
 description = "Batch media conversion driven by the ffmpeg command-line program"
 readme = "README.md"
 license = "MIT"
@@ -28,6 +28,10 @@ converter = "converter.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/bhemsen/converter"
+
+[tool.hatch.version]
+# One source for the version: the package itself, so a release bumps one line.
+path = "converter/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["converter"]
