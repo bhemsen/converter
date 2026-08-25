@@ -29,7 +29,8 @@ merged.** Everything this phase builds on — the `PROFILES` registry, `name` an
       accept. `README.md` is in the list because `docs/roadmap.md` gives each
       coverage phase its own format list to maintain.
 - [ ] Every new profile has a test pinning the exact argv it builds, for a
-      copyable and for a non-copyable input.
+      copyable and for a non-copyable input — with the `opus` carve-out
+      Verification records, if the gate has it always encode.
 - [ ] Every degradation branch a new profile introduces has a test asserting the
       note it emits.
 - [ ] The curated source-suffix set covers the audio *and* video containers people
@@ -46,7 +47,9 @@ merged.** Everything this phase builds on — the `PROFILES` registry, `name` an
   (`.aac`, `.m4b`, `.wma`, `.aiff`, `.aif`, `.ape`, `.wv`, `.caf`) and the video
   containers a "rip the audio" run needs (`.mp4`, `.mov`, `.avi`, `.webm`,
   `.m4v`, `.wmv`, `.flv`), on top of what phase 2's set already holds.
-- `README.md`'s format list.
+- `README.md`'s format list, including a line saying that `m4a`, `ogg` and `opus`
+  carry every audio stream the source has and that most players offer only the
+  first -- nothing is dropped, but it is not obvious either.
 - The tests those profiles require, per the constitution's two gates.
 
 ### Out of scope
@@ -68,7 +71,8 @@ merged.** Everything this phase builds on — the `PROFILES` registry, `name` an
   `docs/architecture.md`): `converter/profiles.py` stays a leaf, and this phase's
   diff proves the rule rather than asserting it.
 - `ffprobe` never runs on the happy path. This is what bounds how precise a note
-  can be for a conversion the cheap attempt completes — see the open decision.
+  can be for a conversion the cheap attempt completes — see the two open
+  decisions.
 - No second external dependency, and no second backend.
 - Never report success for a conversion that silently dropped something.
 - The test suite keeps passing with no ffmpeg installed.
@@ -177,13 +181,27 @@ are not silently lost; seeding them as roadmap phases is `/loopkit:roadmap`'s jo
 the cheap attempt completes has **no stream list** — the engine cannot name what
 it dropped, because it does not know.
 
-**This affects three targets, not six.** `ogg` and `opus` map video precisely so
-that a cover-art source fails into the ladder, which then names the picture
-stream and its codec properly; `wav` rejects video the same way. That leaves
-`mp3`, `m4a` and `flac` — the muxers that *accept* a picture — where the cheap
-attempt maps audio only, succeeds, and the artwork is gone with nothing to build
-a note from. (If the flac measurement above comes back showing it rejects real
-video, this narrows again, to `mp3` and `m4a`.)
+**This affects five of the seven targets, and six if `opus` copies.** A target is
+affected whenever its cheap attempt maps audio only: it then succeeds, the
+artwork is gone, and there is nothing to build a note from. That is `mp3`, `m4a`,
+`flac`, `ogg` — and `wav`, whose cheap attempt
+`flags("-map 0:a:0 -c:a pcm_s16le")` has mapped no video since phase 1, so the
+wav muxer's rejection of video never fires. Measured: an mp3-plus-`attached_pic`
+source through it exits 0 with a lone PCM stream. This spec is the first place
+that hole is written down.
+
+`opus` is the exception, and only under the second decision's option 2: mapping
+video is what makes a cover-art source fail into the ladder, which then names the
+picture stream and its codec properly. If `opus` copies instead, no target maps
+video at all and all six are affected.
+
+**`wav` raises a sub-question the gate should see.** It is not in this phase's
+profile table, and the Outcome promises it "behaves exactly as it does after
+phase 2". Extending the standing note to it is a `converter/profiles.py` diff —
+which the file list allows — but it changes what `wav` reports, so that Outcome
+bullet would have to be relaxed to "`wav`'s argv is unchanged; its notes gain the
+standing line". The alternative is that `wav` keeps the hole, now that this spec
+has at least named it.
 
 Every degraded conversion the *ladder* reaches still names the stream index, its
 codec and what was given up, exactly as `docs/vision.md` requires. The gap is the
@@ -229,6 +247,10 @@ common case, to prevent a mislabel only reachable by pointing `--to opus` at a
    the mapped video is what makes a cover-art source fail into the ladder and get
    a real note — the only target where that works. Every already-Opus file pays a
    transcode.
+
+   It also costs a wasted ffmpeg spawn plus a probe on every video-bearing source,
+   including a plain `.mp4` someone wants ripped: a mapped video stream always
+   fails encoder selection, so the ladder always runs. Intended, but priced here.
 
 Picking 1 also removes `opus` from the video-mapping group, so no target maps
 video and all five join the first decision's group. Picking 2 keeps `opus` as the
@@ -288,6 +310,7 @@ New-Item -ItemType Directory -Force in
 & $FF -y -f lavfi -i testsrc=size=320x240:rate=10:duration=3 -f lavfi -i sine=duration=3 -c:v libx264 -c:a aac in/clip.mp4
 & $FF -y -f lavfi -i color=c=red:size=200x200:d=1 -frames:v 1 in/cover.png
 & $FF -y -i in/tone.mp3 -i in/cover.png -map 0:a -map 1:v -c copy -disposition:v:0 attached_pic in/art.mp3
+& $FF -y -i in/tone.ogg -i in/cover.png -map 0:a -map 1:v -c copy -disposition:v:0 attached_pic in/artv.ogg
 ```
 
 - [ ] Each of the six targets converts a real source and the result plays.
@@ -307,9 +330,15 @@ New-Item -ItemType Directory -Force in
       verified against the real engine.
 - [ ] A second run over any converted tree reports `0 converted`, exit 0.
 - [ ] `art.mp3` under `--to mp3`: `ffprobe` the output and confirm the picture
-      stream is gone, and that the run says what the gate's decision says it
-      says. Repeat for `--to ogg`, where the muxer rejects the picture and the
-      ladder is reached instead.
+      stream is gone, and that the run says what the gate's first decision says
+      it says.
+- [ ] `artv.ogg` (vorbis audio plus artwork — the fixture block builds it) under
+      `--to ogg`: same check. This is the case that exposes `ogg`'s silent loss;
+      pointing `art.mp3` at `--to ogg` proves nothing about cover art, because the
+      ogg muxer rejects the *mp3 audio* first and the picture is never mapped.
+- [ ] Only if the gate has `opus` encode: `artv.ogg` under `--to opus` fails the
+      cheap attempt, reaches the ladder, and names the picture stream and its
+      codec — the one target where the loss is reported properly.
 - [ ] `--to mp3` on `clip.mp4` rips the audio and names the dropped video stream.
 
 ## Risks and mitigations
@@ -347,7 +376,8 @@ New-Item -ItemType Directory -Force in
 - 2026-08-25: Spec review measured that a blind `-c:a copy` lets the muxer, not
   the copy mask, decide the happy path — `--to opus` from a Vorbis source shipped
   a `.opus` file containing Vorbis at exit 0. The cheap attempts are now per
-  profile, and `opus` forces its encoder rather than copying.
+  profile, and `opus` forces its encoder rather than copying. That last part was
+  reopened two rounds later -- see the final entry below.
 - 2026-08-25: Spec review measured that mapping video into `ogg` passes a theora
   source straight through at exit 0 — a whole video file renamed `.ogg`, the same
   defect that rules `m4a` out. `ogg` no longer maps video, which leaves `opus` as
@@ -361,3 +391,8 @@ New-Item -ItemType Directory -Force in
   row into the gate, next to the standing-note decision. Settling it in a row
   traded a generation loss on the common case for a mislabel on a rare one, and
   presented the loss as a warning the source "deserved" — the tool inflicts it.
+- 2026-08-25: Spec review found that `wav` has the same happy-path cover-art hole
+  as the four new audio-only targets — its cheap attempt has mapped no video
+  since phase 1, so the wav muxer's rejection never fires. Named here for the
+  first time, and put to the gate as a sub-question, since closing it changes what
+  `wav` reports and this phase promised `wav` unchanged.
