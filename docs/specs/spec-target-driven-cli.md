@@ -27,9 +27,9 @@ milestone. A completed spec is moved to `docs/specs/archive/`.
       do today, and `converter --help` still leads a reader to both.
 - [ ] Adding a target format still produces no diff in `cli.py`, `batch.py` or
       `paths.py` — the check phases 3-5 will actually run.
-- [ ] A source the target cannot produce at all resolves to the outcome decided
-      at the acceptance gate, and a mixed tree does not fail the run for it —
-      so a re-run over it still reports `0 converted, 0 failed`, exit 0.
+- [ ] A source the target cannot produce at all is reported as `unsupported`,
+      counted in the summary and not setting the exit code, so a mixed tree does
+      not fail the run — and a re-run still reports `0 converted, 0 failed`, exit 0.
 - [ ] `README.md` documents the `--to` CLI, carries the migration note, names
       `main` as the pull-request target, and no longer tells a reader to add a
       `Job` to `converter/jobs.py`.
@@ -49,9 +49,8 @@ milestone. A completed spec is moved to `docs/specs/archive/`.
   a one-line `description` on the profile value type, lookup by that name, and
   the curated source-suffix set.
 - `converter/batch.py`: taking a profile where it takes a `Job` today, the
-  progress-bar description, and mapping the engine's signal onto the outcome the
-  gate decides for a source the target cannot produce — mapping only, never
-  deciding.
+  progress-bar description, and the new `unsupported` outcome — mapping the
+  engine's signal onto it and counting it, never deciding it.
 - `converter/paths.py`: the three new selection predicates — self-write,
   output-tree exclusion and the overwrite hazard — live here beside
   `find_collisions`, as pure path logic with no ffmpeg or profile knowledge, and
@@ -145,9 +144,9 @@ milestone. A completed spec is moved to `docs/specs/archive/`.
 | The prompt lists the registry's targets numbered in the same sorted order `--list-formats` uses, with `mirror` as the last entry and the first target as the default. It also accepts a format name typed instead of a number | Keeps today's shape (a numbered menu with a default) while the list grows; typing the name is the escape hatch once 17 entries make counting silly. The prompt stays an argv builder, so the parser remains the single code path | 2026-08-25 |
 | The legacy-token message is **generic**: it says the sub-commands are gone, shows `converter --to <format> IN OUT`, and points at `--list-formats`. The concrete `video` -> `--to mp4` and `audio` -> `--to wav` mapping lives in the README and in the PR body, not in `cli.py` | Naming `mp4` in `cli.py` would be the one string that defeats the `ast` check this phase installs to keep format names out of the CLI — and that check is what phases 3-5 rely on. A user who has just been told about `--list-formats` is one command from the answer | 2026-08-25 |
 | Routing runs on `raw` **after** the bare-invocation prompt has filled it, so a prompt that returns a `mirror` argv reaches the mirror parser. The `if not hasattr(args, "handler")` fallback in `main()` is removed — with explicit routing both parsers always set one | The prompt is an argv builder, so its output must travel the same path a typed argv does; that is the property the round-trip test exists to protect | 2026-08-25 |
-| OPEN — the `unsupported` outcome alone, or together with a `--from <suffix>` filter | resolved at the spec-acceptance gate; see the note below | — |
+| A source the target cannot produce becomes an **`unsupported` outcome**, and this phase ships **no `--from` filter** | Resolved at the spec-acceptance gate. The outcome is what the idempotent-re-run criterion needs and a filter cannot replace; `--from` would be extra surface plus a flag phases 3-5 must keep working, to save a cost the outcome already reports honestly. Revisit only if the repeated probe cost on large mixed trees turns out to bite | 2026-08-25 |
 
-### The one open decision, in full
+### The mixed-tree decision, in full
 
 Selection cannot know whether a source *can* produce the target: that needs a
 probe, and a probe on the happy path is forbidden. So under `--to wav`, a
@@ -176,28 +175,17 @@ attempt and one ffprobe on every run, because nothing short of a probe can tell.
 The re-run reports honestly and exits 0, but it is not free — worth knowing before
 picking, on a large mixed tree.
 
-The gate therefore picks between two answers, not three:
+**Resolved at the gate on 2026-08-25: the `unsupported` outcome alone.** A mixed
+tree converts what it can and reports the rest by name, in a new outcome that
+`batch.py` counts and that does not set the exit code.
 
-1. **The `unsupported` outcome alone.** Costs a new outcome in `batch.py` and a
-   column in every summary line. A mixed tree converts what it can and reports
-   the rest by name.
-2. **The `unsupported` outcome plus a `--from <suffix>` filter**, so a user who
-   knows their tree can narrow it up front and never see the unsupported lines.
-   More surface, more tests, and a flag phases 3-5 must keep working.
-
-   Picking this must not reopen planning, so its semantics are settled here: the
-   flag is **repeatable** (`--from mkv --from avi`) and not comma-separated,
-   matching how argparse expresses a list without a second parsing rule; it
-   accepts the same dotted and cased forms `--to` does, normalised the same way;
-   and it is **two rules, not one** — validation first, then filtering. A suffix
-   outside the curated source-suffix set is a usage error (exit 2) naming it,
-   never an empty run that looks like success; what survives validation then
-   narrows discovery. Written as a single "intersect" the filter would silently
-   swallow a typo, which is the wrong half to implement.
-
-A `--from` filter *alone* was considered and dropped: it leaves the default
-invocation failing on a mixed tree, which contradicts this spec's own Outcome and
-the vision criterion above.
+Two alternatives were considered and dropped. A **`--from <suffix>` filter alone**
+fails immediately: it leaves the default invocation failing on a mixed tree, which
+contradicts this spec's own Outcome and the vision criterion above. **The outcome
+plus `--from`** was a real option — it would let a user who knows their tree narrow
+it up front and skip the repeated probe cost — but it buys that with a flag every
+later phase has to keep working, to save a cost the outcome already reports
+honestly. Worth revisiting only if that cost turns out to bite on large trees.
 
 ## Tracking
 
@@ -272,9 +260,9 @@ reusing the fixtures the phase-1 gate synthesises:
 
 - [ ] `converter --to mp4 in out` converts the MKV fixtures and reports a
       summary; a second run reports `0 converted`, `N skipped`, exit 0.
-- [ ] `converter --to wav in out` over the same mixed directory behaves as the
-      gate's open decision resolved it — and does not exit 1 for the video-only
-      sources if the resolution says it should not.
+- [ ] `converter --to wav in out` over the same mixed directory converts the
+      audio-bearing sources, reports the video-only MKVs as `unsupported`, and
+      exits 0; a second run reports the same thing.
 - [ ] Pointing `--to mp4` at a directory that already contains `.mp4` files,
       **without** `--overwrite`, converts the others and leaves the existing ones
       untouched; with `OUTPUT` equal to `INPUT` the `.mp4` files are reported as
@@ -293,7 +281,7 @@ reusing the fixtures the phase-1 gate synthesises:
 
 | Risk | Mitigation |
 |---|---|
-| `--to X` pointed at a large mixed tree tries to convert far more files than the old sub-commands did | The curated source-suffix set bounds it, `--dry-run` lists the tasks before any work, and the gate's open decision settles what a source the target cannot hold reports |
+| `--to X` pointed at a large mixed tree tries to convert far more files than the old sub-commands did | The curated source-suffix set bounds it, `--dry-run` lists the tasks before any work, and a source the target cannot hold is reported as `unsupported` rather than converted or failed |
 | A source whose output path equals its input path is read and written at once, or is overwritten by a sibling under `--overwrite` | Reported as a counted skip, and the sibling case refuses the run up front -- both per `docs/design/source-selection.md`, with a test for each and for the harmless no-`--overwrite` counterpart |
 | A nested output root makes every run convert one more generation of its own output | Files under the output root are not candidates, pinned by a run-it-twice test |
 | Removing the sub-commands breaks someone's script silently | `main()` recognises both legacy tokens and points at `--to` plus `--list-formats` -- generically, since naming a format in `cli.py` would defeat this phase's own format-name check; the concrete mapping lives in the README, and the `refactor!` commit plus migration lines drive the release note |
@@ -331,3 +319,7 @@ reusing the fixtures the phase-1 gate synthesises:
 - 2026-08-25: Review round 3 found that a nested output root never converges —
   each run converts the previous run's output one level deeper. Files under the
   output root are now excluded from discovery.
+- 2026-08-25: Gate resolved the mixed-tree decision: the `unsupported` outcome
+  alone, no `--from` filter. The filter would have bought a saving on repeated
+  probe cost with a flag every later phase must keep working; the outcome already
+  reports that cost honestly. Recorded as revisitable if the cost bites.
