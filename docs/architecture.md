@@ -22,8 +22,8 @@ Everything else exists today.
 
 The internal import graph is acyclic today and must stay that way:
 `ffmpegtool`, `paths` and `profiles` are leaves, `jobs` depends on `ffmpegtool` +
-`profiles`, `batch` depends on `jobs` + `ffmpegtool` + `paths`, `cli` depends on
-all of them, `__main__` depends only on `cli`.
+`profiles`, `batch` depends on `jobs` + `ffmpegtool` + `paths` + `profiles`,
+`cli` depends on all of them, `__main__` depends only on `cli`.
 
 - `converter/profiles.py` must be a **leaf**: no internal imports at all. This is
   what makes the constitution's "a target format is data, not code" structurally
@@ -33,6 +33,10 @@ all of them, `__main__` depends only on `cli`.
   (encoder tuning is an explicit non-goal), so a data file would buy a parser and
   a schema validator while giving up type checking and ruff's view of the code.
 - `jobs.py` may import `profiles` and `ffmpegtool`, and nothing else.
+- `batch.py` imports `profiles` only for the type it is handed: it carries a
+  profile from `cli.py` to the engine and reads the label for its progress bar,
+  and asks `jobs.py` for every attempt. A profile field read for a *conversion*
+  decision in `batch.py` is format knowledge in the wrong module.
 - Nothing below `cli.py` may import `cli`.
 - `paths.py` knows nothing about ffmpeg, and `ffmpegtool.py` knows nothing about
   batches, jobs or profiles. Both are reusable in isolation, and both are tested
@@ -42,10 +46,12 @@ all of them, `__main__` depends only on `cli`.
 
 ## Key flows
 
-1. **Happy path.** `cli` resolves the output root, `paths.find_sources` collects
+1. **Happy path.** `cli` resolves the target profile and the output root,
+   `paths.find_sources` collects
    the inputs, `paths.find_collisions` refuses up front if two inputs would write
    to the same output, then `batch.run_batch` runs the profile's cheapest attempt
-   per file. On success nothing else happens — no ffprobe round-trip is ever spent.
+   per file through the engine in `jobs.py`. On success nothing else happens — no
+   ffprobe round-trip is ever spent.
 2. **Degradation.** The attempt exits non-zero, so *now* `ffmpegtool.probe_streams`
    describes the file. The engine matches each stream against the profile's copy
    mask: streams the mask accepts pass through unchanged — as a literal `copy`, or
