@@ -49,10 +49,12 @@ milestone. A completed spec is moved to `docs/specs/archive/`.
   a one-line `description` on the profile value type, lookup by that name, and
   the curated source-suffix set.
 - `converter/batch.py`: taking a profile where it takes a `Job` today, the
-  progress-bar description, and whatever the gate decides about a source the
-  target cannot produce.
+  progress-bar description, and mapping the engine's signal onto the outcome the
+  gate decides for a source the target cannot produce — mapping only, never
+  deciding.
 - `converter/jobs.py`: exposing the engine entry points `batch.py` now calls
-  directly. No change to the ladder itself.
+  directly, and reporting the "no rule matches any present stream" signal the
+  unsupported outcome rests on. No change to the ladder itself.
 - Deleting `Job`, `JOBS` and `JOB_BINDINGS` with the sub-commands they served.
 - **The test migration this forces**, which is a substantial part of the work:
   `tests/test_batch.py` imports `MKV_TO_MP4` / `OPUS_TO_WAV` across 17 call
@@ -156,6 +158,17 @@ carries no stream of any type the profile declares a rule for. A file that *does
 carry usable streams and still fails is a genuine `failed` — the distinction
 matters, or a corrupt file would be quietly relabelled.
 
+**The discriminator lives in `jobs.py`, not `batch.py`.** It reads the profile's
+rules against the probed streams, which is a conversion decision, and the
+architecture bullet this PR adds forbids `batch.py` from making one. The engine
+reports it as a distinguishable signal; `batch.py` maps that signal onto the
+outcome and counts it, and does nothing else with it.
+
+Note what the outcome does **not** buy: an unsupported file still costs one ffmpeg
+attempt and one ffprobe on every run, because nothing short of a probe can tell.
+The re-run reports honestly and exits 0, but it is not free — worth knowing before
+picking, on a large mixed tree.
+
 The gate therefore picks between two answers, not three:
 
 1. **The `unsupported` outcome alone.** Costs a new outcome in `batch.py` and a
@@ -191,10 +204,15 @@ Machine checks:
       different output root **is** converted, a collision exits 2 before any
       conversion, an existing output is `skipped`, and `--dry-run` works with no
       ffmpeg resolvable.
-- [ ] A test that `a.mkv` and `a.mp4` in one directory, converting to `mp4` in
-      place, exits 2 — **with** `--overwrite` as well as without. This is the
-      case where reporting `a.mp4` as skipped and then overwriting it would
-      destroy a file the run said it kept.
+- [ ] A test pair for `a.mkv` and `a.mp4` in one directory, converting to `mp4`
+      in place: **with** `--overwrite` it exits 2 naming both files, because
+      reporting `a.mp4` as skipped and then overwriting it would destroy a file
+      the run said it kept; **without** `--overwrite` it reports
+      `0 converted, 2 skipped` and exits 0, because nothing is at risk and an
+      in-place re-run must stay idempotent.
+- [ ] A test for a nested output root (`-r IN IN\converted`): run it twice, and
+      the second run reports `0 converted`. Without the output-tree exclusion this
+      grows a `converted\converted\...` generation per run, forever.
 - [ ] A test that the self-write guard still fires under `--mirror-to`, where the
       output root is derived from a resolved input path and the source paths are
       not — the case a compare-as-given check would miss, and that an absolute
@@ -247,9 +265,10 @@ reusing the fixtures the phase-1 gate synthesises:
 | Risk | Mitigation |
 |---|---|
 | `--to X` pointed at a large mixed tree tries to convert far more files than the old sub-commands did | The curated source-suffix set bounds it, `--dry-run` lists the tasks before any work, and the gate's open decision settles what a source the target cannot hold reports |
-| A source whose output path equals its input path is read and written at once under `--overwrite` | Excluded at selection and reported as skipped, per `docs/design/source-selection.md`, with a test per rule |
-| Removing the sub-commands breaks someone's script silently | `main()` recognises both legacy tokens and names the replacement; the `refactor!` commit and migration lines drive the release note |
-| The prompt drifts from the flags it builds | The prompt test parses its output with the real convert parser, as today |
+| A source whose output path equals its input path is read and written at once, or is overwritten by a sibling under `--overwrite` | Reported as a counted skip, and the sibling case refuses the run up front -- both per `docs/design/source-selection.md`, with a test for each and for the harmless no-`--overwrite` counterpart |
+| A nested output root makes every run convert one more generation of its own output | Files under the output root are not candidates, pinned by a run-it-twice test |
+| Removing the sub-commands breaks someone's script silently | `main()` recognises both legacy tokens and points at `--to` plus `--list-formats` -- generically, since naming a format in `cli.py` would defeat this phase's own format-name check; the concrete mapping lives in the README, and the `refactor!` commit plus migration lines drive the release note |
+| The prompt drifts from the flags it builds | The prompt test dispatches its output through the same routing function a typed argv takes, so a prompted `mirror` argv is covered too |
 | Phases 3-5 discover that `cli.py` still needs a diff per format | The `ast`-based format-name check fails the gate rather than surfacing in phase 3 |
 | The test migration is large enough to be rushed | It is named in Scope and gets its own issue, rather than riding along in the parser issue |
 
@@ -276,3 +295,10 @@ reusing the fixtures the phase-1 gate synthesises:
   the idempotent-re-run criterion on a mixed tree, so it was demoted from an
   answer to an optional addition, and the `unsupported` outcome became the part
   the phase needs either way.
+- 2026-08-25: Review round 3 found that routing self-writes through the ordinary
+  collision check over-corrected: an in-place re-run would exit 2 on the second
+  run of a command that worked on the first. The refusal now fires only under
+  `--overwrite`, where the destruction is real.
+- 2026-08-25: Review round 3 found that a nested output root never converges —
+  each run converts the previous run's output one level deeper. Files under the
+  output root are now excluded from discovery.

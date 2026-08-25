@@ -47,8 +47,7 @@ The internal import graph is acyclic today and must stay that way:
 ## Key flows
 
 1. **Happy path.** `cli` resolves the target profile and the output root,
-   `paths.find_sources` collects
-   the inputs, `paths.find_collisions` refuses up front if two inputs would write
+   `paths.find_sources` collects the inputs, `paths.find_collisions` refuses up front if two inputs would write
    to the same output, then `batch.run_batch` runs the profile's cheapest attempt
    per file through the engine in `jobs.py`. On success nothing else happens — no
    ffprobe round-trip is ever spent.
@@ -66,8 +65,8 @@ The internal import graph is acyclic today and must stay that way:
    `docs/design/degradation-ladder.md` and `docs/design/stream-decision.md`.
 3. **Idempotent re-run.** An output that already exists and no `--overwrite` makes
    the file `skipped` without starting a process, so a second run over a finished
-   tree does no work. A source whose output path would be its own input path is
-   `skipped` too — reported rather than passed over in silence, and counted, per
+   tree does no work for the files it already converted. A source whose output
+   path would be its own input path is `skipped` too — reported rather than passed over in silence, and counted, per
    `docs/design/source-selection.md`.
 4. **Failure.** The partially written output is removed, the file is recorded as
    `failed` with ffmpeg's stderr, the batch keeps going for every other file, and
