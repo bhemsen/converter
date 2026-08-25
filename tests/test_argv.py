@@ -129,6 +129,18 @@ class TestWavJob:
         assert OPUS_TO_WAV.suffixes == (".opus",)
         assert OPUS_TO_WAV.target_suffix == ".wav"
 
+    def test_pcm_reencode_of_the_kept_stream_carries_no_note(self):
+        """Decoding to PCM is WAV's own definition, not a loss (Verification,
+        spec-profile-registry): the kept stream takes the fallback branch --
+        WAV's copy mask is empty by construction -- yet contributes no note.
+        Only the surplus stream's drop is reported."""
+        streams = [Stream(0, "audio", "opus"), Stream(1, "audio", "opus")]
+
+        attempts = OPUS_TO_WAV.retries(streams)
+
+        assert len(attempts[0].notes) == 1
+        assert not any("stream 0" in note for note in attempts[0].notes)
+
 
 class TestMp4Remux:
     def test_stream_copies_and_converts_text_subtitles(self):
@@ -258,6 +270,50 @@ class TestMp4Retries:
         assert "aac" in reencode.options
         assert reencode.notes
         assert any("lossy" in note for note in reencode.notes)
+
+
+class TestMp4DegradationNotes:
+    """Verification (spec-profile-registry): one test per degradation branch,
+    each pinning the exact note -- stream index, that stream's codec, and what
+    was given up (docs/design/stream-decision.md)."""
+
+    def test_video_reencode_note_is_exact(self):
+        streams = [Stream(0, "video", "vp8"), Stream(1, "audio", "aac")]
+
+        selective = MKV_TO_MP4.retries(streams)[0]
+
+        assert selective.notes == ("video stream 0 (vp8) re-encoded to h264",)
+
+    def test_audio_reencode_note_is_exact(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "audio", "pcm_s16le")]
+
+        selective = MKV_TO_MP4.retries(streams)[0]
+
+        assert selective.notes == ("audio stream 1 (pcm_s16le) re-encoded to aac",)
+
+    def test_bitmap_subtitle_drop_note_is_exact(self):
+        streams = [
+            Stream(0, "video", "h264"),
+            Stream(1, "audio", "aac"),
+            Stream(2, "subtitle", "hdmv_pgs_subtitle"),
+        ]
+
+        selective = MKV_TO_MP4.retries(streams)[0]
+
+        assert selective.notes == (
+            "subtitle stream 2 (hdmv_pgs_subtitle) dropped: "
+            "bitmap subtitles cannot be stored in MP4",
+        )
+
+    def test_last_resort_notes_are_pinned(self):
+        """The two notes are the last-resort attempt's own data (Verification:
+        'lossy re-encode; 10-bit/HDR reduced to 8-bit'), not engine wording."""
+        reencode = MKV_TO_MP4.retries([])[-1]
+
+        assert reencode.notes == (
+            "re-encoded to h264/aac (lossy); subtitles and extra video streams dropped",
+            "10-bit or HDR sources are reduced to 8-bit yuv420p for player compatibility",
+        )
 
 
 class TestProfileArgvPinning:
