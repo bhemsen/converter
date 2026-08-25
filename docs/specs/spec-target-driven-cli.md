@@ -17,7 +17,8 @@ milestone. A completed spec is moved to `docs/specs/archive/`.
       sub-commands had (`-r`, `-j`, `--overwrite`, `--dry-run`, `-q`,
       `--mirror-to`, `--ffmpeg`, `--ffprobe`) unchanged in name and meaning.
 - [ ] `converter video ...` and `converter audio ...` exit 2 with a message that
-      names the command to run instead.
+      says the sub-commands are gone, shows the `--to` shape, and points at
+      `--list-formats` — without naming a format (see the Prior decision).
 - [ ] `converter --list-formats` prints every target the registry holds and exits
       0 without resolving tools or touching the filesystem.
 - [ ] The interactive prompt (bare `converter`) offers the registry's targets and
@@ -27,7 +28,8 @@ milestone. A completed spec is moved to `docs/specs/archive/`.
 - [ ] Adding a target format still produces no diff in `cli.py`, `batch.py` or
       `paths.py` — the check phases 3-5 will actually run.
 - [ ] A source the target cannot produce at all resolves to the outcome decided
-      at the acceptance gate, and a mixed tree does not fail the run for it.
+      at the acceptance gate, and a mixed tree does not fail the run for it —
+      so a re-run over it still reports `0 converted, 0 failed`, exit 0.
 - [ ] `README.md` documents the `--to` CLI, carries the migration note, names
       `main` as the pull-request target, and no longer tells a reader to add a
       `Job` to `converter/jobs.py`.
@@ -42,8 +44,10 @@ milestone. A completed spec is moved to `docs/specs/archive/`.
 - `converter/cli.py`: the parser split, the `main()` routing, `--to`,
   `--list-formats`, the reworked prompt, and splitting `convert_command` under
   50 lines.
-- `converter/profiles.py`: a `name` and a one-line `description` on the profile
-  value type, lookup by target name, and the curated source-suffix set.
+- `converter/profiles.py`: a `PROFILES` mapping (target name -> profile) — the
+  registry itself, which the merged module does not yet have — plus a `name` and
+  a one-line `description` on the profile value type, lookup by that name, and
+  the curated source-suffix set.
 - `converter/batch.py`: taking a profile where it takes a `Job` today, the
   progress-bar description, and whatever the gate decides about a source the
   target cannot produce.
@@ -123,13 +127,16 @@ milestone. A completed spec is moved to `docs/specs/archive/`.
 | The convert parser's `--help` epilog names `converter mirror --help` and `--list-formats` | With `mirror` off the sub-parser list it would otherwise vanish from `--help`, which would be a discoverability regression nobody decided on | 2026-08-25 |
 | The profile value type gains a `name` (the `--to` token) and a one-line `description`. This **extends phase 1's value type**, whose field list did not include either | `--list-formats` and the prompt both need a human-readable line per target, and the text that serves that today lives in `JOB_BINDINGS`, which this phase deletes. Recorded as a visible change to phase 1's shape rather than a silent one | 2026-08-25 |
 | `Job`, `JOBS` and `JOB_BINDINGS` are deleted. `batch.run_batch` takes the profile, calls the engine through the entry points `jobs.first_attempt(profile)` and `jobs.retries(profile, streams)`, and takes the progress-bar description from the profile's label — so the bar reads `MP4` where it read `mkv-to-mp4` | They exist only to keep phase 1's diff out of `cli.py` and `batch.py`; phase 2 is the breaking change that was always going to remove them. The constitution's no-diff rule is about *adding a format*, which this is not. Naming the entry points here stops the implementer from inventing a third shape | 2026-08-25 |
+| The entry-point names above are **phase 2's to establish**: if phase 1's engine issue lands with different ones, phase 2 adopts those rather than renaming them. The wrapper around `profile.cheap_attempt` is not redundant — it is where `container_options` are placed per `docs/design/degradation-ladder.md`, and `batch.py` reading the field directly would be exactly the format knowledge the new architecture bullet forbids | The merged `Profile` stores `cheap_attempt` as a plain `Attempt` field rather than a callable, so the wrapper looks removable until you notice what it does | 2026-08-25 |
 | `docs/architecture.md`'s Boundaries gains the `batch` -> `profiles` edge, amended in this PR | `run_batch(profile, ...)` needs the type for its annotation, so the edge is real. Phase 1 set the precedent of amending architecture in the spec's own PR rather than letting it drift | 2026-08-25 |
 | A run that finds no candidates prints the ordinary summary line on stdout and a one-line hint on stderr, and exits 0 — it no longer prints `No .mkv files found` | The suffix set is now dozens of entries, so interpolating it is unreadable, and an error-channel message for an empty directory reads like a failure. `docs/vision.md` requires a re-run over a finished tree to *report* `0 converted, 0 failed`, which needs the summary to be printed | 2026-08-25 |
 | No version bump, no `CHANGELOG.md` entry, no tag in this phase | `docs/release.md` computes the version from the conventional commits in the range and has the human curate the changelog at the `/loopkit:ship` preview. A bump here would be recomputed and could disagree with the tag | 2026-08-25 |
 | The commit that removes the sub-commands is subject-marked `refactor!`, and the PR body carries the migration lines `converter video IN OUT` -> `converter --to mp4 IN OUT` and `converter audio IN OUT` -> `converter --to wav IN OUT` | `docs/release.md` derives the major bump from the `!` marker and requires a migration note in the breaking release's changelog entry; the text has to exist for `/ship` to curate | 2026-08-25 |
 | `--list-formats` prints one line per target — the name, the suffix it writes, and the description — sorted by name | It is the discoverability half of `--to`: a user who guessed a format name wrong needs the list without owning a valid input directory | 2026-08-25 |
 | The prompt lists the registry's targets numbered in the same sorted order `--list-formats` uses, with `mirror` as the last entry and the first target as the default. It also accepts a format name typed instead of a number | Keeps today's shape (a numbered menu with a default) while the list grows; typing the name is the escape hatch once 17 entries make counting silly. The prompt stays an argv builder, so the parser remains the single code path | 2026-08-25 |
-| OPEN — what happens to a source the target cannot produce at all (a video-only `.mkv` under `--to wav`), and whether this phase ships a `--from <suffix>` filter | resolved at the spec-acceptance gate; see the note below | — |
+| The legacy-token message is **generic**: it says the sub-commands are gone, shows `converter --to <format> IN OUT`, and points at `--list-formats`. The concrete `video` -> `--to mp4` and `audio` -> `--to wav` mapping lives in the README and in the PR body, not in `cli.py` | Naming `mp4` in `cli.py` would be the one string that defeats the `ast` check this phase installs to keep format names out of the CLI — and that check is what phases 3-5 rely on. A user who has just been told about `--list-formats` is one command from the answer | 2026-08-25 |
+| Routing runs on `raw` **after** the bare-invocation prompt has filled it, so a prompt that returns a `mirror` argv reaches the mirror parser. The `if not hasattr(args, "handler")` fallback in `main()` is removed — with explicit routing both parsers always set one | The prompt is an argv builder, so its output must travel the same path a typed argv does; that is the property the round-trip test exists to protect | 2026-08-25 |
+| OPEN — the `unsupported` outcome alone, or together with a `--from <suffix>` filter | resolved at the spec-acceptance gate; see the note below | — |
 
 ### The one open decision, in full
 
@@ -138,16 +145,29 @@ probe, and a probe on the happy path is forbidden. So under `--to wav`, a
 video-only `.mkv` is selected, its attempt fails, the probe finds no audio, the
 selective rung has no streams to map, WAV declares no last-resort rung — and the
 file lands as `failed`, exit 1. Pointing `--to wav` at any mixed tree therefore
-fails the run today. Three ways out, and the gate picks:
+fails the run today, and keeps failing on every re-run, which is the one thing
+`docs/vision.md`'s idempotent-re-run criterion forbids.
 
-1. **A `--from <suffix>` filter**, so the user narrows the sources by hand. Cheap,
-   explicit, and leaves the failure semantics untouched — but the default
-   invocation still fails on a mixed tree.
-2. **An `unsupported` outcome**: when the ladder ends with no rung that mapped a
-   single stream, the file is reported as unsupported with the reason rather than
-   as `failed`, and it does not set the exit code. Costs a new outcome in
-   `batch.py` and a line in every summary.
-3. **Both.**
+That criterion is why the phase needs an **`unsupported` outcome** either way: a
+file that cannot produce the target produces no output, so a re-run re-attempts
+it forever unless the run stops calling it a failure. Its discriminator is taken
+from the probe, never from ffmpeg's stderr (`docs/constitution.md`): the source
+carries no stream of any type the profile declares a rule for. A file that *does*
+carry usable streams and still fails is a genuine `failed` — the distinction
+matters, or a corrupt file would be quietly relabelled.
+
+The gate therefore picks between two answers, not three:
+
+1. **The `unsupported` outcome alone.** Costs a new outcome in `batch.py` and a
+   column in every summary line. A mixed tree converts what it can and reports
+   the rest by name.
+2. **The `unsupported` outcome plus a `--from <suffix>` filter**, so a user who
+   knows their tree can narrow it up front and never see the unsupported lines.
+   More surface, more tests, and a flag phases 3-5 must keep working.
+
+A `--from` filter *alone* was considered and dropped: it leaves the default
+invocation failing on a mixed tree, which contradicts this spec's own Outcome and
+the vision criterion above.
 
 ## Tracking
 
@@ -171,13 +191,23 @@ Machine checks:
       different output root **is** converted, a collision exits 2 before any
       conversion, an existing output is `skipped`, and `--dry-run` works with no
       ffmpeg resolvable.
+- [ ] A test that `a.mkv` and `a.mp4` in one directory, converting to `mp4` in
+      place, exits 2 — **with** `--overwrite` as well as without. This is the
+      case where reporting `a.mp4` as skipped and then overwriting it would
+      destroy a file the run said it kept.
+- [ ] A test that the self-write guard still fires under `--mirror-to`, where the
+      output root is derived from a resolved input path and the source paths are
+      not — the case a compare-as-given check would miss, and that an absolute
+      `tmp_path` in a test would hide.
 - [ ] A test that `--to MP4`, `--to mp4` and `--to .mp4` select the same profile,
       and that an unknown target exits 2 listing the available ones.
 - [ ] A test that `--list-formats` prints a line per registry entry and exits 0
       without resolving tools, and that it works with `--to` and `INPUT` absent.
 - [ ] A test that `converter --version` still exits 0 with `--to` required.
-- [ ] A test driving `prompt_for_argv` through the real convert parser, so the
-      prompt and the flags cannot drift apart, plus one for a typed format name.
+- [ ] A test driving `prompt_for_argv`'s output through the same routing function
+      a typed argv takes — not through one parser, since a prompted `mirror` argv
+      the convert parser cannot parse is exactly what this protects — plus one
+      for a typed format name.
 - [ ] A test that `converter mirror ...` is unaffected, and one that a run with
       no candidates prints the summary and exits 0.
 - [ ] A test that walks `converter/cli.py` and `converter/batch.py` with `ast`
@@ -238,3 +268,11 @@ reusing the fixtures the phase-1 gate synthesises:
 - 2026-08-25: Spec review found that a source the target cannot produce at all
   fails the whole run, which no decision covered. Promoted to the phase's one
   open decision, with `--from` folded into it as one of three answers.
+- 2026-08-25: Review round 2 found that reporting a self-writing source as
+  skipped and then letting another source overwrite it in the same run is a
+  file named as kept and then deleted. Self-writing sources now take part in the
+  collision check, which runs first and refuses the run.
+- 2026-08-25: Review round 2 found that a `--from` filter alone cannot satisfy
+  the idempotent-re-run criterion on a mixed tree, so it was demoted from an
+  answer to an optional addition, and the `unsupported` outcome became the part
+  the phase needs either way.

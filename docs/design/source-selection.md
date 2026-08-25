@@ -31,11 +31,11 @@ flowchart TD
     F --> MEDIA
     MEDIA -->|"no"| NOTCAND
     MEDIA -->|"yes"| OUT
-    OUT --> SELF
-    SELF -->|"yes"| SKIP
-    SELF -->|"no"| COLL
+    OUT --> COLL
     COLL -->|"yes"| REFUSE
-    COLL -->|"no"| EXISTS
+    COLL -->|"no"| SELF
+    SELF -->|"yes"| SKIP
+    SELF -->|"no"| EXISTS
     EXISTS -->|"yes"| SKIP
     EXISTS -->|"no"| TASK
 ```
@@ -48,15 +48,25 @@ flowchart TD
   never what it will accept. A tree full of `.txt` and `.nfo` produces no work and
   no noise.
 - **The self-write guard is about the path, not the suffix.** A source is excluded
-  only when its derived output path *is* its input path — comparing with the same
-  case-folding the collision check uses, because Windows would otherwise let
-  `A.MP4` and `a.mp4` be two names for one file. Excluding every file that merely
-  shares the target's suffix would be wrong: with a separate output root,
-  `In\a.mp4` -> `Out\a.mp4` is a legitimate remux, and dropping it would leave the
-  output tree quietly incomplete.
+  only when its derived output path *is* its input path. Both sides are resolved
+  before they are compared, and then compared case-folded — unlike
+  `paths.find_collisions`, which case-folds the paths **as given**. The difference
+  is load-bearing here: `--mirror-to` derives the output root from a resolved
+  input path while discovery returns paths built from the root as typed, so
+  comparing as given would miss the self-write entirely. Excluding every file that
+  merely shares the target's suffix would be wrong in the other direction: with a
+  separate output root, `In\a.mp4` -> `Out\a.mp4` is a legitimate remux, and
+  dropping it would leave the output tree quietly incomplete.
 - **A self-write is reported, never silently dropped.** It leaves the run as a
   counted `skipped` with a reason, because a file the user pointed at and did not
   get is exactly what `docs/constitution.md` forbids passing over in silence.
+- **A self-writing source takes part in the collision check, and the check runs
+  first.** Otherwise `a.mkv` and `a.mp4` in one directory, converting to `mp4` in
+  place, would report `a.mp4` as skipped and then destroy it in the same run under
+  `--overwrite` — a file named as kept and then deleted. Two sources claiming one
+  output is a conflict whether or not one of them is already sitting at that path,
+  so it refuses the run like any other collision, and the message is what tells
+  the user to pick a different output directory.
 - **Collisions are refused for the whole run, never per file.** Two sources that
   differ only in suffix (`ep1.mkv`, `ep1.avi`) map to one output. Refusing up front
   keeps the run from converting half a tree and then discovering the conflict —
