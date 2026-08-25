@@ -21,7 +21,7 @@ and milestone. A completed spec is moved to `docs/specs/archive/`.
 - [ ] `converter/cli.py`, `converter/batch.py` and `converter/paths.py` have an
       empty diff for this phase.
 - [ ] Every argv the test suite pins is produced byte-for-byte by the new engine.
-      The three note and rung changes listed under *Accepted behaviour deltas* are
+      The four changes listed under *Accepted behaviour deltas* are
       the complete set of behaviour differences; anything else is a defect.
 - [ ] Both profiles have a test pinning the exact argv they build, for the
       copyable and the non-copyable case each profile actually has
@@ -138,12 +138,12 @@ from this file.
 | `Job` keeps its public shape (`name`, `description`, `suffixes`, `target_suffix`, `first_attempt`, `retries`) and `JOBS` keeps its keys. The source-pair data behind them — the `JOBS` key (`video`, `audio`), the `Job.name` that `batch.py` prints as the progress-bar description (`mkv-to-mp4`, `opus-to-wav`), the help text, the source suffixes and the target profile — lives in one `JOB_BINDINGS` table in `jobs.py`, explicitly exempted from the no-format-knowledge outcome and marked in the module as phase-2 scaffolding | Delivers the empty diff in `cli.py` and `batch.py`. The data is a *source-pair* binding, not target-format knowledge, so putting it on the profile would contaminate the value type phase 2 consumes by target alone | 2026-08-25 |
 | `flags()` moves from `jobs.py` to `profiles.py`; `jobs.py` imports it from there | `profiles.py` writes the recipes and may not import `jobs`; duplicating the function instead would be two definitions of one convention | 2026-08-25 |
 | The module-level recipe functions `mp4_remux`, `mp4_retries`, `wav_pcm`, `wav_retries` may disappear | They are internal — nothing outside `jobs.py` and its tests imports them, and the README documents no Python API | 2026-08-25 |
-| Every argv assertion in the test suite is preserved verbatim. A note assertion may change only for one of the three *Accepted behaviour deltas* below; any other diff to the safety net fails review | The tests are this refactor's safety net; a refactor that silently rewrites its own safety net proves nothing | 2026-08-25 |
+| Every argv assertion in the test suite is preserved verbatim. A note assertion may change only for one of the *Accepted behaviour deltas* below; any other diff to the safety net fails review | The tests are this refactor's safety net; a refactor that silently rewrites its own safety net proves nothing | 2026-08-25 |
 | Genuinely open decisions: **none**. Every fork this phase raises is answered in the rows above, resolved from `docs/prior-art.md`, `docs/constitution.md` or `docs/architecture.md` | Recorded so the acceptance gate is a deliberate "nothing was guessed", not an omission | 2026-08-25 |
 
 ### Accepted behaviour deltas
 
-These three are the complete set of intended differences from `main`. Each ships
+These four are the complete set of intended differences from `main`. Each ships
 with the test that pins it.
 
 1. **The attachment/unknown-stream note gains the codec.** Today it reads
@@ -155,7 +155,12 @@ with the test that pins it.
    becomes what `D2` in `docs/design/stream-decision.md` renders for this case —
    `audio stream 1 (opus) dropped: WAV holds 1 audio stream` — which names the
    stream that was actually lost and its codec. The rung's argv is unchanged.
-3. **A WAV source carrying a non-audio stream gains a rung on the failure path.**
+3. **WAV's fallback rung is labelled `selective` instead of `first-audio-stream`.**
+   Not visible on a successful conversion — the label only surfaces in the
+   per-rung error line `batch.py` builds when every rung failed, so a WAV file
+   that fails outright now reports `[selective] ...` where `main` reports
+   `[first-audio-stream] ...`.
+4. **A WAV source carrying a non-audio stream gains a rung on the failure path.**
    An `.opus` with embedded cover art currently produces no retry at all; it now
    reaches a selective rung that drops the cover-art stream with a note. The rung
    is only ever built after the cheap attempt has already failed, and its argv is
@@ -192,6 +197,10 @@ Machine checks — Verify is the per-iteration gate (`docs/workflow.md`):
       attempt's own two notes (lossy re-encode; 10-bit/HDR reduced to 8-bit).
 - [ ] A test asserting WAV's PCM conversion emits **no** note — the one re-encode
       that is not a degradation.
+- [ ] A test per failure-path delta, since the QA gate cannot reach them: the
+      engine-built rung is labelled `selective` for WAV too (delta 3), and a WAV
+      source carrying a non-audio stream yields exactly one rung that drops it
+      with a note (delta 4).
 - [ ] `git diff main -- converter/cli.py converter/batch.py converter/paths.py`
       is empty.
 - [ ] No function in `converter/jobs.py` or `converter/profiles.py` exceeds 50
@@ -208,7 +217,7 @@ not create the directory itself:
 New-Item -ItemType Directory -Force in
 & $FF -f lavfi -i testsrc=size=320x240:rate=10:duration=2 -f lavfi -i sine=duration=2 -c:v libx264 -c:a aac in/clip.mkv
 & $FF -f lavfi -i testsrc=size=320x240:rate=10:duration=2 -c:v ffv1 in/lossless.mkv
-& $FF -f lavfi -i testsrc=size=320x240:rate=10:duration=2 -c:v libx264 -attach LICENSE -metadata:s:t mimetype=text/plain in/attached.mkv
+& $FF -f lavfi -i testsrc=size=320x240:rate=10:duration=2 -c:v libx264 -attach C:\Windows\Fonts\arial.ttf -metadata:s:t mimetype=application/x-truetype-font in/attached.mkv
 & $FF -f lavfi -i sine=duration=2 -c:a libopus in/tone.opus
 & $FF -f lavfi -i sine=frequency=440:duration=2 -f lavfi -i sine=frequency=880:duration=2 -map 0:a -map 1:a -c:a libopus in/two-tone.opus
 ```
@@ -226,13 +235,15 @@ why both audio fixtures use that suffix.
       `ffv1`, and the re-encode to h264.
 - [ ] A second run of each over the same output tree reports `0 converted`,
       `N skipped`, `0 failed`, exit 0.
-- [ ] Delta 1: `attached.mkv` converts and its attachment note names the codec,
-      which the same command on `main` omits.
+- [ ] Delta 1: `attached.mkv` converts and its attachment note names the font
+      codec (`ttf`), which the same command on `main` omits entirely.
 - [ ] Delta 2: `two-tone.opus` converts and names the dropped audio stream and
       its codec, where `main` reports the count instead.
-- [ ] Delta 3: an `.opus` carrying cover art reaches a selective rung on the
-      failure path only — no successful conversion above differs from `main`
-      beyond deltas 1 and 2.
+- [ ] Deltas 3 and 4 are **not QA-checkable**, by construction: both only surface
+      once an attempt has already failed, which no synthesised fixture triggers
+      reliably. They are covered by the machine checks instead. What this gate
+      does check is the negative — no successful conversion above differs from
+      `main` beyond deltas 1 and 2.
 
 ## Risks and mitigations
 
