@@ -279,3 +279,20 @@ why both audio fixtures use that suffix.
   phase does not build (a mandatory last rung, copy-only acceptance, two drop
   reasons). Amended here rather than left to drift, since architecture is the
   living doc this phase alters.
+- 2026-08-25 (issue #5): `StreamRule.drop_reason` is typed `str | None`, not the
+  bare `str` its prose ("the reason a stream is dropped when there is no
+  fallback") might suggest, because MP4's video and audio rules always declare a
+  fallback encoder — the D3 branch that would read `drop_reason` is unreachable
+  for them, and giving it a real value there would read as a lie about what the
+  rule does. `None` marks "not applicable"; only MP4's subtitle rule sets it.
+- 2026-08-25 (issue #5): WAV's audio rule declares `accept_options=()` rather
+  than a placeholder copy template, because its copy mask is empty by
+  construction — the accept branch of `stream-decision.md` can never be reached
+  for it, so there is no real template to write.
+- 2026-08-25 (issue #5): `jobs.py` keeps `MP4_VIDEO_CODECS`, `MP4_AUDIO_CODECS`,
+  `TEXT_SUBTITLE_CODECS` and `FASTSTART` as its own module-level constants,
+  duplicating the values now also held by `profiles.MP4`'s rules and container
+  options. Issue #5's contract is "no ladder rewrite" — only `flags()` and
+  `Attempt` move — so `jobs.py`'s recipe functions still reference their own
+  copies. The duplication is temporary: issue #6 rewires `jobs.py` onto the
+  profile and removes it.

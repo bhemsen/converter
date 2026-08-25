@@ -9,6 +9,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from converter.ffmpegtool import Stream
+from converter.profiles import Attempt, flags
 
 #: Codecs a standard MP4 container accepts, so they can be stream-copied.
 MP4_VIDEO_CODECS = frozenset({"h264", "hevc", "av1", "vp9", "mpeg4", "mpeg2video", "mjpeg"})
@@ -18,26 +19,6 @@ TEXT_SUBTITLE_CODECS = frozenset({"subrip", "srt", "ass", "ssa", "mov_text", "we
 
 #: Move the MP4 index to the front so the file plays before it is fully read.
 FASTSTART = ("-movflags", "+faststart")
-
-
-def flags(spec: str) -> tuple[str, ...]:
-    """Split a command-line-shaped string into argv items.
-
-    Recipes then read exactly like what you would type after ``ffmpeg -i in.mkv``,
-    and flag/value pairs stay on one line regardless of how the formatter feels
-    about trailing commas.  Only ever used for flags and their values -- paths go
-    through :func:`converter.ffmpegtool.build_argv`, never through here.
-    """
-    return tuple(spec.split())
-
-
-@dataclass(frozen=True)
-class Attempt:
-    """One ffmpeg option list, with a note of anything it sacrifices."""
-
-    label: str
-    options: tuple[str, ...]
-    notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
