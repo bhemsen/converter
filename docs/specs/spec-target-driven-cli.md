@@ -193,7 +193,7 @@ The decomposition into steps lives as GitHub issues, not in this file — one
 issue per step, grouped under a milestone. This spec owns the design; the issues
 own progress.
 
-- Milestone: target-driven-cli (created at the spec-acceptance gate)
+- Milestone: [target-driven-cli](https://github.com/bhemsen/converter/milestone/2) (#2)
 - Issues: created from this spec once it is merged (one per implementable step)
 
 ## Verification
