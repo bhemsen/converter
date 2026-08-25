@@ -59,7 +59,10 @@ flowchart TD
   find `converted\a.mp4`, write `converted\converted\a.mp4`, and every run would
   add one more generation while reporting `1 converted`. The rule fires only when
   the output root is a **strict descendant** of the input root, because that is
-  the only shape where the walk can reach its own output. An output root that is
+  the only shape where the walk can reach its own output. Both roots are resolved
+  before the descendancy test, for the same reason the two guards below resolve:
+  `--mirror-to` derives the output root from a resolved input path while the input
+  root is whatever was typed, so comparing as given would test the wrong pair. An output root that is
   a *sibling*, on another drive, or an *ancestor* of the input root is already
   outside the walked tree: `--to mp4 -r D:\Media\Season1 D:\Media` writes one
   level up, run 2 walks only `Season1` and never sees it. Testing "lies under the

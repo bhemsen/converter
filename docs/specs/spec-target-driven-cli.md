@@ -189,10 +189,11 @@ The gate therefore picks between two answers, not three:
    flag is **repeatable** (`--from mkv --from avi`) and not comma-separated,
    matching how argparse expresses a list without a second parsing rule; it
    accepts the same dotted and cased forms `--to` does, normalised the same way;
-   it **intersects** the curated source-suffix set rather than replacing it, so a
-   typo cannot widen discovery to files ffmpeg was never going to read; and a
-   suffix outside that set is a usage error (exit 2) naming it, not an empty run
-   that looks like success.
+   and it is **two rules, not one** — validation first, then filtering. A suffix
+   outside the curated source-suffix set is a usage error (exit 2) naming it,
+   never an empty run that looks like success; what survives validation then
+   narrows discovery. Written as a single "intersect" the filter would silently
+   swallow a typo, which is the wrong half to implement.
 
 A `--from` filter *alone* was considered and dropped: it leaves the default
 invocation failing on a mixed tree, which contradicts this spec's own Outcome and
@@ -282,6 +283,11 @@ reusing the fixtures the phase-1 gate synthesises:
       from a directory where ffmpeg is not on PATH.
 - [ ] `converter video in out` fails with a message that tells the user what to
       run instead.
+- [ ] `converter --to mp4 -r in --mirror-to <second drive>` mirrors the fixture
+      tree onto a real second drive and a re-run reports `0 converted`. The
+      machine checks cover `--mirror-to` three times over, but this is the only
+      gate where a real drive is involved, and `docs/constitution.md` makes
+      Windows a first-class target.
 
 ## Risks and mitigations
 
