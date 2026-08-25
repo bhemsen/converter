@@ -52,6 +52,12 @@ milestone. A completed spec is moved to `docs/specs/archive/`.
   progress-bar description, and mapping the engine's signal onto the outcome the
   gate decides for a source the target cannot produce — mapping only, never
   deciding.
+- `converter/paths.py`: the three new selection predicates — self-write,
+  output-tree exclusion and the overwrite hazard — live here beside
+  `find_collisions`, as pure path logic with no ffmpeg or profile knowledge, and
+  the output-tree exclusion means `find_sources` grows a way to skip a subtree.
+  `cli.py` calls them; it does not reimplement them, which is also what keeps
+  `convert_command` under 50 lines. Their tests go to `tests/test_paths.py`.
 - `converter/jobs.py`: exposing the engine entry points `batch.py` now calls
   directly, and reporting the "no rule matches any present stream" signal the
   unsupported outcome rests on. No change to the ladder itself.
@@ -60,6 +66,7 @@ milestone. A completed spec is moved to `docs/specs/archive/`.
   `tests/test_batch.py` imports `MKV_TO_MP4` / `OPUS_TO_WAV` across 17 call
   sites, and `tests/test_cli.py`'s parser, output-root, convert-command,
   exit-code and prompt classes are written entirely against `video` / `audio`.
+  `tests/test_paths.py` gains the cases for the three new predicates.
 - `README.md`, the two tech-debt rows in `docs/constitution.md`, and the
   `docs/architecture.md` amendment already made in this spec's PR (the
   `batch` -> `profiles` edge, and `batch` calling the engine directly).
@@ -178,6 +185,15 @@ The gate therefore picks between two answers, not three:
    knows their tree can narrow it up front and never see the unsupported lines.
    More surface, more tests, and a flag phases 3-5 must keep working.
 
+   Picking this must not reopen planning, so its semantics are settled here: the
+   flag is **repeatable** (`--from mkv --from avi`) and not comma-separated,
+   matching how argparse expresses a list without a second parsing rule; it
+   accepts the same dotted and cased forms `--to` does, normalised the same way;
+   it **intersects** the curated source-suffix set rather than replacing it, so a
+   typo cannot widen discovery to files ffmpeg was never going to read; and a
+   suffix outside that set is a usage error (exit 2) naming it, not an empty run
+   that looks like success.
+
 A `--from` filter *alone* was considered and dropped: it leaves the default
 invocation failing on a mixed tree, which contradicts this spec's own Outcome and
 the vision criterion above.
@@ -213,6 +229,13 @@ Machine checks:
 - [ ] A test for a nested output root (`-r IN IN\converted`): run it twice, and
       the second run reports `0 converted`. Without the output-tree exclusion this
       grows a `converted\converted\...` generation per run, forever.
+- [ ] A test for an **ancestor** output root (`-r IN\Sub IN`): the files convert,
+      and a second run reports `0 converted`. A rule written as "lies under the
+      output root" without the strict-descendant clause excludes every candidate
+      here and reports a successful run that did nothing.
+- [ ] A `--mirror-to` variant of the `--overwrite` refusal test, so the hazard
+      guard is pinned on paths that differ as given and agree once resolved — the
+      one-directory test cannot tell the two comparisons apart.
 - [ ] A test that the self-write guard still fires under `--mirror-to`, where the
       output root is derived from a resolved input path and the source paths are
       not — the case a compare-as-given check would miss, and that an absolute

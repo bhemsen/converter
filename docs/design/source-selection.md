@@ -19,7 +19,7 @@ selection is complete before ffmpeg is even located, which is what lets
 flowchart TD
     F["file under the input root<br/>(recursive only with -r)"]
     MEDIA{"is its suffix in the registry's<br/>source-suffix set?"}
-    OWN{"does it lie under the output root,<br/>which is not the input root itself?"}
+    OWN{"is the output root a strict descendant of<br/>the input root, and does this file lie under it?"}
     OUT["derive the output path:<br/>mirror the tree, swap the suffix"]
     SELF{"does the output path resolve to<br/>this file's own input path?"}
     COLL{"does another non-self-writing source<br/>map to the same output path?"}
@@ -53,14 +53,19 @@ flowchart TD
   the copy mask is (`docs/prior-art.md`): ffmpeg can be asked what it contains,
   never what it will accept. A tree full of `.txt` and `.nfo` produces no work and
   no noise.
-- **The tool's own output tree is not an input.** A nested output root
-  (`--to mp4 -r D:\Media D:\Media\converted`) is the natural invocation, and
-  without this rule it never converges: run 2 would find `converted\a.mp4`, write
-  `converted\converted\a.mp4`, and every run would add one more generation while
-  reporting `1 converted`. Excluding what lies under the output root is what makes
-  a re-run reach `0 converted`. The exception is an output root that resolves to
-  the input root itself — there everything would be excluded, and the self-write
-  rule below is the one that answers the question instead.
+- **The tool's own output tree is not an input — but only when it really is
+  nested.** A nested output root (`--to mp4 -r D:\Media D:\Media\converted`) is
+  the natural invocation, and without this rule it never converges: run 2 would
+  find `converted\a.mp4`, write `converted\converted\a.mp4`, and every run would
+  add one more generation while reporting `1 converted`. The rule fires only when
+  the output root is a **strict descendant** of the input root, because that is
+  the only shape where the walk can reach its own output. An output root that is
+  a *sibling*, on another drive, or an *ancestor* of the input root is already
+  outside the walked tree: `--to mp4 -r D:\Media\Season1 D:\Media` writes one
+  level up, run 2 walks only `Season1` and never sees it. Testing "lies under the
+  output root" alone would exclude every candidate there and report a successful
+  run that did nothing. "Strict" is also what keeps output-root-equals-input-root
+  out of this rule, leaving it to the self-write guard below.
 - **The self-write guard is about the path, not the suffix.** A source is excluded
   only when its derived output path *is* its input path. Both sides are resolved
   before they are compared, and then compared case-folded — unlike
@@ -94,6 +99,21 @@ flowchart TD
   would report a file as kept and then destroy it, so the run is refused up front
   and names both files. Refusing only under `--overwrite` is what keeps the
   harmless in-place re-run from exiting 2.
+- **`COLL` and `HAZ` are whole-set passes, not per-file questions.** The diagram
+  draws them in the per-file flow for readability, but neither can be answered
+  while visiting one file: both need the full candidate list first, the two-pass
+  shape `paths.find_collisions` already has. Their memberships differ, and the
+  difference is what makes `HAZ` work at all:
+  - `COLL` looks at the outputs of sources that will actually convert — **self-
+    writing sources are excluded**, since they produce no conversion and cannot
+    contend for a path. It compares paths **as given**, like `find_collisions`
+    does today.
+  - `HAZ` looks at the input paths of **every selected source, self-writers
+    included** — the motivating case is precisely a self-writer, `a.mp4`, being
+    overwritten by `a.mkv`. Reading "selected" as "reached `TASK`" would build a
+    guard that never fires for the case it exists for. Like `SELF`, it compares an
+    output path against an input path, so it **resolves both sides** before
+    comparing; comparing as given would miss the hazard under `--mirror-to`.
 - **Skipped is a reported outcome; not-a-candidate is not.** An already-converted
   file is counted, because `0 converted, 12 skipped` is the idempotent-re-run
   evidence the vision promises. A `.txt`, or a file inside the output tree, is not,
