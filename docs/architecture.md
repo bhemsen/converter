@@ -48,9 +48,9 @@ The internal import graph is acyclic today and must stay that way:
 
 1. **Happy path.** `cli` resolves the target profile and the output root,
    `paths.find_sources` collects the inputs, `paths.find_collisions` refuses up
-   front if two inputs would write to the same output, then `batch.run_batch` runs the profile's cheapest attempt
-   per file through the engine in `jobs.py`. On success nothing else happens — no
-   ffprobe round-trip is ever spent.
+   front if two inputs would write to the same output, then `batch.run_batch`
+   runs the profile's cheapest attempt per file through the engine in `jobs.py`.
+   On success nothing else happens — no ffprobe round-trip is ever spent.
 2. **Degradation.** The attempt exits non-zero, so *now* `ffmpegtool.probe_streams`
    describes the file. The engine matches each stream against the profile's copy
    mask: streams the mask accepts pass through unchanged — as a literal `copy`, or
