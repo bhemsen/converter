@@ -172,7 +172,7 @@ The decomposition into steps lives as GitHub issues, not in this file — one
 issue per step, grouped under a milestone. This spec owns the design; the issues
 own progress. Do not duplicate the step list here.
 
-- Milestone: profile-registry (created at the spec-acceptance gate)
+- Milestone: [profile-registry](https://github.com/bhemsen/converter/milestone/1) (#1)
 - Issues: created from this spec once it is merged (one per implementable step)
 
 Each issue references this spec path in its body.
