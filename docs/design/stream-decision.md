@@ -29,7 +29,7 @@ flowchart TD
     COPY["accept — map stream i, emit the rule's pass-through codec<br/>(literal copy, or a cheap in-kind transcode such as mov_text)"]
     REENC["re-encode — map stream i, emit the fallback encoder<br/>note: t stream i (c) re-encoded to TARGET_CODEC<br/>(a rule may declare no note where the re-encode gives up nothing)"]
     D1["drop — note: t stream i (c) dropped: not supported by TARGET"]
-    D2["drop — note: t stream i (c) dropped: TARGET holds N t stream(s)"]
+    D2["drop — note: t stream i (c) dropped: TARGET holds LIMIT t stream<br/>(the noun agrees in number with LIMIT)"]
     D3["drop — note: t stream i (c) dropped: DROP_REASON"]
 
     S --> T
@@ -55,9 +55,13 @@ flowchart TD
   only codec is the definition of that target format, not a loss — WAV's PCM rule
   declares no note, MP4's `aac` and `h264` fallbacks do. Whether the note exists
   is the rule's data, never an engine heuristic.
-- **Output specifiers count per type, in mapping order.** The position used in
+- **Output specifiers count per type, in mapping order.** Where a rule's option
+  template carries the position placeholder, the value substituted into
   `-c:v:0`, `-c:a:1` is the count of streams of that type already kept, not the
-  input stream index — ffmpeg counts output streams per type.
+  input stream index — ffmpeg counts output streams per type. The placeholder is
+  optional: a rule whose stream limit is 1 can only ever produce one output stream
+  of its type, so it writes the bare specifier (`-c:a`) and the engine substitutes
+  nothing.
 - **The rung is emitted as maps, then codecs, then container options.** All
   `-map` pairs first in stream order, then every codec option in the same order,
   then the profile's container-wide options. Interleaving per stream would be

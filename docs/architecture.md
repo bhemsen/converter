@@ -21,9 +21,9 @@ Everything else exists today.
 ## Boundaries
 
 The internal import graph is acyclic today and must stay that way:
-`ffmpegtool` and `paths` are leaves, `jobs` depends on `ffmpegtool`, `batch`
-depends on `jobs` + `ffmpegtool` + `paths`, `cli` depends on all of them,
-`__main__` depends only on `cli`.
+`ffmpegtool`, `paths` and `profiles` are leaves, `jobs` depends on `ffmpegtool` +
+`profiles`, `batch` depends on `jobs` + `ffmpegtool` + `paths`, `cli` depends on
+all of them, `__main__` depends only on `cli`.
 
 - `converter/profiles.py` must be a **leaf**: no internal imports at all. This is
   what makes the constitution's "a target format is data, not code" structurally

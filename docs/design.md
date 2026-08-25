@@ -106,7 +106,8 @@ Instead of UI components, these are the rules a diagram in this project follows.
   Every edge that leaves a rung is labelled with the condition that takes it
   (`exit 0`, `exit != 0`), so no branch is implicit.
 - **Per-stream decision** — every stream ends on exactly one of three outcomes:
-  copy, re-encode, drop. Each drop edge is labelled with the reason the container
+  accept, re-encode, drop. "Accept" rather than "copy" because a stream the target
+  accepts may still be transcoded in kind (a text subtitle becoming `mov_text`). Each drop edge is labelled with the reason the container
   cannot hold the stream. Draw one decision chain per stream type (video, audio,
   subtitle, other) while the code branches per type; draw the chain once,
   type-agnostically, once the code is driven by per-type data rather than per-type

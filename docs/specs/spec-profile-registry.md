@@ -127,14 +127,15 @@ from this file.
 | A stream rule holds: the copy mask (a `frozenset` of codec names, possibly empty), the option template emitted for an accepted stream, an optional fallback-encoder option template, the human-readable name of what that encoder produces or `None` when the re-encode gives up nothing worth naming, an optional limit on how many streams of the type the container holds, and the reason a stream is dropped when there is no fallback | Covers every branch the two existing recipes take, including MP4's subtitle case where an accepted stream is transcoded to `mov_text` rather than copied, and WAV's case where nothing is copyable and the PCM conversion is the point of the format rather than a loss | 2026-08-25 |
 | WAV's audio rule has an **empty** copy mask, a `pcm_s16le` fallback, and **no** re-encode note; its stream limit is 1. WAV declares no rule for any other stream type | Reproduces today's output exactly: `wav_pcm()` emits no note, and a second audio stream is dropped with one. An empty mask is a legitimate value — a container may accept nothing as-is | 2026-08-25 |
 | Positional output specifiers are written into the option template as a literal `{n}` placeholder, e.g. `flags("-c:v:{n} libx264 -crf:v:{n} 18")`, and the engine replaces every `{n}` with the per-type output position | Keeps the `flags("...")` convention — the template still reads like the command line you would type — and avoids the engine guessing which flags take a stream specifier (`-preset` does not) | 2026-08-25 |
+| The placeholder is **optional**. A rule whose stream limit is 1 can only ever produce one output stream of its type, so it writes the bare specifier and the engine substitutes nothing. WAV's audio templates are therefore placeholder-free: `flags("-c:a pcm_s16le")` | This is what keeps `tests/test_argv.py`'s `("-map", "0:0", "-c:a", "pcm_s16le")` byte-for-byte rather than turning it into `-c:a:0`. The alternative — a universal placeholder plus a fourth accepted delta — would weaken the safety net to buy uniformity that a limit-1 container cannot use | 2026-08-25 |
 | The cheap attempt and the last-resort attempt are **declared per profile as data**, not derived by the engine | `docs/architecture.md`: a new target format must be one profile entry and nothing else. A derived last rung would need MP4's `-pix_fmt yuv420p` and WAV's absence of a video rung to live as branching in `jobs.py`, i.e. format knowledge in the engine. Declaring them also guarantees the two existing argv strings survive byte-for-byte | 2026-08-25 |
-| Container-wide options are declared once on the profile and appended by the engine, exactly once, at the **end** of every attempt — including the declared ones, whose data therefore excludes them | Today `+faststart` is the tail of all three MP4 attempts. Appending centrally keeps that argv and stops a profile from repeating the flag; drawn in `docs/design/degradation-ladder.md` | 2026-08-25 |
-| The engine-built rung emits **all `-map` pairs first in stream order, then all codec options in the same order, then the container options** | `tests/test_argv.py` pins exactly this grouping; per-stream interleaving would be equally valid ffmpeg and a different argv. Drawn in `docs/design/stream-decision.md` | 2026-08-25 |
+| Container-wide options are declared once on the profile, and the engine places them as `docs/design/degradation-ladder.md` specifies; the declared attempts' own data therefore excludes them | Today `+faststart` is the tail of all three MP4 attempts. Declaring it once keeps that argv and stops a profile from repeating the flag | 2026-08-25 |
+| The engine-built rung emits its options in the order `docs/design/stream-decision.md` specifies | `tests/test_argv.py` pins exactly that grouping; any other order would be equally valid ffmpeg and a different argv | 2026-08-25 |
 | The selective rung is emitted per `docs/design/degradation-ladder.md`; the one datum the engine cannot derive — whether the cheap attempt already selects streams explicitly — is declared by the profile (MP4: no, WAV: yes) | The alternative, comparing the plan against the cheap attempt, would require the engine to parse ffmpeg option syntax, putting CLI knowledge back into `jobs.py`. With the flag, MP4 keeps its rung for `[h264]` and WAV keeps returning no rung for a single audio stream — both existing tests hold | 2026-08-25 |
 | The engine-built rung is labelled `"selective"` for every profile; the declared attempts keep their current labels (`remux`, `pcm_s16le`, `re-encode`). WAV's `first-audio-stream` label disappears | `tests/test_batch.py` pins `remux` and `selective`; nothing pins `first-audio-stream`. One label for one engine-built rung is what makes the label meaningful across 17 formats | 2026-08-25 |
-| A note's `<target>` is the profile's **display label** (`MP4`, `WAV`); a stream whose `codec_name` ffprobe leaves empty reads as `unknown` | Both reproduce today's strings in `converter/jobs.py` | 2026-08-25 |
+| A note's `TARGET` is the profile's **display label** (`MP4`, `WAV`). A stream whose `codec_name` ffprobe leaves empty reads as `unknown`, and so does a stream whose `codec_type` it leaves empty | All three reproduce today's strings in `converter/jobs.py`, which already falls back to `unknown` for both fields | 2026-08-25 |
 | `Attempt` moves to `profiles.py` and `jobs.py` imports it; `jobs.py` does **not** re-export it | A profile declares attempts, so the type must sit in the leaf. One import path per type, so a test cannot accidentally pin the wrong one | 2026-08-25 |
-| `Job` keeps its public shape (`name`, `description`, `suffixes`, `target_suffix`, `first_attempt`, `retries`) and `JOBS` keeps its keys. The source-pair data behind them — sub-command name, description, source suffixes, target profile — lives in one `JOB_BINDINGS` table in `jobs.py`, explicitly exempted from the no-format-knowledge outcome and marked in the module as phase-2 scaffolding | Delivers the empty diff in `cli.py` and `batch.py`. The data is a *source-pair* binding, not target-format knowledge, so putting it on the profile would contaminate the value type phase 2 consumes by target alone | 2026-08-25 |
+| `Job` keeps its public shape (`name`, `description`, `suffixes`, `target_suffix`, `first_attempt`, `retries`) and `JOBS` keeps its keys. The source-pair data behind them — the `JOBS` key (`video`, `audio`), the `Job.name` that `batch.py` prints as the progress-bar description (`mkv-to-mp4`, `opus-to-wav`), the help text, the source suffixes and the target profile — lives in one `JOB_BINDINGS` table in `jobs.py`, explicitly exempted from the no-format-knowledge outcome and marked in the module as phase-2 scaffolding | Delivers the empty diff in `cli.py` and `batch.py`. The data is a *source-pair* binding, not target-format knowledge, so putting it on the profile would contaminate the value type phase 2 consumes by target alone | 2026-08-25 |
 | `flags()` moves from `jobs.py` to `profiles.py`; `jobs.py` imports it from there | `profiles.py` writes the recipes and may not import `jobs`; duplicating the function instead would be two definitions of one convention | 2026-08-25 |
 | The module-level recipe functions `mp4_remux`, `mp4_retries`, `wav_pcm`, `wav_retries` may disappear | They are internal — nothing outside `jobs.py` and its tests imports them, and the README documents no Python API | 2026-08-25 |
 | Every argv assertion in the test suite is preserved verbatim. A note assertion may change only for one of the three *Accepted behaviour deltas* below; any other diff to the safety net fails review | The tests are this refactor's safety net; a refactor that silently rewrites its own safety net proves nothing | 2026-08-25 |
@@ -151,8 +152,9 @@ with the test that pins it.
    `attachment stream 1 (ttf) dropped: not supported by MP4`.
 2. **The surplus-audio-stream note is re-worded per stream instead of per file.**
    Today: `2 audio streams present; kept stream 0 only (WAV holds one)`. It
-   becomes `audio stream 1 (opus) dropped: WAV holds 1 audio stream`, which names
-   the stream that was actually lost and its codec.
+   becomes what `D2` in `docs/design/stream-decision.md` renders for this case —
+   `audio stream 1 (opus) dropped: WAV holds 1 audio stream` — which names the
+   stream that was actually lost and its codec. The rung's argv is unchanged.
 3. **A WAV source carrying a non-audio stream gains a rung on the failure path.**
    An `.opus` with embedded cover art currently produces no retry at all; it now
    reaches a selective rung that drops the cover-art stream with a note. The rung
@@ -198,29 +200,39 @@ Machine checks — Verify is the per-iteration gate (`docs/workflow.md`):
 
 Human milestone-QA gate — the machine checks stub the subprocess boundary and so
 prove nothing about a real conversion (`docs/workflow.md`). The repository ships
-no media fixtures; synthesise them first, with the absolute ffmpeg path from
-*This machine*:
+no media fixtures; synthesise them first. `$FF` is the absolute ffmpeg path from
+*This machine*; the shell is PowerShell, one command per line, and `ffmpeg` does
+not create the directory itself:
 
 ```text
-ffmpeg -f lavfi -i testsrc=size=320x240:rate=10:duration=2 \
-       -f lavfi -i sine=duration=2 -c:v libx264 -c:a aac  in/clip.mkv
-ffmpeg -f lavfi -i sine=duration=2 -c:a libopus            in/tone.opus
-ffmpeg -f lavfi -i testsrc=size=320x240:rate=10:duration=2 \
-       -c:v ffv1                                           in/lossless.mkv
+New-Item -ItemType Directory -Force in
+& $FF -f lavfi -i testsrc=size=320x240:rate=10:duration=2 -f lavfi -i sine=duration=2 -c:v libx264 -c:a aac in/clip.mkv
+& $FF -f lavfi -i testsrc=size=320x240:rate=10:duration=2 -c:v ffv1 in/lossless.mkv
+& $FF -f lavfi -i testsrc=size=320x240:rate=10:duration=2 -c:v libx264 -attach LICENSE -metadata:s:t mimetype=text/plain in/attached.mkv
+& $FF -f lavfi -i sine=duration=2 -c:a libopus in/tone.opus
+& $FF -f lavfi -i sine=frequency=440:duration=2 -f lavfi -i sine=frequency=880:duration=2 -map 0:a -map 1:a -c:a libopus in/two-tone.opus
 ```
 
-`ffv1` is the ladder-forcing case: MP4 cannot hold it, so the remux fails and the
-selective rung has to re-encode the video.
+`lossless.mkv` is the ladder-forcing case: MP4 cannot hold `ffv1`, so the remux
+fails and the selective rung has to re-encode the video. `attached.mkv` and
+`two-tone.opus` exist to make deltas 1 and 2 observable — the other fixtures
+never reach those branches. The WAV job only accepts `.opus` sources, which is
+why both audio fixtures use that suffix.
 
 - [ ] `converter video in out` converts `clip.mkv` to a playable `.mp4` and
-      reports `1 converted, 0 skipped, 0 failed`, exit 0.
+      reports `converted`, `0 failed`, exit 0.
 - [ ] `converter audio in out` converts `tone.opus` to a playable `.wav`.
-- [ ] `converter video in out` over `lossless.mkv` still converts, and prints a
-      note naming the stream index, `ffv1`, and the re-encode to h264.
+- [ ] `lossless.mkv` still converts, and prints a note naming the stream index,
+      `ffv1`, and the re-encode to h264.
 - [ ] A second run of each over the same output tree reports `0 converted`,
       `N skipped`, `0 failed`, exit 0.
-- [ ] The three *Accepted behaviour deltas* are the only differences a human can
-      observe against the same commands run on `main`.
+- [ ] Delta 1: `attached.mkv` converts and its attachment note names the codec,
+      which the same command on `main` omits.
+- [ ] Delta 2: `two-tone.opus` converts and names the dropped audio stream and
+      its codec, where `main` reports the count instead.
+- [ ] Delta 3: an `.opus` carrying cover art reaches a selective rung on the
+      failure path only — no successful conversion above differs from `main`
+      beyond deltas 1 and 2.
 
 ## Risks and mitigations
 
@@ -246,6 +258,12 @@ selective rung has to re-encode the video.
   cheap attempt is not computable from declared data without parsing ffmpeg
   option syntax. Replaced by a declared flag on the profile; both existing
   suppression behaviours were re-checked against `tests/test_argv.py`.
+- 2026-08-25: Closing the equivalence escape hatch in review round 2 introduced a
+  contradiction of its own: the universal `{n}` placeholder would have turned
+  WAV's pinned `-c:a pcm_s16le` into `-c:a:0`, which the closed delta list forbids.
+  Resolved by making the placeholder optional for a rule that can only produce one
+  output stream, rather than by admitting a fourth delta — the strict reading of
+  "the argv stays identical" is worth more than template uniformity.
 - 2026-08-25: Spec review found `docs/architecture.md` describing a ladder this
   phase does not build (a mandatory last rung, copy-only acceptance, two drop
   reasons). Amended here rather than left to drift, since architecture is the

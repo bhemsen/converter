@@ -11,7 +11,7 @@
 
 | Phase | Name | Spec | Milestone |
 |---|---|---|---|
-| 1 | profile-registry | — | — |
+| 1 | profile-registry | [spec-profile-registry.md](specs/spec-profile-registry.md) | — |
 | 2 | target-driven-cli | — | — |
 | 3 | audio-formats | — | — |
 | 4 | video-formats | — | — |
