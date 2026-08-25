@@ -181,7 +181,7 @@ are not silently lost; seeding them as roadmap phases is `/loopkit:roadmap`'s jo
 the cheap attempt completes has **no stream list** — the engine cannot name what
 it dropped, because it does not know.
 
-**This affects five of the seven targets, and six if `opus` copies.** A target is
+**This affects five of the six audio targets, and six if `opus` copies.** A target is
 affected whenever its cheap attempt maps audio only: it then succeeds, the
 artwork is gone, and there is nothing to build a note from. That is `mp3`, `m4a`,
 `flac`, `ogg` — and `wav`, whose cheap attempt
@@ -195,6 +195,11 @@ video is what makes a cover-art source fail into the ladder, which then names th
 picture stream and its codec properly. If `opus` copies instead, no target maps
 video at all and all six are affected.
 
+Weigh `ogg` at its real frequency, though: an `.ogg` file **cannot** hold cover
+art as a picture stream at all, so `ogg`'s silent loss is only reachable from a
+non-Ogg source that carries Vorbis plus artwork — measured, but rarer than "`ogg`
+loses your album art" would suggest.
+
 **`wav` raises a sub-question the gate should see.** It is not in this phase's
 profile table, and the Outcome promises it "behaves exactly as it does after
 phase 2". Extending the standing note to it is a `converter/profiles.py` diff —
@@ -202,6 +207,12 @@ which the file list allows — but it changes what `wav` reports, so that Outcom
 bullet would have to be relaxed to "`wav`'s argv is unchanged; its notes gain the
 standing line". The alternative is that `wav` keeps the hole, now that this spec
 has at least named it.
+
+It is not only an Outcome bullet: `tests/test_argv.py::TestWavJob::test_first_attempt_is_pcm`
+asserts `attempt.notes == ()` on WAV's cheap attempt, and `spec-profile-registry.md`
+protects that suite as its refactor's safety net. Extending the note to `wav` is a
+deliberate change to a phase-1 assertion that phase 2's test migration carried
+forward — cheap to do, but it should be chosen, not stumbled into.
 
 Every degraded conversion the *ladder* reaches still names the stream index, its
 codec and what was given up, exactly as `docs/vision.md` requires. The gap is the
@@ -253,7 +264,7 @@ common case, to prevent a mislabel only reachable by pointing `--to opus` at a
    fails encoder selection, so the ladder always runs. Intended, but priced here.
 
 Picking 1 also removes `opus` from the video-mapping group, so no target maps
-video and all five join the first decision's group. Picking 2 keeps `opus` as the
+video and all six join the first decision's group. Picking 2 keeps `opus` as the
 one target whose cover-art loss is named properly.
 
 ## Tracking
@@ -308,17 +319,17 @@ New-Item -ItemType Directory -Force in
 & $FF -y -f lavfi -i sine=duration=3 -c:a libvorbis  in/tone.ogg
 & $FF -y -f lavfi -i sine=duration=3 -c:a pcm_s16le  in/tone.wav
 & $FF -y -f lavfi -i testsrc=size=320x240:rate=10:duration=3 -f lavfi -i sine=duration=3 -c:v libx264 -c:a aac in/clip.mp4
-& $FF -y -f lavfi -i color=c=red:size=200x200:d=1 -frames:v 1 in/cover.png
-& $FF -y -i in/tone.mp3 -i in/cover.png -map 0:a -map 1:v -c copy -disposition:v:0 attached_pic in/art.mp3
-& $FF -y -i in/tone.ogg -i in/cover.png -map 0:a -map 1:v -c copy -disposition:v:0 attached_pic in/artv.ogg
+New-Item -ItemType Directory -Force art
+& $FF -y -f lavfi -i color=c=red:size=200x200:d=1 -frames:v 1 art/cover.png
+& $FF -y -i in/tone.mp3 -i art/cover.png -map 0:a -map 1:v -c copy -disposition:v:0 attached_pic art/art.mp3
+& $FF -y -i in/tone.ogg -i art/cover.png -map 0:a -map 1:v -c copy -disposition:v:0 attached_pic art/artv.mkv
 ```
 
 - [ ] Each of the six targets converts a real source and the result plays.
-- [ ] `--to mp3 in out` converts the seven conversion sources (the six tones and
-      `clip.mp4`), names every re-encode it performed, and exits 0. `art.mp3` is a
-      conversion source too and is covered by its own item below; `cover.png` is
-      not a source at all -- keep it outside `in/`, or expect the image phase to
-      claim it later.
+- [ ] `--to mp3 in out` converts the seven sources in `in/` — the six tones and
+      `clip.mp4` — names every re-encode it performed, and exits 0. The artwork
+      fixtures live in `art/` so this count stays put; they have their own items
+      below.
 - [ ] A stream copy really is a copy: `--to mp3` from `tone.mp3` finishes
       near-instantly and the audio stream is packet-identical --
       `& $FF -i out/tone.mp3 -map 0:a -c copy -f md5 -` matches the same command
@@ -332,11 +343,11 @@ New-Item -ItemType Directory -Force in
 - [ ] `art.mp3` under `--to mp3`: `ffprobe` the output and confirm the picture
       stream is gone, and that the run says what the gate's first decision says
       it says.
-- [ ] `artv.ogg` (vorbis audio plus artwork — the fixture block builds it) under
+- [ ] `artv.mkv` (vorbis audio plus artwork — the fixture block builds it) under
       `--to ogg`: same check. This is the case that exposes `ogg`'s silent loss;
       pointing `art.mp3` at `--to ogg` proves nothing about cover art, because the
       ogg muxer rejects the *mp3 audio* first and the picture is never mapped.
-- [ ] Only if the gate has `opus` encode: `artv.ogg` under `--to opus` fails the
+- [ ] Only if the gate has `opus` encode: `artv.mkv` under `--to opus` fails the
       cheap attempt, reaches the ladder, and names the picture stream and its
       codec — the one target where the loss is reported properly.
 - [ ] `--to mp3` on `clip.mp4` rips the audio and names the dropped video stream.
