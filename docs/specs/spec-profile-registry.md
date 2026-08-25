@@ -319,3 +319,12 @@ why both audio fixtures use that suffix.
   that rung's argv through real ffmpeg succeeds and produces a valid file. The
   same direct check was run for `attached.mkv` (delta 1) and `two-tone.opus`
   (delta 2/3), all matching the design.
+- 2026-08-25 (issue #7): several notes already asserted by issue #6's tests
+  used substring checks (`"pcm_s16le" in note and "aac" in note`) rather than
+  pinning the exact string, which does not satisfy Verification's "names the
+  stream index, that stream's codec, and what was given up" for the video- and
+  audio-reencode and bitmap-subtitle-drop branches, nor pin the last-resort
+  attempt's own two notes. Left the existing (weaker) tests untouched per the
+  no-rewrite rule on the safety net and added new tests next to them
+  (`TestMp4DegradationNotes` in `tests/test_argv.py`) asserting exact equality
+  instead. No engine or profile code changed — this issue is test-only.
