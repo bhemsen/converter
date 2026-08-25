@@ -6,14 +6,7 @@ import pytest
 
 from converter import ffmpegtool
 from converter.ffmpegtool import Stream, build_argv, cli_path
-from converter.jobs import (
-    MKV_TO_MP4,
-    OPUS_TO_WAV,
-    mp4_remux,
-    mp4_retries,
-    wav_pcm,
-    wav_retries,
-)
+from converter.jobs import MKV_TO_MP4, OPUS_TO_WAV
 
 
 def options_of(argv: list[str], src: str, dst: str) -> list[str]:
@@ -97,7 +90,7 @@ class TestRunIsShellFree:
 
 class TestWavJob:
     def test_first_attempt_is_pcm(self):
-        attempt = wav_pcm()
+        attempt = OPUS_TO_WAV.first_attempt()
 
         assert attempt.options == ("-map", "0:a:0", "-c:a", "pcm_s16le")
         assert attempt.notes == ()
@@ -105,16 +98,32 @@ class TestWavJob:
     def test_single_audio_stream_needs_no_fallback(self):
         streams = [Stream(0, "audio", "opus")]
 
-        assert wav_retries(streams) == []
+        assert OPUS_TO_WAV.retries(streams) == []
 
-    def test_multiple_audio_streams_fall_back_to_the_first(self):
+    def test_multiple_audio_streams_fall_back_to_a_selective_rung(self):
+        """Deltas 2 and 3: the note names the dropped stream and its codec, and
+        the engine-built rung is labelled 'selective' rather than
+        'first-audio-stream'. The argv is unchanged."""
         streams = [Stream(0, "audio", "opus"), Stream(1, "audio", "opus")]
 
-        attempts = wav_retries(streams)
+        attempts = OPUS_TO_WAV.retries(streams)
 
         assert len(attempts) == 1
+        assert attempts[0].label == "selective"
         assert attempts[0].options == ("-map", "0:0", "-c:a", "pcm_s16le")
-        assert "kept stream 0" in attempts[0].notes[0]
+        assert attempts[0].notes == ("audio stream 1 (opus) dropped: WAV holds 1 audio stream",)
+
+    def test_non_audio_stream_gains_a_selective_rung_on_the_failure_path(self):
+        """Delta 4: an embedded cover-art stream used to produce no retry at
+        all; it now reaches a selective rung that drops it with a note."""
+        streams = [Stream(0, "audio", "opus"), Stream(1, "video", "mjpeg")]
+
+        attempts = OPUS_TO_WAV.retries(streams)
+
+        assert len(attempts) == 1
+        assert attempts[0].label == "selective"
+        assert attempts[0].options == ("-map", "0:0", "-c:a", "pcm_s16le")
+        assert attempts[0].notes == ("video stream 1 (mjpeg) dropped: not supported by WAV",)
 
     def test_job_metadata(self):
         assert OPUS_TO_WAV.suffixes == (".opus",)
@@ -123,7 +132,7 @@ class TestWavJob:
 
 class TestMp4Remux:
     def test_stream_copies_and_converts_text_subtitles(self):
-        options = mp4_remux().options
+        options = MKV_TO_MP4.first_attempt().options
 
         assert "-c" in options
         assert options[options.index("-c") + 1] == "copy"
@@ -133,7 +142,7 @@ class TestMp4Remux:
     def test_does_not_use_bare_map_zero(self):
         """'-map 0' also selects MKV attachments and data streams, which MP4
         cannot hold, so a remuxable file would fail for no good reason."""
-        options = list(mp4_remux().options)
+        options = list(MKV_TO_MP4.first_attempt().options)
         mapped = [options[i + 1] for i, flag in enumerate(options) if flag == "-map"]
 
         assert "0" not in mapped
@@ -142,19 +151,32 @@ class TestMp4Remux:
     def test_job_metadata(self):
         assert MKV_TO_MP4.suffixes == (".mkv",)
         assert MKV_TO_MP4.target_suffix == ".mp4"
-        assert MKV_TO_MP4.first_attempt() == mp4_remux()
+        assert MKV_TO_MP4.first_attempt().options == (
+            "-map",
+            "0:v?",
+            "-map",
+            "0:a?",
+            "-map",
+            "0:s?",
+            "-c",
+            "copy",
+            "-c:s",
+            "mov_text",
+            "-movflags",
+            "+faststart",
+        )
 
 
 class TestMp4Retries:
     def test_ladder_ends_with_a_full_reencode(self):
-        attempts = mp4_retries([Stream(0, "video", "h264")])
+        attempts = MKV_TO_MP4.retries([Stream(0, "video", "h264")])
 
         assert [a.label for a in attempts] == ["selective", "re-encode"]
 
     def test_selective_copies_compatible_streams(self):
         streams = [Stream(0, "video", "h264"), Stream(1, "audio", "aac")]
 
-        selective = mp4_retries(streams)[0]
+        selective = MKV_TO_MP4.retries(streams)[0]
 
         assert selective.options[:8] == (
             "-map",
@@ -171,7 +193,7 @@ class TestMp4Retries:
     def test_selective_reencodes_audio_mp4_cannot_hold(self):
         streams = [Stream(0, "video", "h264"), Stream(1, "audio", "pcm_s16le")]
 
-        selective = mp4_retries(streams)[0]
+        selective = MKV_TO_MP4.retries(streams)[0]
 
         assert "-c:a:0" in selective.options
         assert selective.options[selective.options.index("-c:a:0") + 1] == "aac"
@@ -184,7 +206,7 @@ class TestMp4Retries:
             Stream(2, "subtitle", "hdmv_pgs_subtitle"),
         ]
 
-        selective = mp4_retries(streams)[0]
+        selective = MKV_TO_MP4.retries(streams)[0]
 
         assert "-map" in selective.options
         assert "0:2" not in selective.options
@@ -193,18 +215,19 @@ class TestMp4Retries:
     def test_selective_keeps_text_subtitles_as_mov_text(self):
         streams = [Stream(0, "video", "h264"), Stream(1, "subtitle", "subrip")]
 
-        selective = mp4_retries(streams)[0]
+        selective = MKV_TO_MP4.retries(streams)[0]
 
         assert "-c:s:0" in selective.options
         assert selective.options[selective.options.index("-c:s:0") + 1] == "mov_text"
 
     def test_selective_drops_attachments_with_a_note(self):
+        """Delta 1: the note now names the codec too."""
         streams = [Stream(0, "video", "h264"), Stream(1, "attachment", "ttf")]
 
-        selective = mp4_retries(streams)[0]
+        selective = MKV_TO_MP4.retries(streams)[0]
 
         assert "0:1" not in selective.options
-        assert any("attachment" in note for note in selective.notes)
+        assert selective.notes == ("attachment stream 1 (ttf) dropped: not supported by MP4",)
 
     def test_output_specifiers_count_per_type_in_map_order(self):
         """Interleaved streams must still yield -c:a:0 and -c:a:1, not -c:a:1/-c:a:3."""
@@ -215,7 +238,7 @@ class TestMp4Retries:
             Stream(3, "audio", "flac"),
         ]
 
-        selective = mp4_retries(streams)[0]
+        selective = MKV_TO_MP4.retries(streams)[0]
 
         assert "-c:a:0" in selective.options
         assert "-c:a:1" in selective.options
@@ -224,12 +247,12 @@ class TestMp4Retries:
         assert "-c:s:0" in selective.options
 
     def test_no_mappable_stream_skips_straight_to_reencode(self):
-        attempts = mp4_retries([Stream(0, "attachment", "ttf")])
+        attempts = MKV_TO_MP4.retries([Stream(0, "attachment", "ttf")])
 
         assert [a.label for a in attempts] == ["re-encode"]
 
     def test_reencode_states_what_it_sacrifices(self):
-        reencode = mp4_retries([])[-1]
+        reencode = MKV_TO_MP4.retries([])[-1]
 
         assert "libx264" in reencode.options
         assert "aac" in reencode.options
@@ -237,7 +260,116 @@ class TestMp4Retries:
         assert any("lossy" in note for note in reencode.notes)
 
 
-@pytest.mark.parametrize("attempt", [mp4_remux(), *mp4_retries([Stream(0, "video", "h264")])])
+class TestProfileArgvPinning:
+    """Verification: the full argv each profile builds, pinned byte-for-byte
+    (docs/specs/spec-profile-registry.md)."""
+
+    def test_mp4_copyable_source(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "audio", "aac")]
+        selective = MKV_TO_MP4.retries(streams)[0]
+
+        argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.mp4")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:v:0",
+            "copy",
+            "-c:a:0",
+            "copy",
+            "-movflags",
+            "+faststart",
+            "out.mp4",
+        ]
+
+    def test_mp4_non_copyable_source(self):
+        streams = [Stream(0, "video", "vp8"), Stream(1, "audio", "pcm_s16le")]
+        selective = MKV_TO_MP4.retries(streams)[0]
+
+        argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.mp4")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:v:0",
+            "libx264",
+            "-crf:v:0",
+            "18",
+            "-c:a:0",
+            "aac",
+            "-b:a:0",
+            "192k",
+            "-movflags",
+            "+faststart",
+            "out.mp4",
+        ]
+
+    def test_wav_single_audio_source(self):
+        argv = build_argv("ffmpeg", "in.opus", OPUS_TO_WAV.first_attempt().options, "out.wav")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.opus",
+            "-map",
+            "0:a:0",
+            "-c:a",
+            "pcm_s16le",
+            "out.wav",
+        ]
+
+    def test_wav_two_audio_source(self):
+        streams = [Stream(0, "audio", "opus"), Stream(1, "audio", "opus")]
+        selective = OPUS_TO_WAV.retries(streams)[0]
+
+        argv = build_argv("ffmpeg", "in.opus", selective.options, "out.wav")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.opus",
+            "-map",
+            "0:0",
+            "-c:a",
+            "pcm_s16le",
+            "out.wav",
+        ]
+
+
+@pytest.mark.parametrize(
+    "attempt",
+    [MKV_TO_MP4.first_attempt(), *MKV_TO_MP4.retries([Stream(0, "video", "h264")])],
+)
 def test_every_attempt_produces_a_wellformed_command(attempt):
     argv = build_argv("ffmpeg", "in.mkv", attempt.options, "out.mp4")
 

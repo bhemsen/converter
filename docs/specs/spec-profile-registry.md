@@ -296,3 +296,26 @@ why both audio fixtures use that suffix.
   `Attempt` move — so `jobs.py`'s recipe functions still reference their own
   copies. The duplication is temporary: issue #6 rewires `jobs.py` onto the
   profile and removes it.
+- 2026-08-25 (issue #6): the per-stream decision is drawn as a single helper,
+  `_decide_stream`, that returns `(maps, codecs, note)` for one stream and
+  mutates a shared `counts` dict rather than the caller threading a returned
+  counter back in. A pure "return the incremented count too" shape was
+  rejected: `_build_selective`'s loop would then have to unpack and re-store
+  `counts[stream.codec_type]` itself, duplicating the bookkeeping
+  `_decide_stream` already has all the information to do once.
+- 2026-08-25 (issue #6): `JOB_BINDINGS` is keyed by the same strings as `JOBS`
+  (`"video"`, `"audio"`) and holds a small frozen `_Binding` (name,
+  description, suffixes, profile) rather than a bare tuple, so the phase-2
+  removal this table is scaffolding for can delete one dataclass and one dict
+  without hunting through positional-tuple indexing elsewhere.
+- 2026-08-25 (issue #6): confirmed on this machine's ffmpeg (9.0, gyan.dev
+  build) that the milestone-QA `lossless.mkv` fixture's cheap remux attempt
+  (`-c copy` into MP4) exits 0 even though the source is `ffv1`, so the ladder
+  is not forced by that fixture in practice here — this is unchanged from
+  `main` (the cheap-attempt argv is byte-identical), not a regression. The
+  ladder logic was verified directly instead: probing the fixture with real
+  ffprobe and calling `MKV_TO_MP4.retries()` on the result produces the
+  expected selective rung (video re-encoded to h264, noting `ffv1`), and running
+  that rung's argv through real ffmpeg succeeds and produces a valid file. The
+  same direct check was run for `attached.mkv` (delta 1) and `two-tone.opus`
+  (delta 2/3), all matching the design.

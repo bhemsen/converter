@@ -1,24 +1,25 @@
-"""The conversion recipes, expressed as ffmpeg option lists.
+"""The generic conversion engine: profile plus probed streams -> attempt ladder.
 
-Each job is a cheap first attempt plus an optional ladder of fallbacks that is
-only consulted -- and only pays for an ffprobe round-trip -- once the first
-attempt has actually failed.
+The engine holds no format-specific fact -- no codec name, no container option,
+no degradation-note wording. Every such fact lives in the ``Profile`` it is
+handed (``converter/profiles.py``) and is read out of that data, never written
+here. The two exceptions are ``Job`` -- the public shape ``cli.py`` and
+``batch.py`` already depend on -- and ``JOB_BINDINGS`` below it, which is CLI
+wiring (source suffixes, sub-command name, progress-bar label) rather than
+target-format knowledge, and is marked as phase-2 scaffolding: it disappears
+once ``--to`` replaces the ``video``/``audio`` sub-commands
+(``docs/specs/spec-profile-registry.md``).
+
+See ``docs/design/degradation-ladder.md`` for the order of attempts this module
+builds, and ``docs/design/stream-decision.md`` for how one stream's fate is
+decided inside the engine-built rung.
 """
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from converter.ffmpegtool import Stream
-from converter.profiles import Attempt, flags
-
-#: Codecs a standard MP4 container accepts, so they can be stream-copied.
-MP4_VIDEO_CODECS = frozenset({"h264", "hevc", "av1", "vp9", "mpeg4", "mpeg2video", "mjpeg"})
-MP4_AUDIO_CODECS = frozenset({"aac", "mp3", "ac3", "eac3", "alac", "opus", "flac"})
-#: Subtitle codecs that convert cleanly into MP4's own ``mov_text``.
-TEXT_SUBTITLE_CODECS = frozenset({"subrip", "srt", "ass", "ssa", "mov_text", "webvtt", "text"})
-
-#: Move the MP4 index to the front so the file plays before it is fully read.
-FASTSTART = ("-movflags", "+faststart")
+from converter.profiles import MP4, WAV, Attempt, Profile
 
 
 @dataclass(frozen=True)
@@ -33,143 +34,166 @@ class Job:
     retries: Callable[[Sequence[Stream]], list[Attempt]] = field(repr=False)
 
 
-def mp4_remux() -> Attempt:
-    """Stream-copy everything a viewer cares about: lossless and near-instant."""
-    # Deliberately not "-map 0": that also selects MKV attachments (font files
-    # for ASS subtitles) and data streams, which MP4 cannot hold, so an
-    # otherwise perfectly remuxable file would fail.  The trailing "?" makes
-    # each selector optional instead of fatal.
-    return Attempt(
-        label="remux",
-        options=flags("-map 0:v? -map 0:a? -map 0:s? -c copy -c:s mov_text") + FASTSTART,
-    )
+def _with_container_options(attempt: Attempt, profile: Profile) -> Attempt:
+    """Append the profile's container-wide options once, at the end of *attempt*.
+
+    Declared attempts exclude them by convention (Prior decisions,
+    spec-profile-registry) so a profile states ``+faststart`` once rather than
+    repeating it in every attempt it declares.
+    """
+    return replace(attempt, options=(*attempt.options, *profile.container_options))
 
 
-def _mp4_selective(streams: Sequence[Stream]) -> Attempt | None:
-    """Copy what MP4 accepts, re-encode what it does not, drop what it cannot hold.
+def _substitute_position(template: tuple[str, ...], position: int) -> tuple[str, ...]:
+    """Replace the optional literal ``{n}`` placeholder with an output position."""
+    return tuple(item.replace("{n}", str(position)) for item in template)
 
-    Output stream specifiers such as ``-c:a:1`` count per type in mapping order,
-    which is exactly what the per-type counters below track.
+
+def _drop_note(stream: Stream, reason: str) -> str:
+    """D1/D2/D3 of stream-decision.md: a drop always names index, codec, reason."""
+    kind = stream.codec_type or "unknown"
+    codec = stream.codec_name or "unknown"
+    return f"{kind} stream {stream.index} ({codec}) dropped: {reason}"
+
+
+def _reencode_note(stream: Stream, target_codec: str) -> str:
+    """The note a re-encode carries when the rule declares one worth naming."""
+    kind = stream.codec_type or "unknown"
+    codec = stream.codec_name or "unknown"
+    return f"{kind} stream {stream.index} ({codec}) re-encoded to {target_codec}"
+
+
+def _room_reason(profile: Profile, stream_type: str, limit: int) -> str:
+    """D2's reason: the noun agrees in number with the rule's stream limit."""
+    noun = "stream" if limit == 1 else "streams"
+    return f"{profile.label} holds {limit} {stream_type} {noun}"
+
+
+def _decide_stream(
+    profile: Profile, stream: Stream, counts: dict[str, int]
+) -> tuple[list[str], list[str], str | None]:
+    """One pass through stream-decision.md's flowchart for a single stream.
+
+    Returns the maps and codec options *stream* contributes and the note it
+    produces (or ``None``). ``counts`` is mutated so later streams see how many
+    output streams of their type already exist.
+    """
+    rule = profile.rules.get(stream.codec_type)
+    if rule is None:
+        return [], [], _drop_note(stream, f"not supported by {profile.label}")
+
+    position = counts.get(stream.codec_type, 0)
+    if rule.stream_limit is not None and position >= rule.stream_limit:
+        reason = _room_reason(profile, stream.codec_type, rule.stream_limit)
+        return [], [], _drop_note(stream, reason)
+
+    maps = ["-map", f"0:{stream.index}"]
+    if stream.codec_name in rule.copy_mask:
+        codecs = list(_substitute_position(rule.accept_options, position))
+        note = None
+    elif rule.fallback_options is not None:
+        codecs = list(_substitute_position(rule.fallback_options, position))
+        note = _reencode_note(stream, rule.fallback_name) if rule.fallback_name else None
+    else:
+        reason = rule.drop_reason or f"not supported by {profile.label}"
+        return [], [], _drop_note(stream, reason)
+
+    counts[stream.codec_type] = position + 1
+    return maps, codecs, note
+
+
+def _build_selective(profile: Profile, streams: Sequence[Stream]) -> Attempt | None:
+    """The engine-built rung: the PLAN and SEL nodes of degradation-ladder.md.
+
+    Returns ``None`` when the rung would add nothing over the cheap attempt --
+    either no stream survives at all, or the cheap attempt already selects
+    streams explicitly and this plan gives up nothing worth naming.
     """
     maps: list[str] = []
     codecs: list[str] = []
     notes: list[str] = []
-    seen = {"video": 0, "audio": 0, "subtitle": 0}
+    counts: dict[str, int] = {}
 
     for stream in streams:
-        codec = stream.codec_name or "unknown"
-        if stream.codec_type == "video":
-            position = seen["video"]
-            maps += ["-map", f"0:{stream.index}"]
-            if stream.codec_name in MP4_VIDEO_CODECS:
-                codecs += [f"-c:v:{position}", "copy"]
-            else:
-                codecs += [f"-c:v:{position}", "libx264", f"-crf:v:{position}", "18"]
-                notes.append(f"video stream {stream.index} ({codec}) re-encoded to h264")
-            seen["video"] += 1
-        elif stream.codec_type == "audio":
-            position = seen["audio"]
-            maps += ["-map", f"0:{stream.index}"]
-            if stream.codec_name in MP4_AUDIO_CODECS:
-                codecs += [f"-c:a:{position}", "copy"]
-            else:
-                codecs += [f"-c:a:{position}", "aac", f"-b:a:{position}", "192k"]
-                notes.append(f"audio stream {stream.index} ({codec}) re-encoded to aac")
-            seen["audio"] += 1
-        elif stream.codec_type == "subtitle":
-            if stream.codec_name in TEXT_SUBTITLE_CODECS:
-                position = seen["subtitle"]
-                maps += ["-map", f"0:{stream.index}"]
-                codecs += [f"-c:s:{position}", "mov_text"]
-                seen["subtitle"] += 1
-            else:
-                notes.append(
-                    f"subtitle stream {stream.index} ({codec}) dropped: "
-                    "bitmap subtitles cannot be stored in MP4"
-                )
-        else:
-            notes.append(
-                f"{stream.codec_type or 'unknown'} stream {stream.index} dropped: "
-                "not supported by MP4"
-            )
+        stream_maps, stream_codecs, note = _decide_stream(profile, stream, counts)
+        maps += stream_maps
+        codecs += stream_codecs
+        if note is not None:
+            notes.append(note)
 
     if not maps:
         return None
-    return Attempt("selective", (*maps, *codecs, *FASTSTART), tuple(notes))
+    if profile.explicit_streams and not notes:
+        return None
+    return Attempt("selective", (*maps, *codecs), tuple(notes))
 
 
-def mp4_reencode() -> Attempt:
-    """Last resort: one video and all audio streams, re-encoded for compatibility."""
-    return Attempt(
-        label="re-encode",
-        options=flags(
-            "-map 0:v:0? -map 0:a? "
-            "-c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p "
-            "-c:a aac -b:a 192k"
-        )
-        + FASTSTART,
-        notes=(
-            "re-encoded to h264/aac (lossy); subtitles and extra video streams dropped",
-            "10-bit or HDR sources are reduced to 8-bit yuv420p for player compatibility",
-        ),
+def make_attempts(
+    profile: Profile,
+) -> tuple[Callable[[], Attempt], Callable[[Sequence[Stream]], list[Attempt]]]:
+    """Build the ``(first_attempt, retries)`` pair degradation-ladder.md needs."""
+
+    def first_attempt() -> Attempt:
+        return _with_container_options(profile.cheap_attempt, profile)
+
+    def retries(streams: Sequence[Stream]) -> list[Attempt]:
+        attempts: list[Attempt] = []
+        selective = _build_selective(profile, streams)
+        if selective is not None:
+            attempts.append(_with_container_options(selective, profile))
+        if profile.last_resort is not None:
+            attempts.append(_with_container_options(profile.last_resort, profile))
+        return attempts
+
+    return first_attempt, retries
+
+
+@dataclass(frozen=True)
+class _Binding:
+    """A source-pair binding: CLI-visible name plus which suffixes feed which
+    profile. This is CLI wiring, not target-format knowledge -- the exemption
+    the module docstring describes -- and is phase-2 scaffolding, removed once
+    ``--to`` replaces the ``video``/``audio`` sub-commands.
+    """
+
+    name: str
+    description: str
+    suffixes: tuple[str, ...]
+    profile: Profile
+
+
+#: Phase-2 scaffolding (see the module docstring and ``_Binding``).
+JOB_BINDINGS: dict[str, _Binding] = {
+    "video": _Binding(
+        name="mkv-to-mp4",
+        description="Convert .mkv files to .mp4 (stream copy where possible)",
+        suffixes=(".mkv",),
+        profile=MP4,
+    ),
+    "audio": _Binding(
+        name="opus-to-wav",
+        description="Convert .opus files to uncompressed .wav",
+        suffixes=(".opus",),
+        profile=WAV,
+    ),
+}
+
+
+def _job_from_binding(binding: _Binding) -> Job:
+    """The factory the issue asks for: wire the generic engine to one profile."""
+    first_attempt, retries = make_attempts(binding.profile)
+    return Job(
+        name=binding.name,
+        description=binding.description,
+        suffixes=binding.suffixes,
+        target_suffix=binding.profile.target_suffix,
+        first_attempt=first_attempt,
+        retries=retries,
     )
 
 
-def mp4_retries(streams: Sequence[Stream]) -> list[Attempt]:
-    """The fallback ladder for MKV -> MP4, most conservative first."""
-    attempts = []
-    selective = _mp4_selective(streams)
-    if selective is not None:
-        attempts.append(selective)
-    attempts.append(mp4_reencode())
-    return attempts
-
-
-def wav_pcm() -> Attempt:
-    """Decode the first audio stream to signed 16-bit PCM.
-
-    The stream is selected explicitly rather than left to ffmpeg's implicit
-    "best stream" heuristic, so a file with several audio streams converts
-    predictably instead of quietly depending on which one ffmpeg prefers.
-    Mapping audio only also drops any embedded cover art, which WAV cannot hold.
-    """
-    return Attempt(label="pcm_s16le", options=flags("-map 0:a:0 -c:a pcm_s16le"))
-
-
-def wav_retries(streams: Sequence[Stream]) -> list[Attempt]:
-    """WAV holds a single audio stream, so fall back to keeping just the first."""
-    audio = [stream for stream in streams if stream.codec_type == "audio"]
-    if len(audio) <= 1:
-        return []
-    return [
-        Attempt(
-            label="first-audio-stream",
-            options=("-map", f"0:{audio[0].index}", "-c:a", "pcm_s16le"),
-            notes=(
-                f"{len(audio)} audio streams present; kept stream {audio[0].index} "
-                "only (WAV holds one)",
-            ),
-        )
-    ]
-
-
-MKV_TO_MP4 = Job(
-    name="mkv-to-mp4",
-    description="Convert .mkv files to .mp4 (stream copy where possible)",
-    suffixes=(".mkv",),
-    target_suffix=".mp4",
-    first_attempt=mp4_remux,
-    retries=mp4_retries,
-)
-
-OPUS_TO_WAV = Job(
-    name="opus-to-wav",
-    description="Convert .opus files to uncompressed .wav",
-    suffixes=(".opus",),
-    target_suffix=".wav",
-    first_attempt=wav_pcm,
-    retries=wav_retries,
-)
+MKV_TO_MP4 = _job_from_binding(JOB_BINDINGS["video"])
+OPUS_TO_WAV = _job_from_binding(JOB_BINDINGS["audio"])
 
 #: Sub-command name -> job.
 JOBS: dict[str, Job] = {"video": MKV_TO_MP4, "audio": OPUS_TO_WAV}

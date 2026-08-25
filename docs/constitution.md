@@ -71,6 +71,5 @@
 | Deviation | Where | Plan |
 | --------- | ----- | ---- |
 | `convert_command` is 54 lines, over the 50-line limit | `converter/cli.py` | Phase 2 rewrites it target-format-driven; split it there |
-| `_mp4_selective` is 51 lines, over the 50-line limit | `converter/jobs.py` | Phase 1 replaces it with profile-driven logic |
 | Ruff `D` (pydocstyle) rules are not enabled, so the docstring convention rests on review | `pyproject.toml` | Enable pydocstyle once the noise is acceptable |
 | The README names `develop` as the pull-request target | `README.md` | The base branch is `main`; correct it with the next docs change |
