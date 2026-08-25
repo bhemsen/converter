@@ -25,8 +25,10 @@ lives.
 
 1. **profile-registry** — Create `converter/profiles.py` as a leaf module and turn
    the ladder in `converter/jobs.py` into a generic engine driven by a profile.
-   MKV-to-MP4 and Opus-to-WAV are *re-expressed* as profiles with identical
-   behaviour; the existing 141 tests are the safety net. No CLI change.
+   MKV-to-MP4 and Opus-to-WAV are *re-expressed* as profiles: the ffmpeg argv
+   stays identical, and a note changes only where it gains a fact today's wording
+   omits — each such change argued in the PR. The existing 141 tests are the
+   safety net. No CLI change.
 2. **target-driven-cli** — `converter --to <format>` replaces the `video` and
    `audio` sub-commands, plus `--list-formats` and a reworked interactive prompt.
    Corrects the README, including the stale `develop` pull-request target. This is

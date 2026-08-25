@@ -11,8 +11,8 @@ Everything else exists today.
 | Component | Responsibility |
 | --------- | -------------- |
 | `converter/cli.py` | Argument parsing, target-format selection, the interactive prompt, usage errors, exit codes |
-| `converter/profiles.py` | One declarative profile per target format: the copy mask, the fallback encoder and the container flags, per stream type |
-| `converter/jobs.py` | The generic conversion engine: turns a profile plus a probed stream list into an ordered ladder of attempts |
+| `converter/profiles.py` | One declarative profile per target format: the copy mask, the fallback encoder and the drop reason per stream type, the container flags, and the cheap and last-resort attempts the format declares as data |
+| `converter/jobs.py` | The generic conversion engine: turns a profile plus a probed stream list into an ordered ladder of attempts. It owns the *order* of the rungs and how the selective rung is built; the profiles own what each declared rung contains |
 | `converter/batch.py` | Bounded parallel execution, the per-file outcome, progress reporting, the aggregate summary and the process exit code |
 | `converter/paths.py` | Input discovery, output-path construction, tree mirroring, collision detection, Windows path-length diagnosis |
 | `converter/ffmpegtool.py` | Locating ffmpeg and ffprobe, building argv, running without a shell, probing streams |
@@ -48,10 +48,16 @@ depends on `jobs` + `ffmpegtool` + `paths`, `cli` depends on all of them,
    per file. On success nothing else happens — no ffprobe round-trip is ever spent.
 2. **Degradation.** The attempt exits non-zero, so *now* `ffmpegtool.probe_streams`
    describes the file. The engine matches each stream against the profile's copy
-   mask: streams the mask accepts are copied, streams it does not are re-encoded
-   with the profile's fallback encoder, and streams the container cannot hold at
-   all are dropped. Every sacrifice becomes a note on the attempt. The final rung
-   is a full re-encode of one video plus all audio streams.
+   mask: streams the mask accepts pass through unchanged — as a literal `copy`, or
+   as the cheap in-kind transcode the rule declares, which is how a text subtitle
+   becomes `mov_text` — streams it does not are re-encoded with the profile's
+   fallback encoder, and streams are dropped when the container cannot hold that
+   stream type at all, when it is already holding as many streams of the type as
+   it can, or when the rule declares no fallback. Every sacrifice becomes a note
+   on the attempt. The last rung is the full re-encode the profile declares; a
+   profile may declare none, and then the rung before it ends the ladder. The
+   order of attempts and the per-stream branch are drawn in
+   `docs/design/degradation-ladder.md` and `docs/design/stream-decision.md`.
 3. **Idempotent re-run.** An output that already exists and no `--overwrite` makes
    the file `skipped` without starting a process, so a second run over a finished
    tree does no work.

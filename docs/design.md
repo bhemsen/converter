@@ -105,9 +105,13 @@ Instead of UI components, these are the rules a diagram in this project follows.
 - **Attempt ladder** — one node per rung, ordered top to bottom cheapest-first.
   Every edge that leaves a rung is labelled with the condition that takes it
   (`exit 0`, `exit != 0`), so no branch is implicit.
-- **Per-stream decision** — a decision node per stream type (video, audio,
-  subtitle, other), each with exactly three outgoing edges: copy, re-encode,
-  drop. A dropped edge is labelled with the reason the container cannot hold it.
+- **Per-stream decision** — every stream ends on exactly one of three outcomes:
+  copy, re-encode, drop. Each drop edge is labelled with the reason the container
+  cannot hold the stream. Draw one decision chain per stream type (video, audio,
+  subtitle, other) while the code branches per type; draw the chain once,
+  type-agnostically, once the code is driven by per-type data rather than per-type
+  branches — a diagram that repeats an identical chain four times hides that the
+  engine is generic. A diagram that takes the generic form says so in its header.
 - **Cost markers** — any node that spends a subprocess call says so
   (`ffprobe`, `ffmpeg`). The point of the ladder is that ffprobe stays off the
   happy path, and a diagram that hides where processes start defeats that.
