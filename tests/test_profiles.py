@@ -489,10 +489,10 @@ class TestSourceSuffixes:
         assert phase_4_suffixes <= SOURCE_SUFFIXES
 
     def test_holds_the_phase_5_image_container_suffixes(self):
-        """Issue #33 (`spec-image-formats.md`): the image containers ahead of the
-        seven image profiles that milestone still adds -- `png`, `jpg`, `webp`,
-        `avif`, `gif`, `tiff`, `bmp`. None of these twelve suffixes was already
-        present in the set seeded by phases 2 through 4."""
+        """Issue #33 (`spec-image-formats.md`): the twelve image container
+        suffixes ahead of the seven image profiles (`png`, `jpg`, `webp`, `avif`,
+        `gif`, `tiff`, `bmp`) that milestone still adds. None of the twelve was
+        already present in the set seeded by phases 2 through 4."""
         phase_5_suffixes = {
             ".png",
             ".jpg",
