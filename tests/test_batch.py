@@ -139,7 +139,7 @@ class TestConvertOne:
         in the milestone's QA gate) must climb to the selective rung's re-encode
         rather than exhaust the whole ladder into `Outcome.FAILED` -- verified
         against the real engine during the audio-formats spec's review
-        (docs/specs/spec-audio-formats.md's Decision log, 2026-08-25 entry: "a
+        (docs/specs/archive/spec-audio-formats.md's Decision log, 2026-08-25 entry: "a
         PCM stream yields `selective` then `re-encode`"). `mp3`/`flac`'s
         `last_resort` exists to rescue a *different* case -- a mask hit whose
         copy the muxer then refuses -- so a PCM source landing there instead of
@@ -343,7 +343,7 @@ class TestPartialCheapAttemptVerification:
 
 
 class TestUnsupportedOutcome:
-    """The `unsupported` outcome (docs/specs/spec-target-driven-cli.md): a
+    """The `unsupported` outcome (docs/specs/archive/spec-target-driven-cli.md): a
     source that carries no stream of any type the target profile has a rule
     for at all, distinct from a stream a rule drops or fails to re-encode.
     """
@@ -438,7 +438,7 @@ class TestUnsupportedOutcome:
         """A probe that succeeds but reports zero streams is what a corrupt or
         truncated source looks like -- not evidence the format holds nothing
         usable -- so it must not be quietly relabelled `unsupported` with no
-        notes and no error text (docs/specs/spec-target-driven-cli.md)."""
+        notes and no error text (docs/specs/archive/spec-target-driven-cli.md)."""
         task = self._video_only_task(tmp_path)
         task.dst.parent.mkdir(parents=True)
         fake_ffmpeg.exit_codes = [1]

@@ -106,7 +106,7 @@ FORCED_FAILURE_TYPES: dict[str, frozenset[str]] = {
 #: are the profiles issue #40's narrowing was written for -- both map audio
 #: blindly (`-map 0:a?`) yet declare `stream_limit=1`, because their own
 #: muxers reject a second audio stream outright (measured against ffmpeg 9.0,
-#: `docs/specs/spec-audio-formats.md`): a source that would trip the limit
+#: `docs/specs/archive/spec-audio-formats.md`): a source that would trip the limit
 #: never reaches the success side at all; it fails the cheap attempt and lands
 #: on the failure side, where the declared limit drives the selective rung's
 #: own note instead.
@@ -201,7 +201,7 @@ def named_index_counts(profile: Profile) -> dict[str, int]:
 
 #: Exactly `SHIPPED`: both exemptions are now proven by shipped profiles rather
 #: than a stand-in -- `MP3` and `FLAC` prove the muxer-enforced `stream_limit`
-#: exemption (`docs/specs/spec-audio-formats.md`, which retired `MP3_SHAPED`),
+#: exemption (`docs/specs/archive/spec-audio-formats.md`, which retired `MP3_SHAPED`),
 #: and `MOV` now proves the force-failure exemption the same way, retiring
 #: `MOV_SHAPED`.
 INVARIANT_CASES = SHIPPED
@@ -533,7 +533,7 @@ class TestWavProfile:
         above already pin most of this; this test compares the *whole* frozen
         `Profile` at once, so a change to any field -- including one nobody
         wrote a dedicated assertion for -- fails here. Notably: the gate
-        (`docs/specs/spec-audio-formats.md`) deliberately did NOT extend the
+        (`docs/specs/archive/spec-audio-formats.md`) deliberately did NOT extend the
         five siblings' standing non-audio note to `wav`, to keep this exact
         promise; a well-intentioned "consistency" edit adding one would trip
         this test immediately.
@@ -655,7 +655,7 @@ class TestMkvProfile:
 
 class TestMovProfile:
     """Pins the shape Acceptance fixes for `mov` (issue #28,
-    `docs/specs/spec-video-formats.md`)."""
+    `docs/specs/archive/spec-video-formats.md`)."""
 
     def test_label_and_suffix(self):
         assert MOV.label == "MOV"
@@ -739,7 +739,7 @@ class TestMovProfile:
 
 class TestWebmProfile:
     """Pins the shape Acceptance fixes for `webm` (issue #29,
-    `docs/specs/spec-video-formats.md`)."""
+    `docs/specs/archive/spec-video-formats.md`)."""
 
     def test_label_and_suffix(self):
         assert WEBM.label == "WebM"
@@ -867,7 +867,7 @@ class TestWebmProfile:
 
 class TestMp3Profile:
     """Pins the shape Acceptance fixes for `mp3` (issue #21,
-    `docs/specs/spec-audio-formats.md`)."""
+    `docs/specs/archive/spec-audio-formats.md`)."""
 
     def test_label_and_suffix(self):
         assert MP3.label == "MP3"
@@ -915,7 +915,7 @@ class TestMp3Profile:
 
 class TestFlacProfile:
     """Pins the shape Acceptance fixes for `flac` (issue #21,
-    `docs/specs/spec-audio-formats.md`)."""
+    `docs/specs/archive/spec-audio-formats.md`)."""
 
     def test_label_and_suffix(self):
         assert FLAC.label == "FLAC"
@@ -966,7 +966,7 @@ class TestFlacProfile:
 
 class TestM4aProfile:
     """Pins the shape Acceptance fixes for `m4a` (issue #22,
-    `docs/specs/spec-audio-formats.md`)."""
+    `docs/specs/archive/spec-audio-formats.md`)."""
 
     def test_label_and_suffix(self):
         assert M4A.label == "M4A"
@@ -997,7 +997,7 @@ class TestM4aProfile:
     def test_audio_rule_mask_and_fallback(self):
         """The mask is `{aac, alac}`, not `MP4_AUDIO_CODECS`: `.m4a` selects
         the narrower `ipod` muxer, which rejects mp3, opus and flac stream
-        copies (docs/specs/spec-audio-formats.md)."""
+        copies (docs/specs/archive/spec-audio-formats.md)."""
         rule = M4A.rules["audio"]
 
         assert rule.copy_mask == frozenset({"aac", "alac"})
@@ -1028,7 +1028,7 @@ class TestM4aProfile:
 
 class TestOggProfile:
     """Pins the shape Acceptance fixes for `ogg` (issue #22,
-    `docs/specs/spec-audio-formats.md`)."""
+    `docs/specs/archive/spec-audio-formats.md`)."""
 
     def test_label_and_suffix(self):
         assert OGG.label == "OGG"
@@ -1043,7 +1043,7 @@ class TestOggProfile:
 
     def test_cheap_attempt_maps_audio_blindly(self):
         """ "-c copy", not "-c:a copy": the spec pins this exact spelling
-        (docs/specs/spec-audio-formats.md's fixed-profiles table)."""
+        (docs/specs/archive/spec-audio-formats.md's fixed-profiles table)."""
         assert OGG.explicit_streams is False
         assert OGG.cheap_attempt.options == ("-map", "0:a?", "-c", "copy")
 
@@ -1083,7 +1083,7 @@ class TestOggProfile:
 
 class TestOpusProfile:
     """Pins the shape Acceptance fixes for `opus` (issue #22,
-    `docs/specs/spec-audio-formats.md`)."""
+    `docs/specs/archive/spec-audio-formats.md`)."""
 
     def test_label_and_suffix(self):
         assert OPUS.label == "OPUS"
@@ -1123,7 +1123,7 @@ class TestOpusProfile:
 
     def test_audio_rule_declares_no_stream_limit(self):
         """The opus muxer holds several audio streams, by copy and by
-        encode (docs/specs/spec-audio-formats.md)."""
+        encode (docs/specs/archive/spec-audio-formats.md)."""
         assert OPUS.rules["audio"].stream_limit is None
 
     def test_audio_rule_carries_the_position_placeholder(self):

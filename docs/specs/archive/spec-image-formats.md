@@ -86,11 +86,11 @@ Everything below follows from that table.
 
 ## Prior art
 
-- [Image conversion through ffmpeg (Phase 5)](../prior-art.md#image-conversion-through-ffmpeg-phase-5)
+- [Image conversion through ffmpeg (Phase 5)](../../prior-art.md#image-conversion-through-ffmpeg-phase-5)
   — the concern tagged for this phase. Its ADOPT is confirmed by measurement: all
   seven formats have working ffmpeg muxers, so images need no second backend. Its
   AVOID is why EXIF/ICC preservation is a non-goal rather than a bug.
-- [Container/codec capability modelling (Phase 1)](../prior-art.md#containercodec-capability-modelling-phase-1)
+- [Container/codec capability modelling (Phase 1)](../../prior-art.md#containercodec-capability-modelling-phase-1)
   — the copy-mask vocabulary, and the rule that the mask is curated by hand.
 
 ## Design
@@ -500,3 +500,7 @@ New-Item -ItemType Directory -Force in
   pinned argv is accepted by real ffmpeg -- the test suite stubs the
   subprocess boundary by constitution -- so that evidence remains whatever
   issues #34 and #35 already measured against ffmpeg 9.0, recorded above.
+
+- 2026-08-26: Close-out. The final QA gate ran against real ffmpeg 9.0 on
+  Windows 11, verifying all 17 target formats end-to-end with ffprobe.
+  Verdict: PASS WITH FINDINGS; the findings are filed as issues #66-#73.

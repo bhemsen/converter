@@ -80,7 +80,7 @@ flowchart TD
   attachment outright, so `mov` maps `0:t?` deliberately to make an
   attachment-bearing source fail the cheap attempt and land on the failure side
   instead — `attachment` is exempted from both sides, not carried on either
-  (`docs/specs/spec-video-formats.md`, issue #39). A new profile that cannot
+  (`docs/specs/archive/spec-video-formats.md`, issue #39). A new profile that cannot
   satisfy the equality, modulo that one exemption, is the bug — not the
   verification.
 
@@ -111,7 +111,7 @@ flowchart TD
   mapping does not enforce would normally have the verification report
   surplus streams the output does contain. The one exception mirrors the
   force-failure exemption above rather than adding a new mechanism: `mp3` and
-  `flac` (`docs/specs/spec-audio-formats.md`) both map audio blindly yet
+  `flac` (`docs/specs/archive/spec-audio-formats.md`) both map audio blindly yet
   declare `stream_limit=1`, because their muxers reject a second audio stream
   outright — measured, both exit non-zero — so a source that would trip the
   limit never reaches the success side at all; it fails the cheap attempt and

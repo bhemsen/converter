@@ -93,13 +93,13 @@ and milestone. A completed spec is moved to `docs/specs/archive/`.
 
 ## Prior art
 
-- [Container/codec capability modelling (Phase 1)](../prior-art.md#containercodec-capability-modelling-phase-1)
+- [Container/codec capability modelling (Phase 1)](../../prior-art.md#containercodec-capability-modelling-phase-1)
   — the whole concern feeds this phase. HandBrake's `AudioCopyMask` plus
   `AudioEncoderFallback` is the vocabulary the profile value type adopts; the
   ffmpeg-CLI entry is why the copy mask is curated by hand instead of discovered;
   this codebase's own entry is why trial-and-fallback survives the refactor while
   its per-pair ladders do not.
-- [Python wrapper structure around the ffmpeg CLI (Phase 3, Phase 4)](../prior-art.md#python-wrapper-structure-around-the-ffmpeg-cli-phase-3-phase-4)
+- [Python wrapper structure around the ffmpeg CLI (Phase 3, Phase 4)](../../prior-art.md#python-wrapper-structure-around-the-ffmpeg-cli-phase-3-phase-4)
   — secondary: `ffmpeg-normalize`'s split into stream types, a command builder and
   dedicated exceptions independently matches the layering this phase keeps, and
   its AVOID note (never scrape ffmpeg's stderr to drive a second pass) is exactly
@@ -462,3 +462,7 @@ why both audio fixtures use that suffix.
   conversion because every conversion is, structurally, at risk of one. A phase
   not yet on the roadmap could still introduce an exhaustive profile; nothing
   here forecloses that.
+
+- 2026-08-26: Close-out. The final QA gate ran against real ffmpeg 9.0 on
+  Windows 11, verifying all 17 target formats end-to-end with ffprobe.
+  Verdict: PASS WITH FINDINGS; the findings are filed as issues #66-#73.

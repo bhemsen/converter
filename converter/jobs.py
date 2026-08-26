@@ -10,7 +10,7 @@ profile's rules itself -- the boundary ``docs/architecture.md`` draws between
 See ``docs/design/degradation-ladder.md`` for the order of attempts this module
 builds, ``docs/design/stream-decision.md`` for how one stream's fate is decided
 inside the engine-built rung, and
-``docs/specs/spec-target-driven-cli.md`` for the ``unsupported`` discriminator
+``docs/specs/archive/spec-target-driven-cli.md`` for the ``unsupported`` discriminator
 :func:`describe_unsupported` implements.
 """
 
@@ -187,7 +187,7 @@ def describe_unsupported(profile: Profile, streams: Sequence[Stream]) -> tuple[s
 
     ``None`` means the source carries at least one stream type *profile* has a
     rule for -- that stream may still be dropped for shape or codec reasons, but
-    that is a genuine ``failed``, not this (``docs/specs/spec-target-driven-cli.md``).
+    that is a genuine ``failed``, not this (``docs/specs/archive/spec-target-driven-cli.md``).
     ``None`` also for an *empty* stream list: that is the fingerprint of a probe
     that could not find anything to work with -- typically a corrupt or
     truncated source -- not positive evidence that the format holds nothing the

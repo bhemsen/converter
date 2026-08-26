@@ -161,7 +161,7 @@ class TestWavJob:
 
 
 class TestMp3Job:
-    """Issue #21, `docs/specs/spec-audio-formats.md`: mp3's cheap attempt maps
+    """Issue #21, `docs/specs/archive/spec-audio-formats.md`: mp3's cheap attempt maps
     audio *blindly*, unlike WAV's index-explicit one, so unlike WAV a fully
     compatible single-stream source still gets a selective rung -- the same
     shape MP4 has (`TestMp4Retries.test_selective_copies_compatible_streams`)."""
@@ -233,7 +233,7 @@ class TestMp3Job:
 
 
 class TestFlacJob:
-    """Issue #21, `docs/specs/spec-audio-formats.md`: same blind-mapping shape
+    """Issue #21, `docs/specs/archive/spec-audio-formats.md`: same blind-mapping shape
     as `MP3`, but flac's fallback carries no `fallback_name`, so a re-encode
     into flac itself is never reported as a loss."""
 
@@ -300,7 +300,7 @@ class TestFlacJob:
 
 
 class TestM4aJob:
-    """Issue #22, `docs/specs/spec-audio-formats.md`: same blind-mapping shape
+    """Issue #22, `docs/specs/archive/spec-audio-formats.md`: same blind-mapping shape
     as `MP3`/`FLAC`, but `m4a` declares no `stream_limit` -- the ipod muxer
     holds several audio streams, so every one the source has is carried."""
 
@@ -395,7 +395,7 @@ class TestM4aJob:
 
 
 class TestOggJob:
-    """Issue #22, `docs/specs/spec-audio-formats.md`: same shape as `M4A`,
+    """Issue #22, `docs/specs/archive/spec-audio-formats.md`: same shape as `M4A`,
     with a wider copy mask and no stream limit either -- the ogg muxer holds
     several audio streams too."""
 
@@ -417,7 +417,7 @@ class TestOggJob:
         assert attempts[0].notes == ()
 
     def test_non_matching_audio_reencodes_with_a_note(self):
-        """The ogg muxer rejects mp3 and aac (docs/specs/spec-audio-formats.md)."""
+        """The ogg muxer rejects mp3 and aac (docs/specs/archive/spec-audio-formats.md)."""
         streams = [Stream(0, "audio", "aac")]
 
         selective = jobs.retries(OGG, streams)[0]
@@ -486,7 +486,7 @@ class TestOggJob:
 
 
 class TestOpusJob:
-    """Issue #22, `docs/specs/spec-audio-formats.md`: `opus` copies on the
+    """Issue #22, `docs/specs/archive/spec-audio-formats.md`: `opus` copies on the
     happy path even though its own muxer also accepts a Vorbis stream (Prior
     decisions) -- the mask below governs only the failure-side selective rung,
     where a Vorbis stream is re-encoded rather than copied."""
@@ -1236,7 +1236,7 @@ class TestWebmDegradationNotes:
 
 class TestProfileArgvPinning:
     """Verification: the full argv each profile builds, pinned byte-for-byte
-    (docs/specs/spec-profile-registry.md)."""
+    (docs/specs/archive/spec-profile-registry.md)."""
 
     def test_mp4_copyable_source(self):
         streams = [Stream(0, "video", "h264"), Stream(1, "audio", "aac")]
@@ -2539,7 +2539,7 @@ class TestAnimatedProfileArgvPinning:
 
 class TestUnsupportedDiscriminator:
     """`jobs.describe_unsupported`: "no rule matches any present stream"
-    (docs/specs/spec-target-driven-cli.md), derived from the probe alone."""
+    (docs/specs/archive/spec-target-driven-cli.md), derived from the probe alone."""
 
     def test_a_type_with_no_rule_at_all_is_unsupported(self):
         notes = jobs.describe_unsupported(WAV, [Stream(0, "video", "h264")])

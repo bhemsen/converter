@@ -86,12 +86,12 @@ orchestrators (`docs/workflow.md`).
 
 ## Prior art
 
-- [Container/codec capability modelling (Phase 1)](../prior-art.md#containercodec-capability-modelling-phase-1)
+- [Container/codec capability modelling (Phase 1)](../../prior-art.md#containercodec-capability-modelling-phase-1)
   — HandBrake's copy-mask plus encoder-fallback vocabulary, and the ffmpeg-CLI
   entry's AVOID: the mask is curated by hand, because `ffmpeg -codecs` lists what a
   build contains and never what a muxer will accept. Every mask below was measured
   instead of derived.
-- [Python wrapper structure around the ffmpeg CLI (Phase 3, Phase 4)](../prior-art.md#python-wrapper-structure-around-the-ffmpeg-cli-phase-3-phase-4)
+- [Python wrapper structure around the ffmpeg CLI (Phase 3, Phase 4)](../../prior-art.md#python-wrapper-structure-around-the-ffmpeg-cli-phase-3-phase-4)
   — tagged for this phase too. Its AVOID: never parse values out of ffmpeg's stderr
   to drive a second pass. Relevant here because WebM's rejection message names the
   codecs it wants, which is exactly the tempting string to scrape; the copy mask
@@ -369,7 +369,7 @@ New-Item -ItemType Directory -Force in
   (`codec_name` reported as `unknown`, measured) round-trips through
   `-map 0:t? -c copy` and through the selective rung's `-c:t:0 copy` alike.
   `jobs.py` needed no change, keeping the PR's diff to `converter/profiles.py`,
-  `README.md`, `docs/specs/spec-video-formats.md` and `tests/`.
+  `README.md`, `docs/specs/archive/spec-video-formats.md` and `tests/`.
 
   `mkv`'s cheap attempt maps `video`, `audio`, `subtitle` and `attachment`, and
   the profile declares exactly those four rules, so it satisfies
@@ -406,7 +406,7 @@ New-Item -ItemType Directory -Force in
   existing "no rule for this type" branch, so the per-stream drop note falls
   out of the engine that shipped for `mp4`'s attachment case rather than
   needing new logic, keeping the PR's diff to `converter/profiles.py`,
-  `README.md`, `docs/specs/spec-video-formats.md` and `tests/`.
+  `README.md`, `docs/specs/archive/spec-video-formats.md` and `tests/`.
 
 - 2026-08-26 (issue #29): Added the `webm` `Profile`, the last of this phase's
   three. Re-measured every muxer fact against real ffmpeg 9.0 while
@@ -562,3 +562,7 @@ New-Item -ItemType Directory -Force in
   log entries are append-only outside one's own), but recorded here since the
   Verification item is what actually gates the milestone and now matches
   what this run observed rather than the older claim.
+
+- 2026-08-26: Close-out. The final QA gate ran against real ffmpeg 9.0 on
+  Windows 11, verifying all 17 target formats end-to-end with ffprobe.
+  Verdict: PASS WITH FINDINGS; the findings are filed as issues #66-#73.

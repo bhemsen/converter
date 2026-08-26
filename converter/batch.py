@@ -44,7 +44,7 @@ class Outcome(enum.StrEnum):
     FAILED = "failed"
     #: The source carries no stream of any type the target profile has a rule
     #: for at all -- distinct from FAILED, which still sets the exit code
-    #: (docs/specs/spec-target-driven-cli.md). Its discriminator is decided by
+    #: (docs/specs/archive/spec-target-driven-cli.md). Its discriminator is decided by
     #: the engine (converter.jobs.describe_unsupported), never here.
     UNSUPPORTED = "unsupported"
 
@@ -259,7 +259,7 @@ class Summary:
 
     @property
     def exit_code(self) -> int:
-        # `unsupported` never sets the exit code (docs/specs/spec-target-driven-cli.md):
+        # `unsupported` never sets the exit code (docs/specs/archive/spec-target-driven-cli.md):
         # a source the target cannot produce at all is reported honestly, not
         # treated as a run failure -- that is the whole point of the outcome.
         return 1 if self.failed else 0

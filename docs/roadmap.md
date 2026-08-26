@@ -11,11 +11,11 @@
 
 | Phase | Name | Spec | Milestone |
 |---|---|---|---|
-| 1 | profile-registry | [spec-profile-registry.md](specs/spec-profile-registry.md) | [#1](https://github.com/bhemsen/converter/milestone/1) |
-| 2 | target-driven-cli | [spec-target-driven-cli.md](specs/spec-target-driven-cli.md) | [#2](https://github.com/bhemsen/converter/milestone/2) |
-| 3 | audio-formats | [spec-audio-formats.md](specs/spec-audio-formats.md) | [#3](https://github.com/bhemsen/converter/milestone/3) |
-| 4 | video-formats | [spec-video-formats.md](specs/spec-video-formats.md) | [#4](https://github.com/bhemsen/converter/milestone/4) |
-| 5 | image-formats | [spec-image-formats.md](specs/spec-image-formats.md) | [#5](https://github.com/bhemsen/converter/milestone/5) |
+| 1 | profile-registry | [spec-profile-registry.md](specs/archive/spec-profile-registry.md) | [#1](https://github.com/bhemsen/converter/milestone/1) |
+| 2 | target-driven-cli | [spec-target-driven-cli.md](specs/archive/spec-target-driven-cli.md) | [#2](https://github.com/bhemsen/converter/milestone/2) |
+| 3 | audio-formats | [spec-audio-formats.md](specs/archive/spec-audio-formats.md) | [#3](https://github.com/bhemsen/converter/milestone/3) |
+| 4 | video-formats | [spec-video-formats.md](specs/archive/spec-video-formats.md) | [#4](https://github.com/bhemsen/converter/milestone/4) |
+| 5 | image-formats | [spec-image-formats.md](specs/archive/spec-image-formats.md) | [#5](https://github.com/bhemsen/converter/milestone/5) |
 | 6 | stream-disposition | — | — |
 | 7 | lossy-source-notes | — | — |
 
@@ -73,7 +73,7 @@ can run as parallel orchestrators. That independence is recorded as the
 Phases 6 and 7 both follow phase 3: each revisits audio profiles that phase 3
 creates, and neither is worth planning before those exist. They are independent
 of each other and of phases 4 and 5. Both were deferred out of phase 3 by name,
-with their costs recorded in `docs/specs/spec-audio-formats.md` rather than left
+with their costs recorded in `docs/specs/archive/spec-audio-formats.md` rather than left
 to be rediscovered — and phase 6's cost turned out to be smaller than that
 deferral assumed.
 

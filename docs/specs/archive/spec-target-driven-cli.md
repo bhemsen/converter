@@ -102,7 +102,7 @@ milestone. A completed spec is moved to `docs/specs/archive/`.
 
 ## Prior art
 
-- [Format-driven converter CLI (Phase 2)](../prior-art.md#format-driven-converter-cli-phase-2)
+- [Format-driven converter CLI (Phase 2)](../../prior-art.md#format-driven-converter-cli-phase-2)
   — the concern that feeds this phase. pandoc's readers-plus-writers is the direct
   precedent for `--to` over per-pair sub-commands: N+M implementations instead of
   N*M, with the ffprobe stream list as the reader and the target profile as the
@@ -327,7 +327,7 @@ reusing the fixtures the phase-1 gate synthesises:
   reports that cost honestly. Recorded as revisitable if the cost bites.
 - 2026-08-26 (#12): `SOURCE_SUFFIXES` seeded with exactly `.mkv`, `.mp4`, `.opus`,
   `.wav` — the old `video`/`audio` sub-commands' suffixes plus each shipped
-  profile's own target suffix. `docs/specs/spec-video-formats.md` (phase 4, not
+  profile's own target suffix. `docs/specs/archive/spec-video-formats.md` (phase 4, not
   yet merged) attributes `.mp4` to phase 3 instead, but this phase's own
   Verification list requires a source with the target's suffix to be a
   candidate ("a source with the target's suffix but a different output root
@@ -483,3 +483,7 @@ reusing the fixtures the phase-1 gate synthesises:
   `tests/test_cli.py::test_the_legacy_message_names_no_format` pins). Reworded
   to say the old sub-command "prints a pointer to `--to` and `--list-formats`"
   instead of claiming it repeats the README's own `mp4`/`wav` examples.
+
+- 2026-08-26: Close-out. The final QA gate ran against real ffmpeg 9.0 on
+  Windows 11, verifying all 17 target formats end-to-end with ffprobe.
+  Verdict: PASS WITH FINDINGS; the findings are filed as issues #66-#73.
