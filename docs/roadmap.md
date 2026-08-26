@@ -14,7 +14,7 @@
 | 1 | profile-registry | [spec-profile-registry.md](specs/spec-profile-registry.md) | [#1](https://github.com/bhemsen/converter/milestone/1) |
 | 2 | target-driven-cli | [spec-target-driven-cli.md](specs/spec-target-driven-cli.md) | [#2](https://github.com/bhemsen/converter/milestone/2) |
 | 3 | audio-formats | [spec-audio-formats.md](specs/spec-audio-formats.md) | [#3](https://github.com/bhemsen/converter/milestone/3) |
-| 4 | video-formats | — | — |
+| 4 | video-formats | [spec-video-formats.md](specs/spec-video-formats.md) | [#4](https://github.com/bhemsen/converter/milestone/4) |
 | 5 | image-formats | — | — |
 
 A phase gets a Spec link once `/plan` drafts it, and a Milestone link once the
