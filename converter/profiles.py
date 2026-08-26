@@ -206,9 +206,11 @@ PROFILES: dict[str, Profile] = {profile.name: profile for profile in (MP4, WAV)}
 #: readable as a source, the video containers a "rip the audio" run needs, and the
 #: remaining audio target suffixes (``.mp3``, ``.m4a``, ``.flac``, ``.ogg``) so the
 #: profiles this milestone still adds already have their own suffix covered when
-#: they land -- `.opus` and `.wav` are covered already. Later phases extend this
-#: set further as they add profiles (#26 for video containers, #33 for image ones);
-#: none of them re-adds a suffix this set already holds.
+#: they land -- `.opus` and `.wav` are covered already. Phase 4 (issue #26,
+#: `spec-video-formats.md`) widens it once more with the video containers no
+#: earlier phase added, ahead of the `mkv`/`webm`/`mov` profiles that milestone
+#: still adds. Later phases extend this set further as they add profiles (#33 for
+#: image ones); none of them re-adds a suffix this set already holds.
 SOURCE_SUFFIXES: frozenset[str] = frozenset(
     {
         # phase 2: old sub-commands plus the two shipped profiles' own suffixes
@@ -237,6 +239,15 @@ SOURCE_SUFFIXES: frozenset[str] = frozenset(
         ".m4a",
         ".flac",
         ".ogg",
+        # phase 4: video containers no earlier phase added
+        ".mpg",
+        ".mpeg",
+        ".ts",
+        ".m2ts",
+        ".mts",
+        ".vob",
+        ".ogv",
+        ".3gp",
     }
 )
 

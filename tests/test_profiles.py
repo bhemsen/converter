@@ -411,14 +411,16 @@ class TestResolveTarget:
 
 
 class TestSourceSuffixes:
-    def test_holds_the_phase_2_and_phase_3_suffixes(self):
+    def test_holds_the_phase_2_through_phase_4_suffixes(self):
         """`.mkv`/`.opus` are what the old sub-commands read; `.mp4`/`.wav` are
         what let a source already carrying the target suffix take part in
         selection (the self-write and existing-output cases,
         `docs/design/source-selection.md`). Issue #20 (`spec-audio-formats.md`)
         widens the set with the audio containers people actually have, the video
         containers a "rip the audio" run needs, and the remaining audio target
-        suffixes ahead of the profiles that will claim them."""
+        suffixes ahead of the profiles that will claim them. Issue #26
+        (`spec-video-formats.md`) widens it once more with the video containers
+        no earlier phase added."""
         assert {
             ".mkv",
             ".mp4",
@@ -442,6 +444,14 @@ class TestSourceSuffixes:
             ".m4a",
             ".flac",
             ".ogg",
+            ".mpg",
+            ".mpeg",
+            ".ts",
+            ".m2ts",
+            ".mts",
+            ".vob",
+            ".ogv",
+            ".3gp",
         } == SOURCE_SUFFIXES
 
     def test_every_shipped_profile_s_target_suffix_is_a_source_suffix(self):
@@ -454,6 +464,15 @@ class TestSourceSuffixes:
         on issue order within the milestone."""
         audio_target_suffixes = {".mp3", ".m4a", ".flac", ".opus", ".ogg", ".wav"}
         assert audio_target_suffixes <= SOURCE_SUFFIXES
+
+    def test_holds_the_phase_4_video_container_suffixes(self):
+        """Issue #26 (`spec-video-formats.md`): the video containers no earlier
+        phase added, ahead of the `mkv`/`webm`/`mov` profiles that milestone still
+        adds. `.mkv` (phase 2) and `.mp4`/`.mov`/`.avi`/`.webm`/`.m4v`/`.wmv`/
+        `.flv` (phase 3) are deliberately not repeated here -- they are already
+        covered by the phase-2/phase-3 suffixes above."""
+        phase_4_suffixes = {".mpg", ".mpeg", ".ts", ".m2ts", ".mts", ".vob", ".ogv", ".3gp"}
+        assert phase_4_suffixes <= SOURCE_SUFFIXES
 
 
 class TestValueTypesAreFrozen:

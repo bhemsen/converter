@@ -317,3 +317,13 @@ New-Item -ItemType Directory -Force in
   No shipped profile was affected -- MP4 and WAV both already satisfy the
   equality -- so this closes a hole in the contract before phases 3-5 write
   target profiles against it, not a live bug.
+
+- 2026-08-26 (issue #26): Widened `SOURCE_SUFFIXES` with the video containers
+  this phase's Scope names -- `.mpg`, `.mpeg`, `.ts`, `.m2ts`, `.mts`, `.vob`,
+  `.ogv`, `.3gp` -- ahead of the `mkv`/`webm`/`mov` profiles this milestone
+  still adds, the same ahead-of-the-profile shape phase 3 used for the
+  remaining audio target suffixes. `.mkv` (phase 2) and `.mp4`/`.mov`/`.avi`/
+  `.webm`/`.m4v`/`.wmv`/`.flv` (phase 3) were already present and are not
+  repeated. No profile, engine, or CLI change -- data only, per this issue's
+  scope; the three new `Profile` entries remain a separate issue in this
+  milestone.
