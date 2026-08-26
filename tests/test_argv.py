@@ -483,7 +483,14 @@ class TestSuccessSideVerification:
     @pytest.mark.parametrize("profile", [MP4, WAV], ids=lambda profile: profile.label)
     def test_no_profile_invents_a_loss_for_a_source_it_fully_maps(self, profile):
         """One stream of each type the profile declares a rule for, and never more
-        than one, so nothing in this source can have been left behind."""
+        than one, so nothing in this source can have been left behind.
+
+        Built from ``profile.rules`` rather than the cheap attempt's own
+        ``mapped_types`` (`tests/test_profiles.py`), which is sound only because
+        ``TestPartialMappingInvariant`` there pins the two as equal for every
+        shipped profile -- if that equality ever broke for `MP4` or `WAV`, this
+        source would silently stop matching what the cheap attempt actually maps.
+        """
         streams = [Stream(i, kind, "whatever") for i, kind in enumerate(profile.rules)]
 
         assert jobs.verify_success(profile, streams) == ()
