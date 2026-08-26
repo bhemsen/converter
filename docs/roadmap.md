@@ -16,10 +16,18 @@
 | 3 | audio-formats | [spec-audio-formats.md](specs/spec-audio-formats.md) | [#3](https://github.com/bhemsen/converter/milestone/3) |
 | 4 | video-formats | [spec-video-formats.md](specs/spec-video-formats.md) | [#4](https://github.com/bhemsen/converter/milestone/4) |
 | 5 | image-formats | [spec-image-formats.md](specs/spec-image-formats.md) | [#5](https://github.com/bhemsen/converter/milestone/5) |
+| 6 | stream-disposition | — | — |
+| 7 | lossy-source-notes | — | — |
 
 A phase gets a Spec link once `/plan` drafts it, and a Milestone link once the
 spec is merged. The milestone (open/closed + issue progress) is where status
 lives.
+
+Foundation impact, recorded at seeding and authored in that phase's `/plan` spec
+PR — never edited here:
+
+- Phase 6 — Foundation impact: vision — none; constitution — none; architecture — yes: Key flow 2's per-stream match gains a disposition branch, and `docs/design/stream-decision.md` gains the node that distinguishes a picture from a video stream.
+- Phase 7 — Foundation impact: vision — none; constitution — yes: the notes convention and its test gate assume a note describes what *this* conversion gave up, and an advisory about loss the source already carried is a second kind that has to be defined; architecture — yes: a lossy-codec set is cross-cutting data, and `converter/profiles.py` is currently described as holding one profile per target format.
 
 ## What each phase covers
 
@@ -37,6 +45,17 @@ lives.
 4. **video-formats** — Profiles for `mp4`, `mkv`, `webm`, `mov`.
 5. **image-formats** — Profiles for `png`, `jpg`, `webp`, `avif`, `gif`, `tiff`,
    `bmp`.
+6. **stream-disposition** — Teach the engine to tell a cover picture from a real
+   video stream: a `disposition` field on `Stream`, the matching `-show_entries`
+   clause in `ffmpegtool.py`, and the branch that uses it. Then `mp3`, `m4a` and
+   `flac` carry artwork through instead of dropping it, and their standing note
+   narrows to the case that is still a real loss. Measured cost: one probe field,
+   one dataclass field, one branch — materially less than the "engine change"
+   framing under which phase 3 deferred it.
+7. **lossy-source-notes** — A curated set of lossy codecs, so converting an
+   already-lossy source into a lossless target says so: the "40 MB FLAC from a
+   128 kbit/s MP3" advisory. Deferred out of phase 3 because `Stream` carries no
+   such notion and that phase was deliberately data-only.
 
 ## Sequencing rationale
 
@@ -50,6 +69,13 @@ before the harder video cases.
 Phases 3, 4 and 5 depend only on phase 2, not on each other, so their milestones
 can run as parallel orchestrators. That independence is recorded as the
 `Depends on milestone:` line in each milestone description.
+
+Phases 6 and 7 both follow phase 3: each revisits audio profiles that phase 3
+creates, and neither is worth planning before those exist. They are independent
+of each other and of phases 4 and 5. Both were deferred out of phase 3 by name,
+with their costs recorded in `docs/specs/spec-audio-formats.md` rather than left
+to be rediscovered — and phase 6's cost turned out to be smaller than that
+deferral assumed.
 
 There is deliberately no separate release or documentation phase. README changes
 belong to the phase that makes them necessary — phase 2 breaks the CLI, so phase 2
