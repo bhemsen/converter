@@ -274,3 +274,25 @@ New-Item -ItemType Directory -Force in
   alongside `mkv` as the pair that distinguishes the two readings, and
   `tests/test_profiles.py` proves the narrowed form with a mov-shaped profile
   in its test corpus.
+- 2026-08-26 (issue #40): #39 narrowed only one direction of the invariant --
+  a rule for a type the cheap attempt does not map (modulo the force-failure
+  exemption) was still admitted, and `degradation-ladder.md` even endorsed it
+  ("a limit belongs to a type ... or does not map at all"). That is issue
+  #18's bug class reintroduced: an audio-only cheap attempt carrying a
+  `video` rule for cover art -- the shape this milestone's own
+  `spec-audio-formats.md` once contemplated -- would pass both existing
+  checks and silently drop the artwork, because `_structural_drop`
+  (`converter/jobs.py`) finds the rule, sees no stream-limit trip, and treats
+  the stream as accepted. Resolved by stating the invariant as the equality
+  its justification already relied on, `set(profile.rules) ==
+  set(mapped_types(profile))` modulo #39's exemption, and striking the "or
+  does not map at all" clause -- a `stream_limit` on a type absent from the
+  mapping cannot arise once the equality holds, so nothing was left for that
+  clause to permit. `tests/test_profiles.py` adds the mirrored assertion
+  (`set(profile.rules) <= set(mapped_types(profile))`) and an index-count
+  check for `stream_limit`; `mapped_types` itself now asserts it recognised
+  at least one selector, so a form it cannot read (`-map 0:0`, `-map -0:s`)
+  fails loudly instead of returning `{}` and passing every check vacuously.
+  No shipped profile was affected -- MP4 and WAV both already satisfy the
+  equality -- so this closes a hole in the contract before phases 3-5 write
+  target profiles against it, not a live bug.

@@ -76,10 +76,11 @@ merged.** Everything this phase builds on — the `PROFILES` registry, `name` an
   `partial_mapping=True` and is probed once on its success, so what that
   mapping could not carry is named. Every cheap attempt in the table below is
   an `-map 0:a?` / `-map 0:a:0` shape, so every profile in this phase is
-  partial and must declare it -- together with a rule for each stream type it
-  maps, per the invariant in `docs/design/degradation-ladder.md`. This is no
-  longer what bounds how precise a note can be on a completed cheap attempt;
-  see the supersession note on the cover-art decision below.
+  partial and must declare it -- together with exactly a rule for each stream
+  type it maps and no rule for any other, per the equality in
+  `docs/design/degradation-ladder.md` (issue #40). This is no longer what
+  bounds how precise a note can be on a completed cheap attempt; see the
+  supersession note on the cover-art decision below.
 - No second external dependency, and no second backend.
 - Never report success for a conversion that silently dropped something.
 - The test suite keeps passing with no ffmpeg installed.
