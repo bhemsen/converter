@@ -63,10 +63,19 @@ flowchart TD
   of the option list is sound only while the rules and the mapping agree, so a
   profile that sets `partial_mapping` must satisfy both halves of this. A new
   profile that cannot is the bug — not the verification.
-  1. **A rule for every stream type its cheap attempt maps.** Otherwise the
-     verification announces a drop that never happened. A profile that carries
-     attachments with `-map 0:t?` has to declare an `attachment` rule, or every
-     font it faithfully copied is reported as lost.
+  1. **A rule for every stream type the cheap attempt can successfully
+     carry.** Otherwise the verification announces a drop that never
+     happened — but a type the cheap attempt maps only to *force a failure*
+     never reaches the success side `V` checks, so it needs no rule to keep
+     that check honest. `mkv` and `mov` both map `-map 0:t?`, and the two
+     need opposite treatment: MKV's muxer holds an attachment, so `mkv`
+     carries fonts on the success side and owes an `attachment` rule, or
+     every font it faithfully copied is reported as lost. MOV's muxer
+     rejects any mapped attachment outright, so `mov` maps `0:t?`
+     deliberately to make an attachment-bearing source fail the cheap
+     attempt and land on the failure side instead — the type never survives
+     to `V`, so `mov` needs no `attachment` rule (`docs/specs/spec-video-formats.md`,
+     issue #39).
   2. **No `stream_limit` on a type its cheap attempt selects blindly.** A blind
      `-map 0:a?` maps *every* audio stream, so a limit the mapping does not
      enforce would have the verification report surplus streams the output does
@@ -76,7 +85,10 @@ flowchart TD
   The two shipped profiles satisfy both by construction — MP4's selectors match
   its three rules exactly and it declares no limit, WAV names one audio index and
   limits audio to 1 — and `tests/test_profiles.py` checks the pair per profile
-  rather than leaving it to review.
+  rather than leaving it to review. A mov-shaped profile in that same test corpus
+  proves the narrowed form of rule 1 specifically: it maps `attachment` with no
+  rule for it and still passes, because the type is exempted as force-failure
+  only, not because the check was skipped.
 - **Cheapest first.** Rung 1 is whatever the profile declares as its cheap attempt:
   a *blind* stream copy for a container that can hold the source codecs
   (`-map 0:v? -map 0:a? ...`), or a *stream-explicit* selection where it cannot
