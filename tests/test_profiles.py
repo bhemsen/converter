@@ -427,6 +427,43 @@ class TestWavProfile:
     def test_audio_rule_stream_limit_is_one(self):
         assert WAV.rules["audio"].stream_limit == 1
 
+    def test_profile_is_byte_for_byte_unchanged_since_phase_2(self):
+        """Guard rail for issue #23: the audio-formats phase's Outcome promises
+        `wav` "behaves exactly as it does after phase 2" while five sibling
+        profiles land around it in the same registry. The field-by-field tests
+        above already pin most of this; this test compares the *whole* frozen
+        `Profile` at once, so a change to any field -- including one nobody
+        wrote a dedicated assertion for -- fails here. Notably: the gate
+        (`docs/specs/spec-audio-formats.md`) deliberately did NOT extend the
+        five siblings' standing non-audio note to `wav`, to keep this exact
+        promise; a well-intentioned "consistency" edit adding one would trip
+        this test immediately.
+        """
+        expected = Profile(
+            label="WAV",
+            name="wav",
+            description="Audio: single stream, uncompressed 16-bit PCM",
+            target_suffix=".wav",
+            container_options=(),
+            cheap_attempt=Attempt(
+                label="pcm_s16le", options=("-map", "0:a:0", "-c:a", "pcm_s16le")
+            ),
+            explicit_streams=True,
+            partial_mapping=True,
+            rules={
+                "audio": StreamRule(
+                    copy_mask=frozenset(),
+                    accept_options=(),
+                    fallback_options=("-c:a", "pcm_s16le"),
+                    fallback_name=None,
+                    stream_limit=1,
+                    drop_reason=None,
+                ),
+            },
+            last_resort=None,
+        )
+        assert expected == WAV
+
 
 class TestMkvProfile:
     def test_label_and_suffix(self):
@@ -1388,6 +1425,40 @@ class TestRegistry:
             "webp": WEBP,
             "avif": AVIF,
         }
+
+
+@pytest.mark.parametrize("profile", PROFILES.values(), ids=lambda profile: profile.label)
+class TestRegistryStructuralInvariants:
+    """Registry-wide guard rails for issue #23.
+
+    Parametrized over ``PROFILES.values()`` itself, not over the hand-maintained
+    ``SHIPPED`` list above -- so a profile that lands after this PR (phases 4
+    and 5 are landing in parallel) is covered the moment it is added to
+    ``PROFILES``, with no further edit to this file needed. This is the
+    "structural test over the whole registry" the issue asks for: it catches a
+    half-written profile -- a blank name or description, a target suffix
+    nobody added to ``SOURCE_SUFFIXES``, or a profile with no stream rule at
+    all (which would make every conversion into it structurally unsupported).
+    """
+
+    def test_has_a_non_empty_name(self, profile):
+        assert isinstance(profile.name, str) and profile.name
+
+    def test_has_a_non_empty_description(self, profile):
+        assert isinstance(profile.description, str) and profile.description
+
+    def test_target_suffix_is_a_curated_source_suffix(self, profile):
+        """Otherwise a source already carrying the target's own suffix could
+        never take part in selection at all (the self-write and
+        existing-output-skip cases, `docs/design/source-selection.md`)."""
+        assert profile.target_suffix in SOURCE_SUFFIXES
+
+    def test_declares_at_least_one_stream_rule(self, profile):
+        """A profile with no rule at all could never carry a single stream:
+        every source would be `Outcome.UNSUPPORTED` (`converter/jobs.py`'s
+        `describe_unsupported`), which is not a target format, it is a no-op
+        that pretends to be one."""
+        assert len(profile.rules) >= 1
 
 
 class TestResolveTarget:
