@@ -460,3 +460,43 @@ New-Item -ItemType Directory -Force in
   rather than overwriting the table's figure -- different resolution and
   image content, same conclusion (`avif` is a different, much slower tool
   for a whole folder).
+- 2026-08-26: Issue #36 found that almost every item on its own acceptance
+  list was already satisfied -- issue #23's registry-wide structural
+  invariants (`--list-formats` line count, the README byte-match) cover the
+  registry-level checks, and issues #34/#35 already shipped per-profile argv
+  pinning for every one of the seven image targets: `cheap_attempt` and
+  `last_resort` are pinned element-for-element for each, which by
+  construction already settles any membership question about one flag
+  (`copy`, `-still-picture`) inside an already-pinned tuple. The "no
+  audio/subtitle/attachment rule, `stream_limit=1`" shape is pinned too. Only
+  three of the seven profiles (`jpg`, `gif`, `avif`) carry a standing note;
+  the other four are pinned as carrying none.
+- 2026-08-26: A first draft added four cross-cutting tests on top of that
+  coverage. Two independent reviews, each re-running the author's own
+  mutation proofs against the *whole* suite rather than just the new test,
+  found three of the four added no protection: mutating `PNG`'s cheap
+  attempt back to a copy, or adding/removing `-still-picture` on `GIF`'s or
+  `AVIF`'s `last_resort`, already failed an existing per-profile argv-pinning
+  test in `tests/test_profiles.py` or `tests/test_argv.py` before the new
+  test ever ran. One review also found a docstring's supporting claim --
+  that such a mutation "would leave each profile's own argv-pinning test
+  technically unexamined" -- to be false against the repo it was making the
+  claim about. Those three tests were dropped rather than kept as
+  belt-and-braces, since the review's own reproduction showed they added
+  no coverage a reader could rely on that the docstrings did not already
+  overstate.
+- 2026-08-26: The fourth -- no profile's `description` mentions EXIF or ICC
+  -- survived, re-parametrized over the whole registry rather than the seven
+  image profiles alone: `docs/vision.md`'s non-goal is not image-specific,
+  and nothing about the check's cost changes with scope. Deliberately
+  scoped to `description` alone, not a rung's notes: a note exists to name a
+  *loss* (`Attempt.notes`'s own docstring), so a future "EXIF is not
+  carried" note would be the honest disclosure `docs/vision.md`'s
+  loss-accounting goal asks for, not the promise this non-goal forbids --
+  the first draft's version scanned notes too and would have failed exactly
+  that desirable text. Proven to fail against a `description` mutated to
+  claim EXIF preservation, and to pass against the real registry, in a
+  scratch script outside the repo. Machine coverage still cannot prove a
+  pinned argv is accepted by real ffmpeg -- the test suite stubs the
+  subprocess boundary by constitution -- so that evidence remains whatever
+  issues #34 and #35 already measured against ffmpeg 9.0, recorded above.
