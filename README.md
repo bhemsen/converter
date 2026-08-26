@@ -17,6 +17,7 @@ installed version supports; today that is:
 Target formats:
   flac  .flac  Audio: single stream, lossless FLAC
   mkv   .mkv  Video: copies almost every codec as-is, keeps font attachments
+  mov   .mov  Video: copies compatible streams, re-encodes the rest to h264/aac; no attachments
   mp3   .mp3  Audio: single stream, MP3 (libmp3lame if re-encoded)
   mp4   .mp4  Video: copies compatible streams, re-encodes the rest to h264/aac
   wav   .wav  Audio: single stream, uncompressed 16-bit PCM
