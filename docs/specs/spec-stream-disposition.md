@@ -117,7 +117,7 @@ The fix is not to sort it out afterwards but never to map it: ffmpeg has a
 
 ## Design
 
-Both foundation edits are authored in this PR, not deferred:
+Three foundation edits are authored in this PR, not deferred:
 
 - `docs/design/stream-decision.md` gains one node — "is this stream an attached
   picture, and does the profile declare a rule for one?" — ahead of the type
@@ -165,7 +165,7 @@ this one is rebuilt from what survived plus what the review found.
 | `docs/design/degradation-ladder.md`'s blind-versus-index-named dichotomy gains a **third selector kind**: a blind selector over a disposition. Authored in this PR | That file's whole `stream_limit` reasoning is built on the two-way split, so leaving it out would make the shipped invariant and the design contract disagree | 2026-08-26 |
 | The engine needs **no change for counting**: `_decide_stream` already writes `counts[stream.codec_type]`, and a picture's `codec_type` is `video` | Verified against the real engine: a two-picture m4a selective rung emits `-c:v:0 copy -c:v:1 copy` and both pictures arrive with `attached_pic=1`. The do-nothing option is also the correct one | 2026-08-26 |
 | A profile with **no** `attached_pic` rule keeps today's behaviour exactly: the picture falls through to the `video` lookup, finds no rule, and is dropped with the existing note | This phase must not change a target nobody asked it to change. `ogg`, `opus` and `wav` are the guard | 2026-08-26 |
-| The `attached_pic` rule copies unconditionally — accept-anything mask, `accept_options=flags("-c:v copy")` for `mp3` and `flac`, `flags("-c:v:{n} copy")` for `m4a` | The decision is the disposition, not the codec, so enumerating codec names would repeat the phase-4 mistake the attachment rule corrected. The `{n}` split follows the existing per-profile convention: `mp3` and `flac` are stream-limited to one, `m4a` is not | 2026-08-26 |
+| The `attached_pic` rule copies unconditionally — accept-anything mask, `accept_options=flags("-c:v:{n} copy")` on all three | The decision is the disposition, not the codec, so enumerating codec names would repeat the phase-4 mistake the attachment rule corrected. The placeholder form is used uniformly because the rule declares no `stream_limit` -- `StreamRule`'s bare-specifier convention is keyed on a limit of 1, which belongs to these profiles' *audio* rule, not this one | 2026-08-26 |
 | The engine counts a carried picture under **`"video"`**, not `"attached_pic"` | ffmpeg counts an attached picture as a video output stream, so `{n}` must stay in step with ffmpeg's own numbering. Irrelevant for the three audio targets, which declare no `video` rule, and a latent bug for any later profile with both | 2026-08-26 |
 | `describe_unsupported` stays keyed on `codec_type` deliberately, and is pinned by a test | Its question is "does this source carry any stream type the profile could use", which a disposition does not change. Measured: a standalone `.png` reports `attached_pic=0`, so it stays a genuine `unsupported` | 2026-08-26 |
 | **The cheap-attempt standing notes are removed from the five audio profiles that carry one** — `mp3`, `flac`, `m4a`, `ogg`, `opus`. `wav` carries none | Measured: the verifier already names every stream those notes describe, per stream and accurately, so the blanket line is duplication. For `mp3`, `m4a` and `flac` it also becomes false the moment artwork is carried. `ogg` and `opus` gain no artwork, so their removal rests on the duplication argument alone | 2026-08-26 |
@@ -190,7 +190,10 @@ conversion then reports through the failure-side path.
 
 Whichever the gate picks, `docs/constitution.md` and `README.md` gain the floor
 and join this PR's Scope, and `docs/roadmap.md`'s recorded verdict for this phase
-("constitution -- none") becomes false and is corrected here.
+("constitution -- none") becomes false and is corrected here. Those three edits are
+authored **on this branch after the gate decides and before the merge** -- a
+recorded foundation impact belongs to the plan PR (`docs/workflow.md`), not to an
+implementation issue.
 
 1. **Supported with degradation.** Record `ffmpeg >= 7.1` as the floor *for the
    fast path*, and state the cost below it plainly. Nothing breaks anywhere, and
@@ -230,6 +233,10 @@ Machine checks:
       same codec** is dropped with a note — the distinction the whole phase is for.
 - [ ] A test that `verify_success` does **not** report a carried picture as
       dropped, for each of the three targets.
+- [ ] Whichever floor option the gate picks produces a checkable artifact: under
+      option 1, the floor stated in `docs/constitution.md` and `README.md` and
+      nothing else; under option 2, a startup check with an actionable message
+      and a test driving it against a stubbed version banner.
 - [ ] A test that `ogg`, `opus` and `wav` are byte-for-byte unchanged in argv,
       and unchanged in notes apart from the removed standing note.
 - [ ] A test that no audio profile carries a **`cheap_attempt`** standing note,
