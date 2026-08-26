@@ -106,7 +106,7 @@ codes taken from ffmpeg itself.
 |---|---|
 | **The image2 muxer accepts any video codec under `-c copy`.** `flat.jpg -map 0:v? -c copy out.png` exits 0 and writes a JPEG named `.png`; `alpha.png -> out.jpg` writes a PNG named `.jpg` | `png`, `jpg`, `tiff` and `bmp` must **force their encoder** in the cheap attempt. A copy there mislabels the file on the default path, for the two commonest image conversions there are |
 | **`webp`, `avif` and `gif` self-police**: a non-matching codec copy exits 127 ("webp muxer supports only codec webp", "gif muxer supports only codec gif", "Could not find tag for codec png") | Those three can keep `-c copy` safely; the price is one wasted spawn plus one probe per non-matching source |
-| **GIF is a 256-colour palette format, not a lossless one**: a photograph through `-c:v gif` keeps 182 of 36 485 distinct colours at exit 0 | `gif` must declare a `fallback_name`, or the quantisation is reported nowhere |
+| **GIF is a 256-colour palette format, not a lossless one**: a photograph through `-c:v gif` keeps 182 of 36 485 distinct colours at exit 0. But a **GIF source** re-encoded through the same template is pixel-identical (PSNR infinite, same byte count, all frames kept) -- it already holds at most 256 colours | `gif` must declare a `fallback_name`, or the quantisation from a photograph is reported nowhere. It also means forcing `gif`'s encoder costs a same-format source nothing but CPU |
 | **Forcing `jpg`'s encoder re-encodes an already-JPEG source**: 44 893 B -> 51 865 B (+15.5%), PSNR 53.5 dB, where `-c copy` is byte-identical | The price of not shipping a mislabelled file. `png`, `tiff` and `bmp` re-encode losslessly and pay nothing |
 | **A multi-frame source into an image2 target fails hard** at both the cheap attempt and the selective rung: "Cannot write more than one file with the same name" | Only a rung carrying `-frames:v 1` converts a video into a `png`/`jpg`/`tiff`/`bmp` |
 | **`gif` and `webp` write every frame**: a 20-frame video becomes a 20-frame GIF and a 20-frame animated WebP, both at exit 0 on the selective rung | `webp` is an *animated* target, not a still one. Neither carries a frame limit |
@@ -125,7 +125,7 @@ codes taken from ffmpeg itself.
 | Copy masks: `png` -> `{png}`; `jpg` -> `{mjpeg}`; `webp` -> `{webp}`; `avif` -> `{av1}`; `gif` -> `{gif}`; `tiff` -> `{tiff}`; `bmp` -> `{bmp}` | Measured against ffprobe's reported codec names | 2026-08-26 |
 | Fallback encoders, as full `StreamRule` templates: `png` -> `flags("-c:v png")`; `jpg` -> `flags("-c:v mjpeg -q:v 2")`; `webp` -> `flags("-c:v libwebp -quality:v 80")`; `avif` -> `flags("-c:v libaom-av1 -crf:v 30 -still-picture 1")`; `gif` -> `flags("-c:v gif")`; `tiff` -> `flags("-c:v tiff")`; `bmp` -> `flags("-c:v bmp")` -- all placeholder-free, per the stream-limit row below | One quality default per lossy format, pinned by the argv tests. Written in full rather than as shorthand, because the `-c:v` is not optional | 2026-08-26 |
 | Only `png`, `tiff` and `bmp` declare `fallback_name=None`. `gif`, `jpg`, `webp` and `avif` declare theirs | The phase-3 rule -- encoding into a target's own lossless codec gives up nothing worth naming -- covers `png`, `tiff` and `bmp` only. **GIF is not lossless**: it is a 256-colour palette format, and measured, a 1280x720 photograph goes from 36 485 distinct colours to 182 (PSNR 39.4 dB against 47.0 for png and bmp). With `fallback_name=None` that loss would be reported nowhere at all | 2026-08-26 |
-| **`accept_options=flags("-c:v copy")` on every image profile's video rule**, placeholder-free like the rest | Follow `opus`'s precedent, **not** WAV's `accept_options=()`. WAV's empty form is safe only because its mask is empty, so the accept branch is unreachable; here every mask hits, and measured, `()` emits a map with no codec option -- `-map 0:0` alone on a JPEG re-encodes it at exit 0 (44 867 B against 44 893 B, PSNR 66 dB) where `-c:v copy` is byte-identical. A silent lossy re-encode on the one path the copy mask exists to protect | 2026-08-26 |
+| **`accept_options=flags("-c:v copy")` on every image profile's video rule**, placeholder-free like the rest | Follow `opus`'s precedent, **not** WAV's `accept_options=()`. WAV's empty form is safe only because its mask is empty, so its accept branch is unreachable at all; every mask here is non-empty, so the branch is live. Measured, `()` emits a map with no codec option -- `-map 0:0` alone on a JPEG re-encodes it at exit 0 (44 867 B against 44 893 B, PSNR 66 dB) where `-c:v copy` is byte-identical. A silent lossy re-encode on the one path the copy mask exists to protect | 2026-08-26 |
 | **`stream_limit=1` on every image profile's video rule**, and -- following the convention `spec-profile-registry.md` recorded -- their templates are written **without** `{n}`: `flags("-c:v png")`, `flags("-c:v mjpeg -q:v 2")` and so on | A rule limited to one stream can only ever produce output stream 0, so it writes the bare specifier and the engine substitutes nothing. That is phase 1's rule, and the argv tests pin whichever form is chosen, so it is worth choosing deliberately. One image, one picture. A source with two video streams — cover art beside a video, an MJPEG-plus-video AVI — would otherwise map both into one output file and fail. `mp3` and `flac` got the same treatment in phase 3 for the same reason | 2026-08-26 |
 | No image profile declares an audio, subtitle or attachment rule; `container_options` is `()` for all seven | An image holds one thing, and none of these muxers takes a container flag | 2026-08-26 |
 | **Standing notes**: `jpg` says transparency is not carried **and** that the image was re-encoded. `gif` and `avif` need the same treatment for transparency, and `avif` for frame reduction -- but whether those notes are reachable depends on the second open decision | `jpg`'s cheap attempt always wins, so its note always prints. `gif`'s and `avif`'s cheap attempt is a copy that wins only for a source already in that format, so as drafted their notes print for exactly the inputs that lose nothing. That is the defect the second open decision exists to close | 2026-08-26 |
@@ -136,9 +136,10 @@ codes taken from ffmpeg itself.
 ### The one open decision, in full
 
 **Scope: four targets, not seven.** `gif` and `webp` convert a video into an
-animation, which needs no decision. `avif` reduces it to one frame whatever
-anyone does, which is covered by its standing note. Only the image2 four —
-`png`, `jpg`, `tiff`, `bmp` — reach a rung where this is a choice.
+animation, which needs no decision. `avif` reduces it to one frame no matter what
+this decision says — whether that reduction is *reported* is the second open
+decision's business, not this one's. Only the image2 four — `png`, `jpg`, `tiff`,
+`bmp` — reach a rung where this is a choice.
 
 Measured: with the encoder forced, an image source converts on the cheap attempt.
 A video source fails the cheap attempt *and* the selective rung, because neither
@@ -183,11 +184,21 @@ real engine:
 So the drafted notes are attached to a path they do not print on. The only lever
 this phase has is the cheap attempt:
 
-1. **Force the encoder for `gif` and `avif` too**, as `png`/`jpg`/`tiff`/`bmp`
-   now do. The cheap attempt then always wins, so both standing notes always
-   print, and the wasted spawn plus probe on every non-matching source disappears.
-   The price is that a same-format source is re-encoded rather than copied: a GIF
-   is re-quantised, and an AVIF pays a lossy re-encode plus about 7 seconds.
+1. **Force the encoder**, as `png`/`jpg`/`tiff`/`bmp` now do:
+   `flags("-map 0:v? -c:v gif")` and
+   `flags("-map 0:v? -c:v libaom-av1 -crf:v 30 -still-picture 1")`. The cheap
+   attempt then always wins, so both standing notes always print, and the wasted
+   spawn plus probe on every non-matching source disappears.
+
+   **The price differs sharply between the two, so this may be answered per
+   target.** Measured: re-encoding a GIF source through `-c:v gif` is
+   **pixel-identical** (PSNR infinite, same byte count, all 20 frames of an
+   animation preserved) -- a GIF already holds at most 256 colours, so the palette
+   reproduces them exactly, and option 1 costs `gif` nothing but CPU. Re-encoding
+   an AVIF source is genuinely lossy and slow: 7.07 s and PSNR 55.7 dB on a
+   3000x2000 still. One caveat that resisted measurement: an animated GIF using
+   per-frame local palettes could exceed 256 colours across the whole file, where
+   a single global palette would quantise. Both fixtures tried came back lossless.
 2. **Keep the copy.** A same-format source is copied perfectly and cheaply. The
    price is that a non-GIF source into `gif` loses transparency, and a video into
    `avif` loses frames, with nothing naming either -- which `docs/constitution.md`
@@ -322,3 +333,8 @@ New-Item -ItemType Directory -Force in
   mirror of the standing notes' — reachable under option 2, unreachable under
   option 1 — so the second open decision now states where each note lives per
   option, and the checks that depend on it say they are conditional.
+- 2026-08-26: Review round 4 measured that a GIF source re-encoded through
+  `-c:v gif` is pixel-identical, so the second open decision's option 1 costs
+  `gif` only CPU while costing `avif` a real generation loss plus seven seconds.
+  The two had been bundled under one price sentence that overstated `gif`'s; the
+  decision may now be answered per target.
