@@ -9,7 +9,9 @@ import pytest
 
 from converter import profiles
 from converter.profiles import (
+    BMP,
     FLAC,
+    JPG,
     M4A,
     MKV,
     MOV,
@@ -17,8 +19,10 @@ from converter.profiles import (
     MP4,
     OGG,
     OPUS,
+    PNG,
     PROFILES,
     SOURCE_SUFFIXES,
+    TIFF,
     WAV,
     Attempt,
     Profile,
@@ -34,7 +38,7 @@ from converter.profiles import (
 MAP_LETTERS = {"v": "video", "a": "audio", "s": "subtitle", "t": "attachment", "d": "data"}
 
 #: Every profile the registry ships. A new one joins the invariant checks here.
-SHIPPED = [MP4, WAV, MKV, MP3, FLAC, MOV, M4A, OGG, OPUS]
+SHIPPED = [MP4, WAV, MKV, MOV, MP3, FLAC, M4A, OGG, OPUS, PNG, JPG, TIFF, BMP]
 
 #: Stream types each profile maps only to *force* the cheap attempt to fail when
 #: the source carries one -- never to carry it on the success side. The narrowed
@@ -51,12 +55,16 @@ FORCED_FAILURE_TYPES: dict[str, frozenset[str]] = {
     MP4.name: frozenset(),
     WAV.name: frozenset(),
     MKV.name: frozenset(),
+    MOV.name: frozenset({"attachment"}),
     MP3.name: frozenset(),
     FLAC.name: frozenset(),
     M4A.name: frozenset(),
     OGG.name: frozenset(),
     OPUS.name: frozenset(),
-    MOV.name: frozenset({"attachment"}),
+    PNG.name: frozenset(),
+    JPG.name: frozenset(),
+    TIFF.name: frozenset(),
+    BMP.name: frozenset(),
 }
 
 #: Stream types whose `stream_limit` is enforced by the container's own muxer
@@ -75,6 +83,7 @@ MUXER_ENFORCED_LIMIT_TYPES: dict[str, frozenset[str]] = {
     MP4.name: frozenset(),
     WAV.name: frozenset(),
     MKV.name: frozenset(),
+    MOV.name: frozenset(),
     MP3.name: frozenset({"audio"}),
     FLAC.name: frozenset({"audio"}),
     # No entry: m4a, ogg and opus declare no stream_limit at all -- their
@@ -83,7 +92,14 @@ MUXER_ENFORCED_LIMIT_TYPES: dict[str, frozenset[str]] = {
     M4A.name: frozenset(),
     OGG.name: frozenset(),
     OPUS.name: frozenset(),
-    MOV.name: frozenset(),
+    # image2's muxer refuses to write more than one frame -- or more than one
+    # video stream -- to one output file, so a source that would trip the
+    # limit never reaches the success side: it fails the cheap attempt outright
+    # (spec-image-formats.md's muxer-facts table).
+    PNG.name: frozenset({"video"}),
+    JPG.name: frozenset({"video"}),
+    TIFF.name: frozenset({"video"}),
+    BMP.name: frozenset({"video"}),
 }
 
 
@@ -817,6 +833,182 @@ class TestOpusProfile:
         assert OPUS.last_resort.options == ("-map", "0:a:0", "-c:a", "libopus", "-b:a", "128k")
 
 
+#: One tuple per image2 profile this phase adds: the profile itself, the codec
+#: name its own encoder produces (so a copy-mask hit can be constructed), and
+#: whether its lossless re-encode carries a note (Verification,
+#: spec-image-formats.md: only `jpg`'s does).
+IMAGE2_CASES = [
+    (PNG, "png", False),
+    (JPG, "mjpeg", True),
+    (TIFF, "tiff", False),
+    (BMP, "bmp", False),
+]
+
+
+@pytest.mark.parametrize(
+    "profile,own_codec,has_reencode_name", IMAGE2_CASES, ids=lambda v: getattr(v, "label", v)
+)
+class TestImage2Profiles:
+    """Shared shape of the four image2 targets: png, jpg, tiff, bmp all force
+    their encoder in the cheap attempt, so a stream copy never ships a
+    mislabelled file (spec-image-formats.md's muxer-facts table)."""
+
+    def test_cheap_attempt_forces_the_encoder_and_maps_video_blindly(
+        self, profile, own_codec, has_reencode_name
+    ):
+        assert profile.cheap_attempt.options[:2] == ("-map", "0:v?")
+        assert "-c:v" in profile.cheap_attempt.options
+        assert "copy" not in profile.cheap_attempt.options
+
+    def test_cheap_attempt_selects_streams_blindly(self, profile, own_codec, has_reencode_name):
+        assert profile.explicit_streams is False
+
+    def test_cheap_attempt_is_declared_partial(self, profile, own_codec, has_reencode_name):
+        assert profile.partial_mapping is True
+
+    def test_has_exactly_one_video_rule(self, profile, own_codec, has_reencode_name):
+        assert set(profile.rules) == {"video"}
+
+    def test_video_rule_copy_mask_is_its_own_codec(self, profile, own_codec, has_reencode_name):
+        assert profile.rules["video"].copy_mask == frozenset({own_codec})
+
+    def test_video_rule_accept_options_force_a_real_copy(
+        self, profile, own_codec, has_reencode_name
+    ):
+        """`accept_options=flags("-c:v copy")`, not WAV's `()`: every mask here
+        is non-empty, so an empty accept branch would silently re-encode on the
+        one path the copy mask exists to protect (Prior decisions)."""
+        assert profile.rules["video"].accept_options == ("-c:v", "copy")
+
+    def test_video_rule_is_placeholder_free(self, profile, own_codec, has_reencode_name):
+        rule = profile.rules["video"]
+
+        assert "{n}" not in " ".join(rule.accept_options)
+        assert rule.fallback_options is not None
+        assert "{n}" not in " ".join(rule.fallback_options)
+
+    def test_video_rule_stream_limit_is_one(self, profile, own_codec, has_reencode_name):
+        assert profile.rules["video"].stream_limit == 1
+
+    def test_fallback_name_matches_whether_the_encode_is_lossless(
+        self, profile, own_codec, has_reencode_name
+    ):
+        if has_reencode_name:
+            assert profile.rules["video"].fallback_name is not None
+        else:
+            assert profile.rules["video"].fallback_name is None
+
+    def test_no_container_options(self, profile, own_codec, has_reencode_name):
+        assert profile.container_options == ()
+
+    def test_last_resort_extracts_a_single_frame_with_a_note(
+        self, profile, own_codec, has_reencode_name
+    ):
+        assert profile.last_resort is not None
+        assert profile.last_resort.options[:4] == ("-map", "0:v:0", "-frames:v", "1")
+        assert "{n}" not in " ".join(profile.last_resort.options)
+        assert any("first frame" in note for note in profile.last_resort.notes)
+
+    def test_last_resort_also_names_what_the_explicit_index_cannot_reach(
+        self, profile, own_codec, has_reencode_name
+    ):
+        """`-map 0:v:0` is explicit-index, so unlike the selective rung it
+        cannot name a per-stream drop itself -- the same reason MP3's and
+        FLAC's index-named last resort carries a standing note for whatever it
+        structurally drops (`docs/design/degradation-ladder.md`: "Every rung
+        carries its own notes"). Without this, an audio-bearing video into
+        `--to png`/`--to jpg`/`--to tiff`/`--to bmp` would lose its audio track
+        with nothing saying so."""
+        assert any("non-video streams" in note for note in profile.last_resort.notes)
+
+
+class TestPngProfile:
+    def test_label_and_suffix(self):
+        assert PNG.label == "PNG"
+        assert PNG.target_suffix == ".png"
+
+    def test_name_and_description(self):
+        assert PNG.name == "png"
+        assert PNG.description
+
+    def test_cheap_attempt_carries_no_standing_note(self):
+        """PNG is lossless, so forcing its own encoder gives up nothing worth
+        naming (Verification: png/tiff/bmp emit no note for the encode itself)."""
+        assert PNG.cheap_attempt.notes == ()
+
+    def test_cheap_attempt_argv(self):
+        assert PNG.cheap_attempt.options == ("-map", "0:v?", "-c:v", "png")
+
+
+class TestJpgProfile:
+    def test_label_and_suffix(self):
+        assert JPG.label == "JPG"
+        assert JPG.target_suffix == ".jpg"
+
+    def test_name_and_description(self):
+        assert JPG.name == "jpg"
+        assert JPG.description
+
+    def test_cheap_attempt_argv(self):
+        assert JPG.cheap_attempt.options == ("-map", "0:v?", "-c:v", "mjpeg", "-q:v", "2")
+
+    def test_cheap_attempt_carries_the_transparency_standing_note(self):
+        """Always wins for an ordinary image (the encoder is forced
+        unconditionally), so this is the note that actually prints
+        (Verification / spec-image-formats.md's gate decision)."""
+        assert JPG.cheap_attempt.notes == (
+            "transparency is not carried by JPEG; the image was re-encoded",
+        )
+
+    def test_fallback_name_is_declared(self):
+        """Forcing mjpeg re-encodes an already-JPEG source too (measured:
+        +15.5% size, PSNR 53.5 dB) -- a real loss on the selective rung."""
+        assert JPG.rules["video"].fallback_name == "mjpeg"
+
+    def test_last_resort_repeats_the_transparency_note(self):
+        """The cheap attempt's standing note only actually prints for a source
+        that never reaches the last resort -- a video with alpha into `--to
+        jpg` lands here instead, so the loss has to be named again on the rung
+        that actually wins for it (review finding on issue #34: a video's
+        transparency was otherwise dropped in complete silence)."""
+        assert JPG.last_resort is not None
+        assert "transparency is not carried by JPEG; the image was re-encoded" in (
+            JPG.last_resort.notes
+        )
+
+
+class TestTiffProfile:
+    def test_label_and_suffix(self):
+        assert TIFF.label == "TIFF"
+        assert TIFF.target_suffix == ".tiff"
+
+    def test_name_and_description(self):
+        assert TIFF.name == "tiff"
+        assert TIFF.description
+
+    def test_cheap_attempt_carries_no_standing_note(self):
+        assert TIFF.cheap_attempt.notes == ()
+
+    def test_cheap_attempt_argv(self):
+        assert TIFF.cheap_attempt.options == ("-map", "0:v?", "-c:v", "tiff")
+
+
+class TestBmpProfile:
+    def test_label_and_suffix(self):
+        assert BMP.label == "BMP"
+        assert BMP.target_suffix == ".bmp"
+
+    def test_name_and_description(self):
+        assert BMP.name == "bmp"
+        assert BMP.description
+
+    def test_cheap_attempt_carries_no_standing_note(self):
+        assert BMP.cheap_attempt.notes == ()
+
+    def test_cheap_attempt_argv(self):
+        assert BMP.cheap_attempt.options == ("-map", "0:v?", "-c:v", "bmp")
+
+
 class TestRegistry:
     def test_keys_are_each_profile_s_own_name(self):
         assert PROFILES == {
@@ -829,6 +1021,10 @@ class TestRegistry:
             "m4a": M4A,
             "ogg": OGG,
             "opus": OPUS,
+            "png": PNG,
+            "jpg": JPG,
+            "tiff": TIFF,
+            "bmp": BMP,
         }
 
 
@@ -857,10 +1053,19 @@ class TestResolveTarget:
     def test_accepts_mov_name_case_and_dot_variants(self, target):
         assert resolve_target(target) is MOV
 
+    @pytest.mark.parametrize(
+        ("target", "profile"), [("png", PNG), ("jpg", JPG), ("tiff", TIFF), ("bmp", BMP)]
+    )
+    def test_resolves_the_image_targets(self, target, profile):
+        assert resolve_target(target) is profile
+
     def test_unknown_target_raises_value_error_listing_available_targets(self):
         with pytest.raises(
             ValueError,
-            match=r"webm.*available targets: flac, m4a, mkv, mov, mp3, mp4, ogg, opus, wav",
+            match=(
+                r"webm.*available targets: "
+                r"bmp, flac, jpg, m4a, mkv, mov, mp3, mp4, ogg, opus, png, tiff, wav"
+            ),
         ):
             resolve_target("webm")
 
