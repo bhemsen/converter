@@ -50,15 +50,20 @@ The internal import graph is acyclic today and must stay that way:
    `paths.find_sources` collects the inputs, `paths.find_collisions` refuses up
    front if two inputs would write to the same output, then `batch.run_batch`
    runs the profile's cheapest attempt per file through the engine in `jobs.py`.
-   On success nothing else happens — no ffprobe round-trip is ever spent —
-   *provided* that attempt's mapping is exhaustive. A profile that declares its
-   cheap attempt **partial by construction** (`partial_mapping`: MP4's blind
-   `?`-selectors reach no attachment, WAV's single index reaches no second audio
-   stream) spends one probe on success too, and every source stream that mapping
-   could not carry becomes a note. The verification reads the profile's
-   *structural* verdicts only — whether it declares a rule for the stream's type,
-   and how many streams of that type it holds — never a codec-level one: the
-   attempt exited 0, so what it did with a codec worked.
+   Every profile shipped or currently specced declares its cheap attempt
+   **partial by construction** (`partial_mapping=True`: MP4's blind
+   `?`-selectors reach no attachment, WAV's single index reaches no second
+   audio stream, and phases 3-5 follow the same shape), so a success spends one
+   `ffprobe` round-trip to verify what that mapping could not carry, and every
+   source stream it missed becomes a note. The verification reads the
+   profile's *structural* verdicts only — whether it declares a rule for the
+   stream's type, and how many streams of that type it holds — never a
+   codec-level one: the attempt exited 0, so what it did with a codec worked.
+   A profile whose cheap attempt is *exhaustive* would skip this probe
+   entirely, but no shipped or currently specced profile is one — the
+   probe-on-success branch is presently the only path a successful conversion
+   takes; see the 2026-08-26 (issue #41) entries in
+   `docs/specs/spec-profile-registry.md`'s Decision log.
 2. **Degradation.** The attempt exits non-zero, so *now* `ffmpegtool.probe_streams`
    describes the file. The engine matches each stream against the profile's copy
    mask: streams the mask accepts pass through unchanged — as a literal `copy`, or
