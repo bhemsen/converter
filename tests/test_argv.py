@@ -7,7 +7,7 @@ import pytest
 
 from converter import ffmpegtool, jobs
 from converter.ffmpegtool import Stream, build_argv, cli_path
-from converter.profiles import BMP, FLAC, JPG, MP3, MP4, PNG, TIFF, WAV
+from converter.profiles import BMP, FLAC, JPG, MKV, MP3, MP4, PNG, TIFF, WAV
 
 
 def options_of(argv: list[str], src: str, dst: str) -> list[str]:
@@ -454,6 +454,145 @@ class TestMp4DegradationNotes:
         )
 
 
+class TestMkvRemux:
+    def test_maps_every_stream_type_including_attachments(self):
+        options = jobs.first_attempt(MKV).options
+
+        assert options == (
+            "-map",
+            "0:v?",
+            "-map",
+            "0:a?",
+            "-map",
+            "0:s?",
+            "-map",
+            "0:t?",
+            "-c",
+            "copy",
+        )
+
+    def test_does_not_use_bare_map_zero(self):
+        """'-map 0' also selects data and timecode streams, which no
+        "v/a/s/t" map carries into MKV either (measured), so a bare "-map 0"
+        would only turn a remuxable file into a failure for no reason."""
+        options = list(jobs.first_attempt(MKV).options)
+        mapped = [options[i + 1] for i, flag in enumerate(options) if flag == "-map"]
+
+        assert "0" not in mapped
+        assert mapped == ["0:v?", "0:a?", "0:s?", "0:t?"]
+
+    def test_target_suffix(self):
+        assert MKV.target_suffix == ".mkv"
+
+
+class TestMkvRetries:
+    def test_ladder_ends_with_a_full_reencode(self):
+        attempts = jobs.retries(MKV, [Stream(0, "video", "h264")])
+
+        assert [a.label for a in attempts] == ["selective", "re-encode"]
+
+    def test_selective_copies_compatible_streams(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "audio", "aac")]
+
+        selective = jobs.retries(MKV, streams)[0]
+
+        assert selective.options[:8] == (
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:v:0",
+            "copy",
+            "-c:a:0",
+            "copy",
+        )
+        assert selective.notes == ()
+
+    def test_selective_reencodes_video_mkv_cannot_hold(self):
+        streams = [Stream(0, "video", "wmv3"), Stream(1, "audio", "aac")]
+
+        selective = jobs.retries(MKV, streams)[0]
+
+        assert "-c:v:0" in selective.options
+        assert selective.options[selective.options.index("-c:v:0") + 1] == "libx264"
+        assert selective.notes == ("video stream 0 (wmv3) re-encoded to h264",)
+
+    def test_selective_reencodes_audio_mkv_cannot_hold(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "audio", "wmav2")]
+
+        selective = jobs.retries(MKV, streams)[0]
+
+        assert "-c:a:0" in selective.options
+        assert selective.options[selective.options.index("-c:a:0") + 1] == "aac"
+        assert selective.notes == ("audio stream 1 (wmav2) re-encoded to aac",)
+
+    def test_selective_reencodes_mov_text_subtitle_to_srt(self):
+        """Matroska rejects a literal mov_text copy (measured), so the cheap
+        attempt's blanket '-c copy' fails on a mov_text source and the ladder
+        reaches this rung -- exactly the branch the argv-pinning tests below
+        cannot reach, since they only ever build the selective rung directly."""
+        streams = [Stream(0, "video", "h264"), Stream(1, "subtitle", "mov_text")]
+
+        selective = jobs.retries(MKV, streams)[0]
+
+        assert "-c:s:0" in selective.options
+        assert selective.options[selective.options.index("-c:s:0") + 1] == "srt"
+        assert selective.notes == ("subtitle stream 1 (mov_text) re-encoded to subrip",)
+
+    def test_selective_copies_an_attachment_whose_codec_name_is_unknown(self):
+        """ffprobe reports a font/ttf or font/otf attachment's codec_name as
+        "unknown" (measured), and MKV's attachment rule accepts it anyway."""
+        streams = [Stream(0, "video", "h264"), Stream(1, "attachment", "unknown")]
+
+        selective = jobs.retries(MKV, streams)[0]
+
+        assert "-c:t:0" in selective.options
+        assert selective.options[selective.options.index("-c:t:0") + 1] == "copy"
+        assert selective.notes == ()
+
+    def test_reencode_states_what_it_sacrifices(self):
+        reencode = jobs.retries(MKV, [])[-1]
+
+        assert "libx264" in reencode.options
+        assert "aac" in reencode.options
+        assert reencode.notes
+        assert any("lossy" in note for note in reencode.notes)
+
+
+class TestMkvDegradationNotes:
+    """Verification (spec-video-formats): one test per degradation branch this
+    profile introduces, each pinning the exact note."""
+
+    def test_video_reencode_note_is_exact(self):
+        streams = [Stream(0, "video", "wmv3"), Stream(1, "audio", "aac")]
+
+        selective = jobs.retries(MKV, streams)[0]
+
+        assert selective.notes == ("video stream 0 (wmv3) re-encoded to h264",)
+
+    def test_audio_reencode_note_is_exact(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "audio", "wmav2")]
+
+        selective = jobs.retries(MKV, streams)[0]
+
+        assert selective.notes == ("audio stream 1 (wmav2) re-encoded to aac",)
+
+    def test_subtitle_reencode_note_is_exact(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "subtitle", "mov_text")]
+
+        selective = jobs.retries(MKV, streams)[0]
+
+        assert selective.notes == ("subtitle stream 1 (mov_text) re-encoded to subrip",)
+
+    def test_last_resort_notes_are_pinned(self):
+        reencode = jobs.retries(MKV, [])[-1]
+
+        assert reencode.notes == (
+            "re-encoded to h264/aac (lossy); subtitles and extra video streams dropped",
+            "10-bit or HDR sources are reduced to 8-bit yuv420p for player compatibility",
+        )
+
+
 class TestProfileArgvPinning:
     """Verification: the full argv each profile builds, pinned byte-for-byte
     (docs/specs/spec-profile-registry.md)."""
@@ -535,6 +674,62 @@ class TestProfileArgvPinning:
             "-c:a",
             "pcm_s16le",
             "out.wav",
+        ]
+
+    def test_mkv_copyable_source(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "audio", "aac")]
+        selective = jobs.retries(MKV, streams)[0]
+
+        argv = build_argv("ffmpeg", "in.mts", selective.options, "out.mkv")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mts",
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:v:0",
+            "copy",
+            "-c:a:0",
+            "copy",
+            "out.mkv",
+        ]
+
+    def test_mkv_non_copyable_source(self):
+        streams = [Stream(0, "video", "wmv3"), Stream(1, "audio", "wmav2")]
+        selective = jobs.retries(MKV, streams)[0]
+
+        argv = build_argv("ffmpeg", "in.mts", selective.options, "out.mkv")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mts",
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:v:0",
+            "libx264",
+            "-crf:v:0",
+            "18",
+            "-c:a:0",
+            "aac",
+            "-b:a:0",
+            "192k",
+            "out.mkv",
         ]
 
     def test_wav_two_audio_source(self):
@@ -1119,6 +1314,7 @@ class TestSuccessSideVerification:
     def test_a_partial_profile_needs_verification(self):
         assert jobs.needs_verification(MP4) is True
         assert jobs.needs_verification(WAV) is True
+        assert jobs.needs_verification(MKV) is True
 
     def test_an_exhaustive_profile_does_not(self):
         """`False` is what keeps the probe off an exhaustive profile's happy path."""
@@ -1136,7 +1332,7 @@ class TestSuccessSideVerification:
 
         assert notes == ("audio stream 1 (opus) dropped: WAV holds 1 audio stream",)
 
-    @pytest.mark.parametrize("profile", [MP4, WAV], ids=lambda profile: profile.label)
+    @pytest.mark.parametrize("profile", [MP4, WAV, MKV], ids=lambda profile: profile.label)
     def test_no_profile_invents_a_loss_for_a_source_it_fully_maps(self, profile):
         """One stream of each type the profile declares a rule for, and never more
         than one, so nothing in this source can have been left behind.
@@ -1144,8 +1340,9 @@ class TestSuccessSideVerification:
         Built from ``profile.rules`` rather than the cheap attempt's own
         ``mapped_types`` (`tests/test_profiles.py`), which is sound only because
         ``TestPartialMappingInvariant`` there pins the two as equal for every
-        shipped profile -- if that equality ever broke for `MP4` or `WAV`, this
-        source would silently stop matching what the cheap attempt actually maps.
+        shipped profile -- if that equality ever broke for `MP4`, `WAV` or `MKV`,
+        this source would silently stop matching what the cheap attempt actually
+        maps.
         """
         streams = [Stream(i, kind, "whatever") for i, kind in enumerate(profile.rules)]
 

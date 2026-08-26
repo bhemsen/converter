@@ -18,6 +18,7 @@ Target formats:
   bmp   .bmp  Image: force-encoded to BMP, lossless
   flac  .flac  Audio: single stream, lossless FLAC
   jpg   .jpg  Image: force-encoded to JPEG; transparency is not carried
+  mkv   .mkv  Video: copies almost every codec as-is, keeps font attachments
   mp3   .mp3  Audio: single stream, MP3 (libmp3lame if re-encoded)
   mp4   .mp4  Video: copies compatible streams, re-encodes the rest to h264/aac
   png   .png  Image: force-encoded to PNG, lossless

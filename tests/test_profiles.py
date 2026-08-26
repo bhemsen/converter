@@ -12,6 +12,7 @@ from converter.profiles import (
     BMP,
     FLAC,
     JPG,
+    MKV,
     MP3,
     MP4,
     PNG,
@@ -33,7 +34,7 @@ from converter.profiles import (
 MAP_LETTERS = {"v": "video", "a": "audio", "s": "subtitle", "t": "attachment", "d": "data"}
 
 #: Every profile the registry ships. A new one joins the invariant checks here.
-SHIPPED = [MP4, WAV, MP3, FLAC, PNG, JPG, TIFF, BMP]
+SHIPPED = [MP4, WAV, MKV, MP3, FLAC, PNG, JPG, TIFF, BMP]
 
 #: A stand-in for the not-yet-shipped `mov` profile (`docs/specs/spec-video-formats.md`),
 #: shaped only enough to prove the degradation-ladder invariant's narrowed form:
@@ -70,6 +71,7 @@ MOV_SHAPED = Profile(
 FORCED_FAILURE_TYPES: dict[str, frozenset[str]] = {
     MP4.name: frozenset(),
     WAV.name: frozenset(),
+    MKV.name: frozenset(),
     MP3.name: frozenset(),
     FLAC.name: frozenset(),
     PNG.name: frozenset(),
@@ -94,6 +96,7 @@ FORCED_FAILURE_TYPES: dict[str, frozenset[str]] = {
 MUXER_ENFORCED_LIMIT_TYPES: dict[str, frozenset[str]] = {
     MP4.name: frozenset(),
     WAV.name: frozenset(),
+    MKV.name: frozenset(),
     MP3.name: frozenset({"audio"}),
     FLAC.name: frozenset({"audio"}),
     # image2's muxer refuses to write more than one frame -- or more than one
@@ -393,6 +396,95 @@ class TestWavProfile:
         assert WAV.rules["audio"].stream_limit == 1
 
 
+class TestMkvProfile:
+    def test_label_and_suffix(self):
+        assert MKV.label == "MKV"
+        assert MKV.target_suffix == ".mkv"
+
+    def test_name_and_description(self):
+        assert MKV.name == "mkv"
+        assert MKV.description
+
+    def test_no_container_options(self):
+        """Measured: +faststart is MP4/MOV furniture MKV's muxer ignores, so
+        declaring it here would be noise (Prior decisions, spec-video-formats)."""
+        assert MKV.container_options == ()
+
+    def test_cheap_attempt_selects_streams_blindly(self):
+        assert MKV.explicit_streams is False
+
+    def test_cheap_attempt_maps_every_stream_type_including_attachments(self):
+        assert MKV.cheap_attempt.options == (
+            "-map",
+            "0:v?",
+            "-map",
+            "0:a?",
+            "-map",
+            "0:s?",
+            "-map",
+            "0:t?",
+            "-c",
+            "copy",
+        )
+
+    def test_cheap_attempt_is_declared_partial(self):
+        """No "v/a/s/t" map carries a data or timecode stream (measured), so a
+        source with either loses it without ffmpeg ever complaining."""
+        assert MKV.partial_mapping is True
+
+    def test_cheap_attempt_carries_the_standing_note(self):
+        assert MKV.cheap_attempt.notes == ("data and timecode streams are not carried into MKV",)
+
+    def test_last_resort_excludes_container_options(self):
+        assert MKV.last_resort is not None
+        assert MKV.last_resort.label == "re-encode"
+        assert "-movflags" not in MKV.last_resort.options
+
+    def test_has_exactly_the_four_stream_rules(self):
+        assert set(MKV.rules) == {"video", "audio", "subtitle", "attachment"}
+
+    def test_video_and_audio_rules_carry_the_position_placeholder(self):
+        for stream_type in ("video", "audio"):
+            rule = MKV.rules[stream_type]
+            assert "{n}" in " ".join(rule.accept_options)
+            assert rule.fallback_options is not None
+            assert "{n}" in " ".join(rule.fallback_options)
+
+    def test_subtitle_rule_copies_in_kind_and_falls_back_to_srt(self):
+        """Matroska rejects a literal mov_text copy (measured), so mov_text is
+        absent from the copy mask and falls to the srt re-encode instead."""
+        rule = MKV.rules["subtitle"]
+
+        assert "mov_text" not in rule.copy_mask
+        assert rule.accept_options == ("-c:s:{n}", "copy")
+        assert rule.fallback_options == ("-c:s:{n}", "srt")
+        assert rule.fallback_name == "subrip"
+
+    def test_subtitle_mask_holds_bitmap_subtitles_too(self):
+        """Unlike MP4's text-only mask -- Matroska is the only container in
+        this phase that holds bitmap subtitles as a literal copy."""
+        rule = MKV.rules["subtitle"]
+
+        assert {"hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle"} <= rule.copy_mask
+
+    def test_attachment_rule_accepts_every_codec_name(self):
+        """ffprobe reports a font/ttf or font/otf attachment's codec_name as
+        "unknown", so a mask enumerating font codec names would drop exactly
+        the fonts it meant to keep (measured, spec-video-formats.md)."""
+        rule = MKV.rules["attachment"]
+
+        assert "unknown" in rule.copy_mask
+        assert "ttf" in rule.copy_mask
+        assert len(rule.copy_mask) == 0
+
+    def test_attachment_rule_copies_unconditionally_with_no_fallback(self):
+        rule = MKV.rules["attachment"]
+
+        assert rule.accept_options == ("-c:t:{n}", "copy")
+        assert rule.fallback_options is None
+        assert rule.stream_limit is None
+
+
 class TestMp3Profile:
     """Pins the shape Acceptance fixes for `mp3` (issue #21,
     `docs/specs/spec-audio-formats.md`)."""
@@ -673,6 +765,7 @@ class TestRegistry:
         assert PROFILES == {
             "mp4": MP4,
             "wav": WAV,
+            "mkv": MKV,
             "mp3": MP3,
             "flac": FLAC,
             "png": PNG,
@@ -690,6 +783,10 @@ class TestResolveTarget:
     def test_resolves_wav_too(self):
         assert resolve_target("wav") is WAV
 
+    @pytest.mark.parametrize("target", ["mkv", "MKV", ".mkv", ".MKV", "Mkv"])
+    def test_accepts_mkv_name_case_and_dot_variants(self, target):
+        assert resolve_target(target) is MKV
+
     def test_resolves_mp3_and_flac_too(self):
         assert resolve_target("mp3") is MP3
         assert resolve_target("flac") is FLAC
@@ -703,9 +800,9 @@ class TestResolveTarget:
     def test_unknown_target_raises_value_error_listing_available_targets(self):
         with pytest.raises(
             ValueError,
-            match=r"mkv.*available targets: bmp, flac, jpg, mp3, mp4, png, tiff, wav",
+            match=r"webm.*available targets: bmp, flac, jpg, mkv, mp3, mp4, png, tiff, wav",
         ):
-            resolve_target("mkv")
+            resolve_target("webm")
 
 
 class TestSourceSuffixes:
