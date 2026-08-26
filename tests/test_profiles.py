@@ -9,8 +9,10 @@ import pytest
 
 from converter import profiles
 from converter.profiles import (
+    AVIF,
     BMP,
     FLAC,
+    GIF,
     JPG,
     M4A,
     MKV,
@@ -25,6 +27,7 @@ from converter.profiles import (
     TIFF,
     WAV,
     WEBM,
+    WEBP,
     Attempt,
     Profile,
     StreamRule,
@@ -39,7 +42,25 @@ from converter.profiles import (
 MAP_LETTERS = {"v": "video", "a": "audio", "s": "subtitle", "t": "attachment", "d": "data"}
 
 #: Every profile the registry ships. A new one joins the invariant checks here.
-SHIPPED = [MP4, WAV, MKV, MOV, MP3, FLAC, WEBM, M4A, OGG, OPUS, PNG, JPG, TIFF, BMP]
+SHIPPED = [
+    MP4,
+    WAV,
+    MKV,
+    MOV,
+    MP3,
+    FLAC,
+    WEBM,
+    M4A,
+    OGG,
+    OPUS,
+    PNG,
+    JPG,
+    TIFF,
+    BMP,
+    GIF,
+    WEBP,
+    AVIF,
+]
 
 #: Stream types each profile maps only to *force* the cheap attempt to fail when
 #: the source carries one -- never to carry it on the success side. The narrowed
@@ -71,6 +92,9 @@ FORCED_FAILURE_TYPES: dict[str, frozenset[str]] = {
     JPG.name: frozenset(),
     TIFF.name: frozenset(),
     BMP.name: frozenset(),
+    GIF.name: frozenset(),
+    WEBP.name: frozenset(),
+    AVIF.name: frozenset(),
 }
 
 #: Stream types whose `stream_limit` is enforced by the container's own muxer
@@ -107,6 +131,16 @@ MUXER_ENFORCED_LIMIT_TYPES: dict[str, frozenset[str]] = {
     JPG.name: frozenset({"video"}),
     TIFF.name: frozenset({"video"}),
     BMP.name: frozenset({"video"}),
+    # gif, webp and avif self-police the same way: none of these muxers holds
+    # more than one video *stream* (a second one -- cover art beside an
+    # animation -- fails the cheap attempt outright), so a source that would
+    # trip the limit never reaches the success side either. Orthogonal to how
+    # many *frames* the one stream they do hold may carry -- gif and webp
+    # write every frame, and neither carries a frame limit anywhere
+    # (spec-image-formats.md).
+    GIF.name: frozenset({"video"}),
+    WEBP.name: frozenset({"video"}),
+    AVIF.name: frozenset({"video"}),
 }
 
 
@@ -1144,6 +1178,195 @@ class TestBmpProfile:
         assert BMP.cheap_attempt.options == ("-map", "0:v?", "-c:v", "bmp")
 
 
+#: The animated-capable trio: unlike the image2 four, none of these carries a
+#: frame limit anywhere -- `gif` and `webp` write every frame of a multi-frame
+#: source, and `avif`'s reduction to one frame is the muxer's own doing, not
+#: something a `-frames:v` flag chooses.
+ANIMATED_CASES = [GIF, WEBP, AVIF]
+
+
+@pytest.mark.parametrize("profile", ANIMATED_CASES, ids=lambda profile: profile.label)
+class TestAnimatedTrioShape:
+    """Shared shape across gif, webp and avif (spec-image-formats.md)."""
+
+    def test_cheap_attempt_maps_video_blindly(self, profile):
+        assert profile.cheap_attempt.options[:2] == ("-map", "0:v?")
+
+    def test_cheap_attempt_selects_streams_blindly(self, profile):
+        assert profile.explicit_streams is False
+
+    def test_cheap_attempt_is_declared_partial(self, profile):
+        assert profile.partial_mapping is True
+
+    def test_has_exactly_one_video_rule(self, profile):
+        assert set(profile.rules) == {"video"}
+
+    def test_video_rule_accept_options_force_a_real_copy(self, profile):
+        assert profile.rules["video"].accept_options == ("-c:v", "copy")
+
+    def test_video_rule_is_placeholder_free(self, profile):
+        rule = profile.rules["video"]
+
+        assert "{n}" not in " ".join(rule.accept_options)
+        assert rule.fallback_options is not None
+        assert "{n}" not in " ".join(rule.fallback_options)
+
+    def test_video_rule_stream_limit_is_one(self, profile):
+        """Muxer-enforced, not mapping-enforced: none of these three holds more
+        than one video *stream* -- orthogonal to how many frames that one
+        stream may carry (MUXER_ENFORCED_LIMIT_TYPES above)."""
+        assert profile.rules["video"].stream_limit == 1
+
+    def test_no_container_options(self, profile):
+        assert profile.container_options == ()
+
+    def test_last_resort_carries_no_frame_limit(self, profile):
+        """Verification: neither gif nor webp carries a frame limit anywhere,
+        and avif's reduction to one frame is the muxer's own doing -- none of
+        the three last resorts adds a `-frames:v` flag."""
+        assert profile.last_resort is not None
+        assert "-frames:v" not in profile.last_resort.options
+
+    def test_last_resort_names_what_the_explicit_index_cannot_reach(self, profile):
+        assert any("non-video streams" in note for note in profile.last_resort.notes)
+
+
+class TestGifProfile:
+    def test_label_and_suffix(self):
+        assert GIF.label == "GIF"
+        assert GIF.target_suffix == ".gif"
+
+    def test_name_and_description(self):
+        assert GIF.name == "gif"
+        assert GIF.description
+
+    def test_cheap_attempt_argv(self):
+        assert GIF.cheap_attempt.options == ("-map", "0:v?", "-c:v", "gif")
+
+    def test_cheap_attempt_always_wins_so_its_standing_notes_always_print(self):
+        """Forces the encoder unconditionally, so this is the rung whose notes
+        actually print for the overwhelming majority of inputs."""
+        assert GIF.cheap_attempt.notes == (
+            "transparency is not carried by GIF",
+            "colours are reduced to GIF's 256-colour palette",
+        )
+
+    def test_video_rule_copy_mask_is_its_own_codec(self):
+        assert GIF.rules["video"].copy_mask == frozenset({"gif"})
+
+    def test_fallback_name_is_declared(self):
+        """GIF is a 256-colour palette format, not a lossless one, unlike
+        png/tiff/bmp -- the quantisation must be named."""
+        assert GIF.rules["video"].fallback_name == "gif"
+
+    def test_last_resort_argv(self):
+        assert GIF.last_resort is not None
+        assert GIF.last_resort.options == ("-map", "0:v:0", "-c:v", "gif")
+
+    def test_last_resort_repeats_the_standing_notes(self):
+        """Only reached when the cheap attempt failed, so its standing notes
+        never printed -- the same reasoning JPG's last_resort repeats its
+        transparency note for."""
+        assert GIF.last_resort is not None
+        assert "transparency is not carried by GIF" in GIF.last_resort.notes
+        assert any("re-quantised" in note for note in GIF.last_resort.notes)
+
+
+class TestWebpProfile:
+    def test_label_and_suffix(self):
+        assert WEBP.label == "WEBP"
+        assert WEBP.target_suffix == ".webp"
+
+    def test_name_and_description(self):
+        assert WEBP.name == "webp"
+        assert WEBP.description
+
+    def test_cheap_attempt_keeps_a_real_copy(self):
+        """The one target in this trio whose muxer self-polices cleanly enough
+        (a non-matching codec copy exits 127) to keep a bare copy, unlike gif
+        and avif which force their encoder instead."""
+        assert WEBP.cheap_attempt.options == ("-map", "0:v?", "-c", "copy")
+
+    def test_cheap_attempt_carries_no_standing_note(self):
+        """Loses neither alpha nor frames, so no note's reachability depends
+        on which rung wins."""
+        assert WEBP.cheap_attempt.notes == ()
+
+    def test_video_rule_copy_mask_is_its_own_codec(self):
+        assert WEBP.rules["video"].copy_mask == frozenset({"webp"})
+
+    def test_fallback_name_is_declared(self):
+        """The fallback is a real, lossy re-encode (quality 80), unlike
+        png/tiff/bmp's lossless one."""
+        assert WEBP.rules["video"].fallback_name == "webp"
+
+    def test_last_resort_argv(self):
+        assert WEBP.last_resort is not None
+        assert WEBP.last_resort.options == (
+            "-map",
+            "0:v:0",
+            "-c:v",
+            "libwebp",
+            "-quality:v",
+            "80",
+        )
+
+
+class TestAvifProfile:
+    def test_label_and_suffix(self):
+        assert AVIF.label == "AVIF"
+        assert AVIF.target_suffix == ".avif"
+
+    def test_name_and_description(self):
+        assert AVIF.name == "avif"
+        assert AVIF.description
+
+    def test_cheap_attempt_argv(self):
+        assert AVIF.cheap_attempt.options == (
+            "-map",
+            "0:v?",
+            "-c:v",
+            "libaom-av1",
+            "-crf:v",
+            "30",
+            "-still-picture",
+            "1",
+        )
+
+    def test_cheap_attempt_always_wins_so_its_standing_notes_always_print(self):
+        """The one loss in this phase no failure path can hang a per-stream
+        note on: the muxer keeps one frame no matter what is asked of it, even
+        on the cheap attempt for an AV1-in-MP4 source."""
+        assert AVIF.cheap_attempt.notes == (
+            "transparency is not carried by AVIF",
+            "a multi-frame source is reduced to a single frame",
+        )
+
+    def test_video_rule_copy_mask_is_its_own_codec(self):
+        assert AVIF.rules["video"].copy_mask == frozenset({"av1"})
+
+    def test_fallback_name_is_declared(self):
+        assert AVIF.rules["video"].fallback_name == "av1"
+
+    def test_last_resort_argv(self):
+        assert AVIF.last_resort is not None
+        assert AVIF.last_resort.options == (
+            "-map",
+            "0:v:0",
+            "-c:v",
+            "libaom-av1",
+            "-crf",
+            "30",
+            "-still-picture",
+            "1",
+        )
+
+    def test_last_resort_repeats_the_standing_notes(self):
+        assert AVIF.last_resort is not None
+        assert "transparency is not carried by AVIF" in AVIF.last_resort.notes
+        assert "a multi-frame source is reduced to a single frame" in AVIF.last_resort.notes
+
+
 class TestRegistry:
     def test_keys_are_each_profile_s_own_name(self):
         assert PROFILES == {
@@ -1161,6 +1384,9 @@ class TestRegistry:
             "jpg": JPG,
             "tiff": TIFF,
             "bmp": BMP,
+            "gif": GIF,
+            "webp": WEBP,
+            "avif": AVIF,
         }
 
 
@@ -1194,7 +1420,16 @@ class TestResolveTarget:
         assert resolve_target(target) is WEBM
 
     @pytest.mark.parametrize(
-        ("target", "profile"), [("png", PNG), ("jpg", JPG), ("tiff", TIFF), ("bmp", BMP)]
+        ("target", "profile"),
+        [
+            ("png", PNG),
+            ("jpg", JPG),
+            ("tiff", TIFF),
+            ("bmp", BMP),
+            ("gif", GIF),
+            ("webp", WEBP),
+            ("avif", AVIF),
+        ],
     )
     def test_resolves_the_image_targets(self, target, profile):
         assert resolve_target(target) is profile
@@ -1205,8 +1440,8 @@ class TestResolveTarget:
         with pytest.raises(
             ValueError,
             match=(
-                r"avi.*available targets: "
-                r"bmp, flac, jpg, m4a, mkv, mov, mp3, mp4, ogg, opus, png, tiff, wav, webm"
+                r"avi.*available targets: avif, bmp, flac, gif, jpg, m4a, mkv, mov, "
+                r"mp3, mp4, ogg, opus, png, tiff, wav, webm, webp"
             ),
         ):
             resolve_target("avi")

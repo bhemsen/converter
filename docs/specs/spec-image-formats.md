@@ -384,3 +384,35 @@ New-Item -ItemType Directory -Force in
   attempt whose standing note would otherwise have named it. Re-verified
   against real ffmpeg 9.0 with an h264+aac source: the audio-drop note now
   prints where it previously printed nothing.
+- 2026-08-26: Issue #35 landed the animated-capable trio -- `gif`, `webp`,
+  `avif` -- exactly as this spec's resolved decisions pin: `gif` and `avif`
+  force their encoder (`-map 0:v? -c:v gif` /
+  `-map 0:v? -c:v libaom-av1 -crf:v 30 -still-picture 1`) so their standing
+  notes always print; `webp` alone keeps `-map 0:v? -c copy`; masks
+  `{gif}`/`{av1}`/`{webp}`, `accept_options=flags("-c:v copy")`,
+  `stream_limit=1` (muxer-enforced, not mapping-enforced -- added to
+  `MUXER_ENFORCED_LIMIT_TYPES` alongside the image2 four, since none of these
+  three muxers holds more than one video *stream* either), `container_options
+  =()`, and `fallback_name` declared for all three (`"gif"`, `"webp"`,
+  `"av1"`). Neither `gif` nor `webp` carries a frame limit anywhere. Each
+  `last_resort` repeats its cheap attempt's standing notes plus what the
+  explicit `-map 0:v:0` index cannot reach, the same shape issue #34's review
+  established. Re-verified against real ffmpeg 9.0 with four fixtures (a flat
+  still, an alpha still, a 20-frame h264 clip, and a 20-frame GIF source):
+  `--to gif` and `--to webp` both write all 20 frames of the video source
+  (`ffprobe -count_frames` confirms it), `--to avif` writes a single-frame
+  primary item for every source and both standing notes print unconditionally
+  as designed. One thing this measurement adds to the muxer-facts table:
+  ffmpeg 9's AVIF muxer, given a multi-frame source with `-still-picture 1`,
+  writes the primary displayed item as one frame but *also* retains the full
+  encoded frame sequence in a second, non-primary stream inside the same file
+  (`ffprobe -show_streams` lists it as stream index 1, `nb_frames=20`,
+  `DISPOSITION:still_image=0`) -- not exposed as the picture an AVIF viewer
+  shows, so the "reduced to a single frame" note still describes what is
+  actually displayed accurately, and if anything undersells what the file
+  retains on disk rather than overselling it. The `last_resort` argv pinned
+  above uses `-crf 30` (no `:v`) rather than the cheap attempt's `-crf:v 30`,
+  per this spec's own Decision row -- confirmed non-cosmetic and equally
+  valid against real ffmpeg (`-map 0:v:0` already selects the one stream a
+  bare `-crf` would apply to). A second run over the converted fixtures
+  reports `0 converted, 4 skipped`, exit 0.
