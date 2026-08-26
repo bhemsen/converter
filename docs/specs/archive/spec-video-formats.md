@@ -86,12 +86,12 @@ orchestrators (`docs/workflow.md`).
 
 ## Prior art
 
-- [Container/codec capability modelling (Phase 1)](../prior-art.md#containercodec-capability-modelling-phase-1)
+- [Container/codec capability modelling (Phase 1)](../../prior-art.md#containercodec-capability-modelling-phase-1)
   — HandBrake's copy-mask plus encoder-fallback vocabulary, and the ffmpeg-CLI
   entry's AVOID: the mask is curated by hand, because `ffmpeg -codecs` lists what a
   build contains and never what a muxer will accept. Every mask below was measured
   instead of derived.
-- [Python wrapper structure around the ffmpeg CLI (Phase 3, Phase 4)](../prior-art.md#python-wrapper-structure-around-the-ffmpeg-cli-phase-3-phase-4)
+- [Python wrapper structure around the ffmpeg CLI (Phase 3, Phase 4)](../../prior-art.md#python-wrapper-structure-around-the-ffmpeg-cli-phase-3-phase-4)
   — tagged for this phase too. Its AVOID: never parse values out of ffmpeg's stderr
   to drive a second pass. Relevant here because WebM's rejection message names the
   codecs it wants, which is exactly the tempting string to scrape; the copy mask

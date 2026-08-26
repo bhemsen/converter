@@ -87,13 +87,13 @@ merged.** Everything this phase builds on — the `PROFILES` registry, `name` an
 
 ## Prior art
 
-- [Python wrapper structure around the ffmpeg CLI (Phase 3, Phase 4)](../prior-art.md#python-wrapper-structure-around-the-ffmpeg-cli-phase-3-phase-4)
+- [Python wrapper structure around the ffmpeg CLI (Phase 3, Phase 4)](../../prior-art.md#python-wrapper-structure-around-the-ffmpeg-cli-phase-3-phase-4)
   — the concern tagged for this phase. Its ADOPT is confirmation rather than code:
   `ffmpeg-normalize`'s split into per-stream-type handling plus a command builder
   is the shape this codebase already has. Its AVOID is the live one — never scrape
   ffmpeg's stderr to decide a second pass; a profile that "needs" stderr to choose
   an encoder is a profile modelled wrong.
-- [Container/codec capability modelling (Phase 1)](../prior-art.md#containercodec-capability-modelling-phase-1)
+- [Container/codec capability modelling (Phase 1)](../../prior-art.md#containercodec-capability-modelling-phase-1)
   — still governing: HandBrake's copy-mask plus encoder-fallback vocabulary is what
   each new profile is written in, and the ffmpeg-CLI entry is why every mask below
   is curated by hand rather than discovered from `ffmpeg -codecs`.

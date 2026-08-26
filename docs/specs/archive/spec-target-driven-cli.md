@@ -102,7 +102,7 @@ milestone. A completed spec is moved to `docs/specs/archive/`.
 
 ## Prior art
 
-- [Format-driven converter CLI (Phase 2)](../prior-art.md#format-driven-converter-cli-phase-2)
+- [Format-driven converter CLI (Phase 2)](../../prior-art.md#format-driven-converter-cli-phase-2)
   — the concern that feeds this phase. pandoc's readers-plus-writers is the direct
   precedent for `--to` over per-pair sub-commands: N+M implementations instead of
   N*M, with the ffprobe stream list as the reader and the target profile as the
