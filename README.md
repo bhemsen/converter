@@ -18,14 +18,21 @@ Target formats:
   bmp   .bmp  Image: force-encoded to BMP, lossless
   flac  .flac  Audio: single stream, lossless FLAC
   jpg   .jpg  Image: force-encoded to JPEG; transparency is not carried
+  m4a   .m4a  Audio: every stream the source has; most players use only the first
   mkv   .mkv  Video: copies almost every codec as-is, keeps font attachments
   mov   .mov  Video: copies compatible streams, re-encodes the rest to h264/aac; no attachments
   mp3   .mp3  Audio: single stream, MP3 (libmp3lame if re-encoded)
   mp4   .mp4  Video: copies compatible streams, re-encodes the rest to h264/aac
+  ogg   .ogg  Audio: every stream the source has; most players use only the first
+  opus  .opus  Audio: every stream the source has; most players use only the first
   png   .png  Image: force-encoded to PNG, lossless
   tiff  .tiff  Image: force-encoded to TIFF, lossless
   wav   .wav  Audio: single stream, uncompressed 16-bit PCM
 ```
+
+`m4a`, `ogg` and `opus` carry every audio stream the source has — nothing is
+dropped, but most players only offer the first, so a source with several audio
+tracks is not obviously "converted in full" just by looking at what plays.
 
 More target formats can be added — see [Contributing](#contributing).
 

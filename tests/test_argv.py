@@ -7,7 +7,7 @@ import pytest
 
 from converter import ffmpegtool, jobs
 from converter.ffmpegtool import Stream, build_argv, cli_path
-from converter.profiles import BMP, FLAC, JPG, MKV, MOV, MP3, MP4, PNG, TIFF, WAV
+from converter.profiles import BMP, FLAC, JPG, M4A, MKV, MOV, MP3, MP4, OGG, OPUS, PNG, TIFF, WAV
 
 
 def options_of(argv: list[str], src: str, dst: str) -> list[str]:
@@ -279,6 +279,288 @@ class TestFlacJob:
 
     def test_target_suffix(self):
         assert FLAC.target_suffix == ".flac"
+
+
+class TestM4aJob:
+    """Issue #22, `docs/specs/spec-audio-formats.md`: same blind-mapping shape
+    as `MP3`/`FLAC`, but `m4a` declares no `stream_limit` -- the ipod muxer
+    holds several audio streams, so every one the source has is carried."""
+
+    def test_first_attempt_carries_the_standing_note(self):
+        attempt = jobs.first_attempt(M4A)
+
+        assert attempt.options == ("-map", "0:a?", "-c:a", "copy")
+        assert attempt.notes == (
+            "non-audio streams, including cover art, are not carried into M4A",
+        )
+
+    def test_single_matching_stream_reaches_a_selective_copy(self):
+        streams = [Stream(0, "audio", "aac")]
+
+        attempts = jobs.retries(M4A, streams)
+
+        assert [a.label for a in attempts] == ["selective", "re-encode"]
+        assert attempts[0].options == ("-map", "0:0", "-c:a:0", "copy")
+        assert attempts[0].notes == ()
+
+    def test_non_matching_audio_reencodes_with_a_note(self):
+        streams = [Stream(0, "audio", "mp3")]
+
+        selective = jobs.retries(M4A, streams)[0]
+
+        assert selective.options == ("-map", "0:0", "-c:a:0", "aac", "-b:a:0", "192k")
+        assert selective.notes == ("audio stream 0 (mp3) re-encoded to aac",)
+
+    def test_second_matching_audio_stream_is_also_carried(self):
+        """Unlike mp3/flac's muxer-enforced limit, m4a declares none: a
+        second aac/alac stream is copied too, not dropped."""
+        streams = [Stream(0, "audio", "aac"), Stream(1, "audio", "alac")]
+
+        selective = jobs.retries(M4A, streams)[0]
+
+        assert selective.options == (
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:a:0",
+            "copy",
+            "-c:a:1",
+            "copy",
+        )
+        assert selective.notes == ()
+
+    def test_mixed_accept_and_fallback_streams_each_take_their_own_fate(self):
+        """The position placeholder is what makes this safe: ffmpeg's
+        unindexed "-c:a" is not positional (measured against ffmpeg 9.0) --
+        without "{n}", the second "-c:a" given would win for *both* output
+        streams, silently re-encoding the one that should have been copied."""
+        streams = [Stream(0, "audio", "aac"), Stream(1, "audio", "mp3")]
+
+        selective = jobs.retries(M4A, streams)[0]
+
+        assert selective.options == (
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:a:0",
+            "copy",
+            "-c:a:1",
+            "aac",
+            "-b:a:1",
+            "192k",
+        )
+        assert selective.notes == ("audio stream 1 (mp3) re-encoded to aac",)
+
+    def test_video_only_source_skips_straight_to_the_last_resort(self):
+        attempts = jobs.retries(M4A, [Stream(0, "video", "h264")])
+
+        assert [a.label for a in attempts] == ["re-encode"]
+
+    def test_video_stream_alongside_audio_is_dropped_with_a_note(self):
+        streams = [Stream(0, "audio", "aac"), Stream(1, "video", "h264")]
+
+        selective = jobs.retries(M4A, streams)[0]
+
+        assert selective.notes == ("video stream 1 (h264) dropped: not supported by M4A",)
+
+    def test_last_resort_notes_are_pinned(self):
+        reencode = jobs.retries(M4A, [])[-1]
+
+        assert reencode.notes == (
+            "non-audio streams, and any audio stream beyond the first, are not carried into M4A",
+        )
+
+    def test_target_suffix(self):
+        assert M4A.target_suffix == ".m4a"
+
+
+class TestOggJob:
+    """Issue #22, `docs/specs/spec-audio-formats.md`: same shape as `M4A`,
+    with a wider copy mask and no stream limit either -- the ogg muxer holds
+    several audio streams too."""
+
+    def test_first_attempt_carries_the_standing_note(self):
+        attempt = jobs.first_attempt(OGG)
+
+        assert attempt.options == ("-map", "0:a?", "-c", "copy")
+        assert attempt.notes == (
+            "non-audio streams, including cover art, are not carried into OGG",
+        )
+
+    def test_single_matching_stream_reaches_a_selective_copy(self):
+        streams = [Stream(0, "audio", "vorbis")]
+
+        attempts = jobs.retries(OGG, streams)
+
+        assert [a.label for a in attempts] == ["selective", "re-encode"]
+        assert attempts[0].options == ("-map", "0:0", "-c:a:0", "copy")
+        assert attempts[0].notes == ()
+
+    def test_non_matching_audio_reencodes_with_a_note(self):
+        """The ogg muxer rejects mp3 and aac (docs/specs/spec-audio-formats.md)."""
+        streams = [Stream(0, "audio", "aac")]
+
+        selective = jobs.retries(OGG, streams)[0]
+
+        assert selective.options == ("-map", "0:0", "-c:a:0", "libvorbis", "-q:a:0", "5")
+        assert selective.notes == ("audio stream 0 (aac) re-encoded to vorbis",)
+
+    def test_second_matching_audio_stream_is_also_carried(self):
+        streams = [Stream(0, "audio", "vorbis"), Stream(1, "audio", "opus")]
+
+        selective = jobs.retries(OGG, streams)[0]
+
+        assert selective.options == (
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:a:0",
+            "copy",
+            "-c:a:1",
+            "copy",
+        )
+        assert selective.notes == ()
+
+    def test_mixed_accept_and_fallback_streams_each_take_their_own_fate(self):
+        """See `TestM4aJob`'s equivalent test for why the placeholder matters."""
+        streams = [Stream(0, "audio", "vorbis"), Stream(1, "audio", "aac")]
+
+        selective = jobs.retries(OGG, streams)[0]
+
+        assert selective.options == (
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:a:0",
+            "copy",
+            "-c:a:1",
+            "libvorbis",
+            "-q:a:1",
+            "5",
+        )
+        assert selective.notes == ("audio stream 1 (aac) re-encoded to vorbis",)
+
+    def test_video_only_source_skips_straight_to_the_last_resort(self):
+        attempts = jobs.retries(OGG, [Stream(0, "video", "h264")])
+
+        assert [a.label for a in attempts] == ["re-encode"]
+
+    def test_video_stream_alongside_audio_is_dropped_with_a_note(self):
+        streams = [Stream(0, "audio", "vorbis"), Stream(1, "video", "h264")]
+
+        selective = jobs.retries(OGG, streams)[0]
+
+        assert selective.notes == ("video stream 1 (h264) dropped: not supported by OGG",)
+
+    def test_last_resort_notes_are_pinned(self):
+        reencode = jobs.retries(OGG, [])[-1]
+
+        assert reencode.notes == (
+            "non-audio streams, and any audio stream beyond the first, are not carried into OGG",
+        )
+
+    def test_target_suffix(self):
+        assert OGG.target_suffix == ".ogg"
+
+
+class TestOpusJob:
+    """Issue #22, `docs/specs/spec-audio-formats.md`: `opus` copies on the
+    happy path even though its own muxer also accepts a Vorbis stream (Prior
+    decisions) -- the mask below governs only the failure-side selective rung,
+    where a Vorbis stream is re-encoded rather than copied."""
+
+    def test_first_attempt_carries_the_standing_note(self):
+        attempt = jobs.first_attempt(OPUS)
+
+        assert attempt.options == ("-map", "0:a?", "-c", "copy")
+        assert attempt.notes == (
+            "non-audio streams, including cover art, are not carried into OPUS",
+        )
+
+    def test_single_matching_stream_reaches_a_selective_copy(self):
+        streams = [Stream(0, "audio", "opus")]
+
+        attempts = jobs.retries(OPUS, streams)
+
+        assert [a.label for a in attempts] == ["selective", "re-encode"]
+        assert attempts[0].options == ("-map", "0:0", "-c:a:0", "copy")
+        assert attempts[0].notes == ()
+
+    def test_non_matching_audio_reencodes_with_a_note(self):
+        """A Vorbis stream is accepted by the opus muxer itself but not by
+        the mask, so the selective rung re-encodes it rather than shipping a
+        `.opus` file that is secretly Vorbis."""
+        streams = [Stream(0, "audio", "vorbis")]
+
+        selective = jobs.retries(OPUS, streams)[0]
+
+        assert selective.options == ("-map", "0:0", "-c:a:0", "libopus", "-b:a:0", "128k")
+        assert selective.notes == ("audio stream 0 (vorbis) re-encoded to opus",)
+
+    def test_second_matching_audio_stream_is_also_carried(self):
+        streams = [Stream(0, "audio", "opus"), Stream(1, "audio", "opus")]
+
+        selective = jobs.retries(OPUS, streams)[0]
+
+        assert selective.options == (
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:a:0",
+            "copy",
+            "-c:a:1",
+            "copy",
+        )
+        assert selective.notes == ()
+
+    def test_mixed_accept_and_fallback_streams_each_take_their_own_fate(self):
+        """See `TestM4aJob`'s equivalent test for why the placeholder matters
+        -- and, for `opus`, the specific reason the spec's original bare-form
+        pin was amended after this was measured against ffmpeg 9.0."""
+        streams = [Stream(0, "audio", "opus"), Stream(1, "audio", "vorbis")]
+
+        selective = jobs.retries(OPUS, streams)[0]
+
+        assert selective.options == (
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:a:0",
+            "copy",
+            "-c:a:1",
+            "libopus",
+            "-b:a:1",
+            "128k",
+        )
+        assert selective.notes == ("audio stream 1 (vorbis) re-encoded to opus",)
+
+    def test_video_only_source_skips_straight_to_the_last_resort(self):
+        attempts = jobs.retries(OPUS, [Stream(0, "video", "h264")])
+
+        assert [a.label for a in attempts] == ["re-encode"]
+
+    def test_video_stream_alongside_audio_is_dropped_with_a_note(self):
+        streams = [Stream(0, "audio", "opus"), Stream(1, "video", "h264")]
+
+        selective = jobs.retries(OPUS, streams)[0]
+
+        assert selective.notes == ("video stream 1 (h264) dropped: not supported by OPUS",)
+
+    def test_last_resort_notes_are_pinned(self):
+        reencode = jobs.retries(OPUS, [])[-1]
+
+        assert reencode.notes == (
+            "non-audio streams, and any audio stream beyond the first, are not carried into OPUS",
+        )
+
+    def test_target_suffix(self):
+        assert OPUS.target_suffix == ".opus"
 
 
 class TestMp4Remux:
@@ -1108,6 +1390,197 @@ class TestProfileArgvPinning:
             "-c:a",
             "flac",
             "out.flac",
+        ]
+
+    def test_m4a_cheap_attempt(self):
+        argv = build_argv("ffmpeg", "in.wav", jobs.first_attempt(M4A).options, "out.m4a")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.wav",
+            "-map",
+            "0:a?",
+            "-c:a",
+            "copy",
+            "out.m4a",
+        ]
+
+    def test_m4a_copyable_source(self):
+        selective = jobs.retries(M4A, [Stream(0, "audio", "aac")])[0]
+
+        argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.m4a")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:0",
+            "-c:a:0",
+            "copy",
+            "out.m4a",
+        ]
+
+    def test_m4a_non_copyable_source(self):
+        selective = jobs.retries(M4A, [Stream(0, "audio", "mp3")])[0]
+
+        argv = build_argv("ffmpeg", "in.mp3", selective.options, "out.m4a")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mp3",
+            "-map",
+            "0:0",
+            "-c:a:0",
+            "aac",
+            "-b:a:0",
+            "192k",
+            "out.m4a",
+        ]
+
+    def test_ogg_cheap_attempt(self):
+        argv = build_argv("ffmpeg", "in.wav", jobs.first_attempt(OGG).options, "out.ogg")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.wav",
+            "-map",
+            "0:a?",
+            "-c",
+            "copy",
+            "out.ogg",
+        ]
+
+    def test_ogg_copyable_source(self):
+        selective = jobs.retries(OGG, [Stream(0, "audio", "vorbis")])[0]
+
+        argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.ogg")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:0",
+            "-c:a:0",
+            "copy",
+            "out.ogg",
+        ]
+
+    def test_ogg_non_copyable_source(self):
+        selective = jobs.retries(OGG, [Stream(0, "audio", "aac")])[0]
+
+        argv = build_argv("ffmpeg", "in.m4a", selective.options, "out.ogg")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.m4a",
+            "-map",
+            "0:0",
+            "-c:a:0",
+            "libvorbis",
+            "-q:a:0",
+            "5",
+            "out.ogg",
+        ]
+
+    def test_opus_cheap_attempt(self):
+        argv = build_argv("ffmpeg", "in.wav", jobs.first_attempt(OPUS).options, "out.opus")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.wav",
+            "-map",
+            "0:a?",
+            "-c",
+            "copy",
+            "out.opus",
+        ]
+
+    def test_opus_copyable_source(self):
+        selective = jobs.retries(OPUS, [Stream(0, "audio", "opus")])[0]
+
+        argv = build_argv("ffmpeg", "in.ogg", selective.options, "out.opus")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.ogg",
+            "-map",
+            "0:0",
+            "-c:a:0",
+            "copy",
+            "out.opus",
+        ]
+
+    def test_opus_non_copyable_source(self):
+        """A Vorbis stream is accepted by the opus muxer itself but not the
+        mask, so it is re-encoded rather than copied under a lying extension."""
+        selective = jobs.retries(OPUS, [Stream(0, "audio", "vorbis")])[0]
+
+        argv = build_argv("ffmpeg", "in.ogg", selective.options, "out.opus")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.ogg",
+            "-map",
+            "0:0",
+            "-c:a:0",
+            "libopus",
+            "-b:a:0",
+            "128k",
+            "out.opus",
         ]
 
 
