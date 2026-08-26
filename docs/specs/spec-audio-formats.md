@@ -545,3 +545,31 @@ New-Item -ItemType Directory -Force art
   Re-measured against ffmpeg 9.0: a genuinely mixed aac+mp3 source through
   `--to m4a` now produces two aac streams, with only the mp3 one named in the
   re-encode note.
+- 2026-08-26 (#23): Registry guard rails landed, no profile changes. A new
+  `TestRegistryStructuralInvariants` in `tests/test_profiles.py` is
+  parametrized directly over `PROFILES.values()` -- not the hand-maintained
+  `SHIPPED` list already used for the partial-mapping invariants -- so any
+  profile phases 4 and 5 land in parallel is covered automatically: a blank
+  `name`/`description`, a `target_suffix` missing from `SOURCE_SUFFIXES`, or a
+  profile with zero stream rules now fails immediately. `wav`'s whole `Profile`
+  is pinned in one equality assertion (`TestWavProfile`) rather than only its
+  scattered fields, closing a gap a field-by-field pin could miss -- notably
+  that the gate deliberately did not extend the five siblings' standing
+  non-audio note to `wav`. `tests/test_batch.py` gained an end-to-end
+  `convert_one` test driving `--to flac` over a PCM stream through a stubbed
+  ffmpeg, asserting `Outcome.CONVERTED` with `attempt == "selective"` (not
+  `Outcome.FAILED`), the literal engine behaviour the #21 review already
+  measured against ffmpeg 9.0. `tests/test_cli.py` gained a registry-driven
+  `--list-formats` line-count test -- against `len(PROFILES)`, not the
+  issue's own "seven lines" (accurate only until the video and image
+  milestones' parallel PRs widened the registry past seven) -- and a
+  byte-match test between README.md's fenced format block and the command's
+  actual output, per CLAUDE.md's rule that a hand-maintained copy of ragged
+  column padding must be checked, not trusted. `README.md` and
+  `converter/profiles.py` needed no edits: both already carry the thirteen
+  shipped profiles and the m4a/ogg/opus multi-stream line from earlier issues
+  in this milestone. Every new guard rail was proven to bite with a scratch
+  mutation script outside the repo before landing (structural invariants, the
+  wav snapshot, the FLAC selective-rung outcome, the list-formats count, and
+  the README match all fail against a deliberately broken input and pass
+  against the real registry).

@@ -7,7 +7,7 @@ import pytest
 from converter import batch
 from converter.batch import Outcome, Result, Task, convert_one, run_batch, summarise
 from converter.ffmpegtool import CommandResult, ProbeError, Stream, Tools
-from converter.profiles import MP4, WAV, Attempt, Profile, StreamRule, flags
+from converter.profiles import FLAC, MP4, WAV, Attempt, Profile, StreamRule, flags
 
 TOOLS = Tools(ffmpeg="ffmpeg", ffprobe="ffprobe")
 
@@ -131,6 +131,35 @@ class TestConvertOne:
         assert result.attempt == "selective"
         assert len(fake_ffmpeg.calls) == 2
         assert any("pcm_s16le" in note for note in result.notes)
+
+    def test_flac_from_a_pcm_source_reaches_the_selective_rung_not_failed(
+        self, tmp_path, fake_ffmpeg
+    ):
+        """Guard rail for issue #23: `--to flac` over a PCM source (`tone.wav`
+        in the milestone's QA gate) must climb to the selective rung's re-encode
+        rather than exhaust the whole ladder into `Outcome.FAILED` -- verified
+        against the real engine during the audio-formats spec's review
+        (docs/specs/spec-audio-formats.md's Decision log, 2026-08-25 entry: "a
+        PCM stream yields `selective` then `re-encode`"). `mp3`/`flac`'s
+        `last_resort` exists to rescue a *different* case -- a mask hit whose
+        copy the muxer then refuses -- so a PCM source landing there instead of
+        on `selective` would be the wrong rung succeeding for the wrong reason.
+        """
+        src = tmp_path / "clip.wav"
+        src.write_bytes(b"data")
+        task = Task(src, tmp_path / "out" / "clip.flac")
+        task.dst.parent.mkdir(parents=True)
+        # FLAC's cheap attempt is a blind "-c:a copy": a PCM stream cannot copy
+        # into FLAC, so it fails and the ladder must be climbed.
+        fake_ffmpeg.exit_codes = [1, 0]
+        fake_ffmpeg.streams = [Stream(0, "audio", "pcm_s16le")]
+
+        result = convert_one(FLAC, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert result.outcome is not Outcome.FAILED
+        assert result.attempt == "selective"
+        assert len(fake_ffmpeg.calls) == 2
 
     def test_probe_does_not_run_when_an_exhaustive_first_attempt_succeeds(
         self, tmp_path, fake_ffmpeg, monkeypatch
