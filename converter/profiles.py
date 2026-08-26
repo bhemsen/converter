@@ -201,8 +201,44 @@ PROFILES: dict[str, Profile] = {profile.name: profile for profile in (MP4, WAV)}
 #: profile's own target suffix (``.mp4``, ``.wav``) -- the latter is what lets a
 #: source that already carries the target suffix take part in selection at all
 #: (the self-write and existing-output-skip cases `source-selection.md` and this
-#: phase's QA gate both need). Later phases extend this set as they add profiles.
-SOURCE_SUFFIXES: frozenset[str] = frozenset({".mkv", ".mp4", ".opus", ".wav"})
+#: phase's QA gate both need). Phase 3 (issue #20, `spec-audio-formats.md`) widens
+#: it three ways: the audio containers people actually have that were not yet
+#: readable as a source, the video containers a "rip the audio" run needs, and the
+#: remaining audio target suffixes (``.mp3``, ``.m4a``, ``.flac``, ``.ogg``) so the
+#: profiles this milestone still adds already have their own suffix covered when
+#: they land -- `.opus` and `.wav` are covered already. Later phases extend this
+#: set further as they add profiles (#26 for video containers, #33 for image ones);
+#: none of them re-adds a suffix this set already holds.
+SOURCE_SUFFIXES: frozenset[str] = frozenset(
+    {
+        # phase 2: old sub-commands plus the two shipped profiles' own suffixes
+        ".mkv",
+        ".mp4",
+        ".opus",
+        ".wav",
+        # phase 3: audio containers people actually have
+        ".aac",
+        ".m4b",
+        ".wma",
+        ".aiff",
+        ".aif",
+        ".ape",
+        ".wv",
+        ".caf",
+        # phase 3: video containers a "rip the audio" run needs
+        ".mov",
+        ".avi",
+        ".webm",
+        ".m4v",
+        ".wmv",
+        ".flv",
+        # phase 3: the remaining audio target suffixes, ahead of their profiles
+        ".mp3",
+        ".m4a",
+        ".flac",
+        ".ogg",
+    }
+)
 
 
 def resolve_target(target: str) -> Profile:

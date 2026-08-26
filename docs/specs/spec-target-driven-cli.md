@@ -362,3 +362,43 @@ reusing the fixtures the phase-1 gate synthesises:
   — the same shape `tests/test_paths.py`'s `select()` helper uses to simulate
   the full per-file flow. A wrapper would just be `find_collisions(p for p in
   pairs if not is_self_write(*p))` with no logic of its own.
+- 2026-08-26 (#14): Beyond `jobs.first_attempt(profile)` and
+  `jobs.retries(profile, streams)`, which this spec already named, three more
+  entry points were needed and were left to this issue to establish:
+  `jobs.needs_verification(profile)` and `jobs.verify_success(profile, streams)`
+  replace the old `make_verifier`-built closure, and `jobs.describe_unsupported(
+  profile, streams)` is the `unsupported` discriminator itself. It returns
+  `None` when the source carries at least one stream type the profile has a
+  rule for, else a tuple of per-stream drop notes (reusing D1 of
+  `docs/design/stream-decision.md` so an unsupported source is reported exactly
+  like an ordinary unsupported-type drop) — never a bare boolean, so `batch.py`
+  gets the notes it reports for free rather than having to invent wording of
+  its own.
+- 2026-08-26 (#14): The discriminator is applied right after the failure-side
+  probe, before `jobs.retries` is ever called, and short-circuits straight to
+  the `unsupported` outcome. A source with no stream of any type the profile
+  declares a rule for cannot produce a non-empty `-map` list on any later rung
+  either, so climbing the rest of the ladder would only re-spend ffmpeg calls to
+  reconfirm what the probe already established — the "one ffmpeg attempt and
+  one ffprobe" cost this spec's mixed-tree write-up already promises, not more.
+- 2026-08-26 (#14): `Job`, `JOBS` and `JOB_BINDINGS` are deleted from
+  `jobs.py` outright, per this spec's decision log, rather than renamed or
+  moved there. The CLI-visible `video`/`audio` -> suffixes/profile wiring they
+  carried still has to live somewhere until issue #15 replaces the
+  sub-commands with `--to`, so it moved to a private `cli._Binding` /
+  `cli._BINDINGS` in `converter/cli.py` — the smallest change that keeps
+  `build_parser` and `convert_command` working without the deleted names, and
+  scaffolding issue #15 already plans to remove.
+- 2026-08-26 (#14): `Summary.describe()`'s format gained a fourth clause
+  (`"... {failed} failed, {unsupported} unsupported (of {total})"`) rather than
+  inserting `unsupported` in the middle — existing tests and the vision's
+  `0 converted, 0 failed` phrasing both check substrings, so appending keeps
+  every one of them true unchanged instead of requiring a coordinated update.
+- 2026-08-26 (#14, review round 1): `jobs.describe_unsupported` returned a
+  non-`None` empty tuple for an *empty* probed-stream list, so a corrupt or
+  truncated source (a probe that succeeds but finds nothing) was reported as
+  `unsupported` with no notes and no error text — losing ffmpeg's stderr that
+  a plain `failed` used to carry, and quietly relabelling exactly the case this
+  spec's own mixed-tree write-up warns against. Fixed: an empty stream list now
+  returns `None` too, so the source falls through to the ordinary ladder and
+  ends up `failed` with its stderr kept, same as before this issue.

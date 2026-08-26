@@ -84,6 +84,14 @@ The internal import graph is acyclic today and must stay that way:
 4. **Failure.** The partially written output is removed, the file is recorded as
    `failed` with ffmpeg's stderr, the batch keeps going for every other file, and
    the process exits 1 at the end.
+5. **Unsupported.** Reached only from the failure-side probe of step 2: when the
+   source carries no stream of any type the target profile has a rule for at
+   all, `jobs.py` reports that as a distinguishable signal instead of climbing
+   the rest of the ladder, `batch.py` maps it onto a counted `unsupported`
+   outcome, and the partially written output is removed the same way a
+   `failed` one is -- but the outcome does not set the exit code, so a re-run
+   over a mixed tree reports the same thing rather than failing forever
+   (`docs/specs/spec-target-driven-cli.md`).
 
 ## Where new code goes
 

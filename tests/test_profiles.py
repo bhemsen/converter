@@ -332,15 +332,49 @@ class TestResolveTarget:
 
 
 class TestSourceSuffixes:
-    def test_holds_the_old_job_suffixes_and_each_shipped_profile_s_own_suffix(self):
+    def test_holds_the_phase_2_and_phase_3_suffixes(self):
         """`.mkv`/`.opus` are what the old sub-commands read; `.mp4`/`.wav` are
         what let a source already carrying the target suffix take part in
         selection (the self-write and existing-output cases,
-        `docs/design/source-selection.md`)."""
-        assert {".mkv", ".mp4", ".opus", ".wav"} == SOURCE_SUFFIXES
+        `docs/design/source-selection.md`). Issue #20 (`spec-audio-formats.md`)
+        widens the set with the audio containers people actually have, the video
+        containers a "rip the audio" run needs, and the remaining audio target
+        suffixes ahead of the profiles that will claim them."""
+        assert {
+            ".mkv",
+            ".mp4",
+            ".opus",
+            ".wav",
+            ".aac",
+            ".m4b",
+            ".wma",
+            ".aiff",
+            ".aif",
+            ".ape",
+            ".wv",
+            ".caf",
+            ".mov",
+            ".avi",
+            ".webm",
+            ".m4v",
+            ".wmv",
+            ".flv",
+            ".mp3",
+            ".m4a",
+            ".flac",
+            ".ogg",
+        } == SOURCE_SUFFIXES
 
     def test_every_shipped_profile_s_target_suffix_is_a_source_suffix(self):
         assert all(profile.target_suffix in SOURCE_SUFFIXES for profile in SHIPPED)
+
+    def test_every_audio_target_suffix_is_a_source_suffix(self):
+        """The six audio targets this milestone covers -- `mp3`, `m4a`, `flac`,
+        `opus`, `ogg`, `wav` -- all have their own suffix readable as a source,
+        even for the five whose profile has not landed yet, so #20 does not block
+        on issue order within the milestone."""
+        audio_target_suffixes = {".mp3", ".m4a", ".flac", ".opus", ".ogg", ".wav"}
+        assert audio_target_suffixes <= SOURCE_SUFFIXES
 
 
 class TestValueTypesAreFrozen:

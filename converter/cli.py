@@ -9,18 +9,46 @@ single code path to reason about and to test.
 import argparse
 import sys
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from converter import __version__, ffmpegtool, paths
 from converter.batch import Task, default_jobs, run_batch, summarise
-from converter.jobs import JOBS, Job
+from converter.profiles import MP4, WAV, Profile
 
 
 class UsageError(Exception):
     """Bad combination of otherwise valid arguments."""
 
 
-def _add_convert_arguments(sub: argparse.ArgumentParser, job: Job) -> None:
+@dataclass(frozen=True)
+class _Binding:
+    """A sub-command's CLI-visible name plus which source suffixes feed which
+    target profile. Phase-2 scaffolding (``docs/specs/spec-target-driven-cli.md``):
+    replaced once ``--to`` takes over from the ``video``/``audio`` sub-commands.
+    """
+
+    description: str
+    suffixes: tuple[str, ...]
+    profile: Profile
+
+
+#: Sub-command name -> binding. See :class:`_Binding`.
+_BINDINGS: dict[str, _Binding] = {
+    "video": _Binding(
+        description="Convert .mkv files to .mp4 (stream copy where possible)",
+        suffixes=(".mkv",),
+        profile=MP4,
+    ),
+    "audio": _Binding(
+        description="Convert .opus files to uncompressed .wav",
+        suffixes=(".opus",),
+        profile=WAV,
+    ),
+}
+
+
+def _add_convert_arguments(sub: argparse.ArgumentParser, binding: _Binding) -> None:
     sub.add_argument("input_dir", type=Path, help="directory containing the input files")
     sub.add_argument(
         "output_dir",
@@ -58,7 +86,7 @@ def _add_convert_arguments(sub: argparse.ArgumentParser, job: Job) -> None:
     sub.add_argument("-q", "--quiet", action="store_true", help="hide the progress bar")
     sub.add_argument("--ffmpeg", default=None, help="path to the ffmpeg executable")
     sub.add_argument("--ffprobe", default=None, help="path to the ffprobe executable")
-    sub.set_defaults(job=job, handler=convert_command)
+    sub.set_defaults(binding=binding, handler=convert_command)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -69,9 +97,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"converter {__version__}")
     subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
 
-    for name, job in JOBS.items():
-        sub = subparsers.add_parser(name, help=job.description, description=job.description)
-        _add_convert_arguments(sub, job)
+    for name, binding in _BINDINGS.items():
+        sub = subparsers.add_parser(name, help=binding.description, description=binding.description)
+        _add_convert_arguments(sub, binding)
 
     mirror = subparsers.add_parser(
         "mirror",
@@ -108,26 +136,26 @@ def _resolve_output_root(args: argparse.Namespace) -> Path:
 
 
 def convert_command(args: argparse.Namespace) -> int:
-    job: Job = args.job
+    binding: _Binding = args.binding
     if args.jobs is not None and args.jobs < 1:
         raise UsageError(f"--jobs must be 1 or more, got {args.jobs}")
     output_root = _resolve_output_root(args)
 
     try:
-        sources = paths.find_sources(args.input_dir, job.suffixes, recursive=args.recursive)
+        sources = paths.find_sources(args.input_dir, binding.suffixes, recursive=args.recursive)
     except NotADirectoryError as exc:
         # A bad path is a usage error, not a conversion failure.
         raise UsageError(str(exc)) from exc
     if not sources:
         hint = "" if args.recursive else " (pass --recursive to include sub-directories)"
         print(
-            f"No {' / '.join(job.suffixes)} files found in {args.input_dir}{hint}.",
+            f"No {' / '.join(binding.suffixes)} files found in {args.input_dir}{hint}.",
             file=sys.stderr,
         )
         return 0
 
     tasks = [
-        Task(src, paths.output_for(src, args.input_dir, output_root, job.target_suffix))
+        Task(src, paths.output_for(src, args.input_dir, output_root, binding.profile.target_suffix))
         for src in sources
     ]
 
@@ -151,7 +179,7 @@ def convert_command(args: argparse.Namespace) -> int:
         print(f"Using {ffmpegtool.version(tools)}")
 
     results = run_batch(
-        job,
+        binding.profile,
         tasks,
         tools,
         jobs=args.jobs,
