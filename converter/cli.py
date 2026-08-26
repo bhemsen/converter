@@ -7,7 +7,7 @@ coexist in one: argparse's sub-parser action is itself a positional, so a
 top-level positional ``INPUT`` swallows the command name.  :func:`dispatch`
 therefore routes the raw argument list *before* anything is parsed, which is
 also what makes ``--list-formats`` reachable next to a required ``--to``
-(``docs/specs/spec-target-driven-cli.md``).
+(``docs/specs/archive/spec-target-driven-cli.md``).
 
 The interactive prompt of the old ``prepare*`` scripts is kept, but it only
 assembles an argument list and hands it to :func:`dispatch` -- so the
@@ -379,7 +379,7 @@ def mirror_command(args: argparse.Namespace) -> int:
 def dispatch(raw: Sequence[str]) -> int:
     """Route *raw* to the command that owns it, before any parsing happens.
 
-    The order is the one ``docs/specs/spec-target-driven-cli.md`` fixes: a
+    The order is the one ``docs/specs/archive/spec-target-driven-cli.md`` fixes: a
     leading mirror token, then a leading legacy token, then the list flag
     anywhere, then the convert parser.  Both the prompt's output and a typed
     argument list come through here, which is what keeps them one code path.

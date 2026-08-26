@@ -462,3 +462,7 @@ why both audio fixtures use that suffix.
   conversion because every conversion is, structurally, at risk of one. A phase
   not yet on the roadmap could still introduce an exhaustive profile; nothing
   here forecloses that.
+
+- 2026-08-26: Close-out. The final QA gate ran against real ffmpeg 9.0 on
+  Windows 11, verifying all 17 target formats end-to-end with ffprobe.
+  Verdict: PASS WITH FINDINGS; the findings are filed as issues #66-#73.

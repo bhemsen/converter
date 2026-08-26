@@ -63,7 +63,7 @@ The internal import graph is acyclic today and must stay that way:
    entirely, but no shipped or currently specced profile is one — the
    probe-on-success branch is presently the only path a successful conversion
    takes; see the 2026-08-26 (issue #41) entries in
-   `docs/specs/spec-profile-registry.md`'s Decision log.
+   `docs/specs/archive/spec-profile-registry.md`'s Decision log.
 2. **Degradation.** The attempt exits non-zero, so *now* `ffmpegtool.probe_streams`
    describes the file. The engine matches each stream against the profile's copy
    mask: streams the mask accepts pass through unchanged — as a literal `copy`, or
@@ -91,7 +91,7 @@ The internal import graph is acyclic today and must stay that way:
    outcome, and the partially written output is removed the same way a
    `failed` one is -- but the outcome does not set the exit code, so a re-run
    over a mixed tree reports the same thing rather than failing forever
-   (`docs/specs/spec-target-driven-cli.md`).
+   (`docs/specs/archive/spec-target-driven-cli.md`).
 
 ## Where new code goes
 

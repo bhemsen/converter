@@ -500,3 +500,7 @@ New-Item -ItemType Directory -Force in
   pinned argv is accepted by real ffmpeg -- the test suite stubs the
   subprocess boundary by constitution -- so that evidence remains whatever
   issues #34 and #35 already measured against ffmpeg 9.0, recorded above.
+
+- 2026-08-26: Close-out. The final QA gate ran against real ffmpeg 9.0 on
+  Windows 11, verifying all 17 target formats end-to-end with ffprobe.
+  Verdict: PASS WITH FINDINGS; the findings are filed as issues #66-#73.

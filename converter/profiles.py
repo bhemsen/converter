@@ -195,7 +195,7 @@ class _AcceptAnyCodec(frozenset):
     """A copy mask that is empty by every ordinary measure yet accepts anything.
 
     ``len()`` is 0 and iterating it yields nothing -- the "empty-meaning" shape
-    ``docs/specs/spec-video-formats.md`` asks for -- but membership testing
+    ``docs/specs/archive/spec-video-formats.md`` asks for -- but membership testing
     always succeeds, so :func:`converter.jobs._decide_stream`'s
     ``stream.codec_name in rule.copy_mask`` check reads it as "always accept"
     without the engine (a leaf-adjacent module MKV's profile must not import
@@ -498,7 +498,7 @@ MP3 = Profile(
     container_options=(),
     # Blind by type, not by index: the mp3 muxer -- not this mapping --
     # enforces "at most one audio stream" (measured against ffmpeg 9.0,
-    # docs/specs/spec-audio-formats.md), so a second stream fails the cheap
+    # docs/specs/archive/spec-audio-formats.md), so a second stream fails the cheap
     # attempt outright rather than needing an index-based selector to keep it
     # out; that is what lets stream_limit=1 coexist with a blind "-map 0:a?"
     # below, the muxer-enforced exemption docs/design/degradation-ladder.md
@@ -588,7 +588,7 @@ M4A = Profile(
     # ".m4a" auto-selects the "ipod" muxer, whose accept set is narrower than a
     # standard MP4's -- it rejects mp3, opus and flac stream copies -- so the
     # mask below is curated by hand rather than reused from MP4_AUDIO_CODECS
-    # (docs/specs/spec-audio-formats.md).
+    # (docs/specs/archive/spec-audio-formats.md).
     cheap_attempt=Attempt(
         label="remux",
         options=flags("-map 0:a? -c:a copy"),
@@ -645,7 +645,7 @@ OGG = Profile(
     rules={
         "audio": StreamRule(
             # The ogg muxer accepts vorbis, opus and flac as-is; it rejects
-            # mp3 and aac (docs/specs/spec-audio-formats.md).
+            # mp3 and aac (docs/specs/archive/spec-audio-formats.md).
             copy_mask=frozenset({"vorbis", "opus", "flac"}),
             # No stream_limit: the ogg muxer holds several audio streams. The
             # position placeholder is required for the same reason m4a's
@@ -713,7 +713,7 @@ OPUS = Profile(
     ),
 )
 
-#: Phase 5 (`docs/specs/spec-image-formats.md`): the image2 muxer -- the one
+#: Phase 5 (`docs/specs/archive/spec-image-formats.md`): the image2 muxer -- the one
 #: behind PNG, JPEG, TIFF and BMP -- accepts *any* video codec under
 #: ``-c copy``, so a stream copy would ship a mislabelled file (measured:
 #: ``flat.jpg -c copy out.png`` exits 0 and writes a JPEG named ``.png``).
@@ -864,7 +864,7 @@ BMP = Profile(
     ),
 )
 
-#: Phase 5 (`docs/specs/spec-image-formats.md`): the animated-capable trio.
+#: Phase 5 (`docs/specs/archive/spec-image-formats.md`): the animated-capable trio.
 #: ``gif`` and ``webp`` write every frame of a multi-frame source -- an
 #: animation, not a still -- so unlike the image2 four above, neither carries a
 #: frame limit anywhere. ``avif``'s muxer silently keeps only one frame no

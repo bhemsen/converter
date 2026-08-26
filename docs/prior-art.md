@@ -202,7 +202,7 @@ evidenced, not assumed — see the image-conversion concern.
     art yields `0,mp3,audio,0` and `1,png,video,1`; a plain h264 file yields
     `0,h264,video,0`. So the cost is one extra `-show_entries` clause, one field
     on `Stream`, and one branch in the engine — materially cheaper than the
-    "engine change" framing `docs/specs/spec-audio-formats.md` recorded when the
+    "engine change" framing `docs/specs/archive/spec-audio-formats.md` recorded when the
     idea was first deferred.
   - AVOID: inferring artwork from the codec name. `mjpeg` and `png` are the codecs
     of both a cover picture and a real video stream, which is exactly why `m4a`
@@ -217,7 +217,7 @@ evidenced, not assumed — see the image-conversion concern.
 - Date: 2026-08-26
 - Notes:
   - ADOPT: the deferral is already documented with its cost, in
-    `docs/specs/spec-audio-formats.md`'s "Two roadmap candidates this phase
+    `docs/specs/archive/spec-audio-formats.md`'s "Two roadmap candidates this phase
     deliberately does not take". This phase cashes it in rather than rediscovering
     it.
   - AVOID: re-opening the phase-3 gate decision. Audio profiles currently drop

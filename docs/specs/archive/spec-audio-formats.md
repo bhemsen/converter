@@ -610,3 +610,7 @@ New-Item -ItemType Directory -Force art
   Neither target is silent, and neither needs the ladder to name the loss.
   The Verification item was corrected to describe what the engine actually
   does instead of a speculative asymmetry between the two targets.
+
+- 2026-08-26: Close-out. The final QA gate ran against real ffmpeg 9.0 on
+  Windows 11, verifying all 17 target formats end-to-end with ffprobe.
+  Verdict: PASS WITH FINDINGS; the findings are filed as issues #66-#73.
