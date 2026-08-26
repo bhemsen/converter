@@ -15,7 +15,7 @@
 | 2 | target-driven-cli | [spec-target-driven-cli.md](specs/spec-target-driven-cli.md) | [#2](https://github.com/bhemsen/converter/milestone/2) |
 | 3 | audio-formats | [spec-audio-formats.md](specs/spec-audio-formats.md) | [#3](https://github.com/bhemsen/converter/milestone/3) |
 | 4 | video-formats | [spec-video-formats.md](specs/spec-video-formats.md) | [#4](https://github.com/bhemsen/converter/milestone/4) |
-| 5 | image-formats | — | — |
+| 5 | image-formats | [spec-image-formats.md](specs/spec-image-formats.md) | [#5](https://github.com/bhemsen/converter/milestone/5) |
 
 A phase gets a Spec link once `/plan` drafts it, and a Milestone link once the
 spec is merged. The milestone (open/closed + issue progress) is where status
