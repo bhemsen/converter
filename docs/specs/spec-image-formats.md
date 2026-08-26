@@ -121,25 +121,27 @@ codes taken from ffmpeg itself.
 | Decision | Rationale | Date |
 |---|---|---|
 | **`png`, `jpg`, `tiff`, `bmp` force their encoder in the cheap attempt**: `flags("-map 0:v? -c:v png")`, `flags("-map 0:v? -c:v mjpeg -q:v 2")`, `flags("-map 0:v? -c:v tiff")`, `flags("-map 0:v? -c:v bmp")`. `explicit_streams=False` | Measured: image2 accepts any codec on copy, so `--to png` over JPEGs would ship JPEGs named `.png`. This is phase 3's carve-out — "where the muxer is looser than the format's identity, the profile does not rely on a copy at all" — and it is the same shape as `opus`. The copy still happens on the selective rung, on a mask hit | 2026-08-26 |
-| **`webp` keeps `flags("-map 0:v? -c copy")`**, `explicit_streams=False`. Whether `gif` and `avif` do is the phase's second open decision | `webp`'s muxer rejects a non-matching codec, so a copy cannot mislabel, and `webp` loses neither alpha nor frames -- it has no standing note whose reachability depends on which rung wins. `gif` and `avif` do, which is what makes their case different | 2026-08-26 |
+| **`webp` alone keeps `flags("-map 0:v? -c copy")`**, `explicit_streams=False`. `gif` and `avif` force their encoder, per the decision above | `webp`'s muxer rejects a non-matching codec, so a copy cannot mislabel, and `webp` loses neither alpha nor frames -- it has no standing note whose reachability depends on which rung wins. `gif` and `avif` do, which is what makes their case different | 2026-08-26 |
 | Copy masks: `png` -> `{png}`; `jpg` -> `{mjpeg}`; `webp` -> `{webp}`; `avif` -> `{av1}`; `gif` -> `{gif}`; `tiff` -> `{tiff}`; `bmp` -> `{bmp}` | Measured against ffprobe's reported codec names | 2026-08-26 |
 | Fallback encoders, as full `StreamRule` templates: `png` -> `flags("-c:v png")`; `jpg` -> `flags("-c:v mjpeg -q:v 2")`; `webp` -> `flags("-c:v libwebp -quality:v 80")`; `avif` -> `flags("-c:v libaom-av1 -crf:v 30 -still-picture 1")`; `gif` -> `flags("-c:v gif")`; `tiff` -> `flags("-c:v tiff")`; `bmp` -> `flags("-c:v bmp")` -- all placeholder-free, per the stream-limit row below | One quality default per lossy format, pinned by the argv tests. Written in full rather than as shorthand, because the `-c:v` is not optional | 2026-08-26 |
 | Only `png`, `tiff` and `bmp` declare `fallback_name=None`. `gif`, `jpg`, `webp` and `avif` declare theirs | The phase-3 rule -- encoding into a target's own lossless codec gives up nothing worth naming -- covers `png`, `tiff` and `bmp` only. **GIF is not lossless**: it is a 256-colour palette format, and measured, a 1280x720 photograph goes from 36 485 distinct colours to 182 (PSNR 39.4 dB against 47.0 for png and bmp). With `fallback_name=None` that loss would be reported nowhere at all | 2026-08-26 |
 | **`accept_options=flags("-c:v copy")` on every image profile's video rule**, placeholder-free like the rest | Follow `opus`'s precedent, **not** WAV's `accept_options=()`. WAV's empty form is safe only because its mask is empty, so its accept branch is unreachable at all; every mask here is non-empty, so the branch is live. Measured, `()` emits a map with no codec option -- `-map 0:0` alone on a JPEG re-encodes it at exit 0 (44 867 B against 44 893 B, PSNR 66 dB) where `-c:v copy` is byte-identical. A silent lossy re-encode on the one path the copy mask exists to protect | 2026-08-26 |
 | **`stream_limit=1` on every image profile's video rule**, and -- following the convention `spec-profile-registry.md` recorded -- their templates are written **without** `{n}`: `flags("-c:v png")`, `flags("-c:v mjpeg -q:v 2")` and so on | A rule limited to one stream can only ever produce output stream 0, so it writes the bare specifier and the engine substitutes nothing. That is phase 1's rule, and the argv tests pin whichever form is chosen, so it is worth choosing deliberately. One image, one picture. A source with two video streams — cover art beside a video, an MJPEG-plus-video AVI — would otherwise map both into one output file and fail. `mp3` and `flac` got the same treatment in phase 3 for the same reason | 2026-08-26 |
 | No image profile declares an audio, subtitle or attachment rule; `container_options` is `()` for all seven | An image holds one thing, and none of these muxers takes a container flag | 2026-08-26 |
-| **Standing notes**: `jpg` says transparency is not carried **and** that the image was re-encoded. `gif` and `avif` need the same treatment for transparency, and `avif` for frame reduction -- but whether those notes are reachable depends on the second open decision | `jpg`'s cheap attempt always wins, so its note always prints. `gif`'s and `avif`'s cheap attempt is a copy that wins only for a source already in that format, so as drafted their notes print for exactly the inputs that lose nothing. That is the defect the second open decision exists to close | 2026-08-26 |
+| **Standing notes**, all on a cheap attempt that always wins: `jpg` -- transparency is not carried, and the image was re-encoded; `gif` -- transparency is not carried, and a photograph is reduced to 256 colours; `avif` -- transparency is not carried, and a multi-frame source is reduced to a single frame | All three cheap attempts force their encoder, so all three always win and all three notes always print. The drafted version had `gif` and `avif` copying, which meant their notes printed for exactly the inputs that lose nothing -- the defect the gate's second decision closed | 2026-08-26 |
 | `last_resort`: `gif` -> `flags("-map 0:v:0 -c:v gif")`; `webp` -> `flags("-map 0:v:0 -c:v libwebp -quality:v 80")`, noting the image was re-encoded; `avif` -> `flags("-map 0:v:0 -c:v libaom-av1 -crf 30 -still-picture 1")`. The four image2 targets' `last_resort` is what the gate decides | Phase 4's rule: every profile needs one or a ladder that reaches the end lands as `failed`. Written without `{n}`, which is not substituted outside `StreamRule` templates. Each carries the notes its rung earns: `gif` that the image was re-quantised to 256 colours, `avif` that a multi-frame source is reduced to one frame -- a last rung that converts in silence is what `mp4`'s two notes exist to prevent | 2026-08-26 |
-| OPEN — how `png`, `jpg`, `tiff` and `bmp` handle a multi-frame source | resolved at the spec-acceptance gate; see the first note below | — |
-| OPEN — do `gif` and `avif` copy, or always encode? | resolved at the spec-acceptance gate; see the second note below | — |
+| A multi-frame source into `png`, `jpg`, `tiff` or `bmp` is handled by the **`last_resort`**: `flags("-map 0:v:0 -frames:v 1 -c:v png")` and its siblings, with a note that a single frame was taken | Resolved at the gate on 2026-08-26. Keeps the overwhelmingly common case -- an actual image -- converting on the first attempt with no note at all; a video pays three ffmpeg spawns plus a probe for a thumbnail. Failing instead was rejected: the file would produce no output, so every re-run fails again and a mixed tree never reaches `0 converted, 0 failed` | 2026-08-26 |
+| **`gif` and `avif` force their encoder** too: `flags("-map 0:v? -c:v gif")` and `flags("-map 0:v? -c:v libaom-av1 -crf:v 30 -still-picture 1")`. Only `webp` keeps `-c copy` | Resolved at the gate on 2026-08-26. The cheap attempt then always wins, so both standing notes always print and the wasted spawn disappears. Measured, `gif` pays nothing for it -- a GIF source re-encodes pixel-identically. `avif` pays a real generation loss plus 7 s per already-AVIF file, accepted so its transparency and frame losses are named rather than requiring a constitution amendment to leave them silent | 2026-08-26 |
 
-### The one open decision, in full
+### The multi-frame decision, in full (resolved at the gate)
 
 **Scope: four targets, not seven.** `gif` and `webp` convert a video into an
 animation, which needs no decision. `avif` reduces it to one frame no matter what
 this decision says — whether that reduction is *reported* is the second open
 decision's business, not this one's. Only the image2 four — `png`, `jpg`, `tiff`,
 `bmp` — reach a rung where this is a choice.
+
+**Resolved at the gate on 2026-08-26: option 1, the `last_resort`.**
 
 Measured: with the encoder forced, an image source converts on the cheap attempt.
 A video source fails the cheap attempt *and* the selective rung, because neither
@@ -167,7 +169,13 @@ carries no stream of any type the profile has a rule for, and a video does match
 an image profile's video rule. Making it apply would be a `jobs.py` change, which
 this phase does not take.
 
-### The second open decision: do `gif` and `avif` copy, or always encode?
+### The gif/avif decision, in full (resolved at the gate)
+
+**Resolved at the gate on 2026-08-26: option 1, both force their encoder.** The
+notes therefore always print, and the "where each note lives" block below applies
+in its option-1 form: the standing notes carry transparency for both, the
+256-colour quantisation for `gif` and the frame reduction for `avif`, while
+`fallback_name` stays declared for the rarely-reached selective rung.
 
 A standing note lives on `cheap_attempt.notes`, and `batch._attempt_conversion`
 reports **only the winning attempt's** notes. `gif`'s and `avif`'s drafted cheap
@@ -249,13 +257,11 @@ Machine checks:
       rule, so those streams are dropped with a note, and that every one declares
       `stream_limit=1`.
 - [ ] A test per standing note, pinning its exact wording **and** that the note
-      is on a rung that actually wins for the input it describes -- the defect the
-      second open decision exists to close.
+      is on the cheap attempt, which always wins -- the defect the gate's second
+      decision closed.
 - [ ] A test that converting into `png`, `tiff` or `bmp` emits no note for the
       encode itself. GIF is not in that list -- it is a 256-colour format, not a
-      lossless one -- but **which rung reports its quantisation depends on the
-      second open decision**, so this test is written against whichever the gate
-      chose.
+      lossless one -- and its quantisation is reported by its standing note.
 - [ ] `--list-formats` prints one line per registry entry, including the seven
       image names. The 17-line total is a QA-gate item for whichever of the three
       coverage milestones closes last, not a machine check here — phases 3, 4 and
@@ -280,16 +286,13 @@ New-Item -ItemType Directory -Force in
 - [ ] `--to jpg in out` over `alpha.png` prints the transparency note, and the
       output's `pix_fmt` shows the alpha is gone. `--to bmp`, `--to png`,
       `--to tiff` and `--to webp` keep it and print no such note. Repeat for
-      `--to gif` and `--to avif` **only if the gate chose option 1** -- under
-      option 2 those two losses are unnamed by construction.
+      `--to gif` and `--to avif`, whose standing notes now always print.
 - [ ] `--to gif in out` over `clip.mp4` produces an **animated** GIF, and
       `--to webp` an animated WebP: count frames with `ffprobe -count_frames`.
-- [ ] `--to avif in out` over `clip.mp4` produces a single frame, and says so if
-      the gate chose option 1.
-- [ ] `--to png in out` over `clip.mp4` behaves as the gate decided; a second run
-      reports the same thing with exit 0 unless the gate chose option 3.
-- [ ] `--to gif in out` over a photograph names the colour quantisation, on
-      whichever rung the gate's second decision puts it.
+- [ ] `--to avif in out` over `clip.mp4` produces a single frame and says so.
+- [ ] `--to png in out` over `clip.mp4` produces a single frame via the
+      `last_resort` and names it; a second run reports the same thing, exit 0.
+- [ ] `--to gif in out` over a photograph names the colour quantisation, via its standing note.
 - [ ] Time `--to avif` over a large still and compare with `--to webp`. The
       measured gap is 17x; confirm it is tolerable on real photographs.
 - [ ] A second run over any converted tree reports `0 converted`, exit 0.
@@ -299,10 +302,10 @@ New-Item -ItemType Directory -Force in
 | Risk | Mitigation |
 |---|---|
 | A stream copy ships a mislabelled file | The four image2 targets force their encoder, with a Verification item and a QA check on both directions of the commonest conversion |
-| `avif` silently drops frames, and `gif` silently drops transparency and colours | Reportable only under the second open decision's option 1; option 2 leaves them unnamed and costs a constitution amendment. The gate is shown both prices |
+| `avif` silently drops frames, and `gif` silently drops transparency and colours | Both forced their encoder at the gate, so their standing notes are on the rung that always wins and the losses are always named |
 | `--to avif` over a photo library is unusably slow | Measured and priced in the muxer table; the QA gate confirms it on real photographs |
-| An alpha loss goes unnamed | Measured per target: `jpg`, `gif` and `avif` lose it, `png`, `tiff`, `bmp` and `webp` keep it. `jpg`'s note always prints; `gif`'s and `avif`'s depend on the second open decision |
-| The wasted spawn is mistaken for a bug | For `webp` it is named in its decision row as a deliberate price for a real copy path. For `gif` and `avif` it disappears entirely under the second open decision's option 1 |
+| An alpha loss goes unnamed | Measured per target: `jpg`, `gif` and `avif` lose it, `png`, `tiff`, `bmp` and `webp` keep it. All three notes print on a cheap attempt that always wins |
+| The wasted spawn is mistaken for a bug | It remains only for `webp`, named in its decision row as a deliberate price for a real copy path; forcing the encoder removed it for `gif` and `avif` |
 | Someone reads the missing EXIF as a bug | Named as a vision non-goal with the prior-art entry that evidences it |
 
 ## Decision log
@@ -338,3 +341,8 @@ New-Item -ItemType Directory -Force in
   `gif` only CPU while costing `avif` a real generation loss plus seven seconds.
   The two had been bundled under one price sentence that overstated `gif`'s; the
   decision may now be answered per target.
+- 2026-08-26: Gate resolved both decisions. The image2 four extract the first
+  frame at the `last_resort`, keeping the common single-image case noise-free.
+  `gif` and `avif` force their encoder, so every standing note sits on a rung that
+  always wins — `gif` pays nothing for it, `avif` pays a generation loss and seven
+  seconds per already-AVIF file, accepted rather than leaving its losses silent.
