@@ -459,3 +459,27 @@ reusing the fixtures the phase-1 gate synthesises:
   holding when one target began drawing in several source suffixes: `a.mkv` plus
   `a.opus` under one target is a genuine collision on every platform. A real one
   was added next to the stubbed message-formatting test.
+- 2026-08-26 (#16): README rewritten to document the CLI issue #15 actually
+  shipped, rather than the `video`/`audio` sub-commands it replaced. Every
+  command shown was run against this worktree's build (`converter --help`,
+  `--list-formats`, `mirror --help`, and a `--dry-run` demo) rather than
+  guessed, per this issue's own instruction not to document a flag that does
+  not exist. The former per-format "How the video conversion works" section
+  became "How a conversion works": the three-step ladder is generic
+  (`docs/architecture.md`'s Key flows), so the README now states it once and
+  gives MP4 and WAV as the two ladders currently reachable through
+  `--list-formats`, rather than re-deriving the whole section again for every
+  later phase's format. The `docs/constitution.md` tech-debt row for the
+  `develop` pull-request target is removed now that the README says `main`;
+  the `Job`/`JOBS` registration language is replaced throughout with "add a
+  profile entry to `converter/profiles.py`" (`docs/architecture.md`'s "Where
+  new code goes"), and the layout table gains the `converter/profiles.py` row
+  that table was missing.
+- 2026-08-26 (#16, review round 1): The "Coming from an older version?" note
+  overclaimed that the old sub-commands print "this same migration note" --
+  the actual `_legacy_message` in `converter/cli.py` is deliberately
+  format-agnostic (its own docstring explains why: naming a format there would
+  defeat the module's own format-name-literal check that
+  `tests/test_cli.py::test_the_legacy_message_names_no_format` pins). Reworded
+  to say the old sub-command "prints a pointer to `--to` and `--list-formats`"
+  instead of claiming it repeats the README's own `mp4`/`wav` examples.

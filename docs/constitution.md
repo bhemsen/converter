@@ -76,4 +76,3 @@
 | Deviation | Where | Plan |
 | --------- | ----- | ---- |
 | Ruff `D` (pydocstyle) rules are not enabled, so the docstring convention rests on review | `pyproject.toml` | Enable pydocstyle once the noise is acceptable |
-| The README names `develop` as the pull-request target | `README.md` | The base branch is `main`; correct it with the next docs change |
