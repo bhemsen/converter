@@ -23,6 +23,8 @@ def exhaustive_job() -> Job:
     """
     profile = Profile(
         label="EXH",
+        name="exh",
+        description="a test double, not a shipped format",
         target_suffix=".exh",
         container_options=(),
         cheap_attempt=Attempt(label="copy-all", options=flags("-c copy")),

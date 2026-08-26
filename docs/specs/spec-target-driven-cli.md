@@ -325,3 +325,19 @@ reusing the fixtures the phase-1 gate synthesises:
   alone, no `--from` filter. The filter would have bought a saving on repeated
   probe cost with a flag every later phase must keep working; the outcome already
   reports that cost honestly. Recorded as revisitable if the cost bites.
+- 2026-08-26 (#12): `SOURCE_SUFFIXES` seeded with exactly `.mkv`, `.mp4`, `.opus`,
+  `.wav` — the old `video`/`audio` sub-commands' suffixes plus each shipped
+  profile's own target suffix. `docs/specs/spec-video-formats.md` (phase 4, not
+  yet merged) attributes `.mp4` to phase 3 instead, but this phase's own
+  Verification list requires a source with the target's suffix to be a
+  candidate ("a source with the target's suffix but a different output root
+  **is** converted"), and the milestone-QA gate requires an already-existing
+  `.mp4` file under `--to mp4` to be reported as `skipped` rather than passed
+  over in silence — both only possible if `.mp4` is in the set from this phase
+  on. Treated as the later spec's drafting error, not a fork with this one:
+  phase 4 can drop `.mp4` from its own "newly added" list once it reads this.
+- 2026-08-26 (#12): `resolve_target`'s unknown-target error is a plain
+  `ValueError`, not a new exception type, matching `paths.mirror_to_drive`'s
+  existing pattern of raising `ValueError` for a usage problem that `cli.py`
+  (issue #15) turns into its exit-2 `UsageError` — `profiles.py` cannot import
+  `UsageError` itself without breaking the leaf-module constraint.

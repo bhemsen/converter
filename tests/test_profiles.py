@@ -8,7 +8,17 @@ import itertools
 import pytest
 
 from converter import profiles
-from converter.profiles import MP4, WAV, Attempt, Profile, StreamRule, flags
+from converter.profiles import (
+    MP4,
+    PROFILES,
+    SOURCE_SUFFIXES,
+    WAV,
+    Attempt,
+    Profile,
+    StreamRule,
+    flags,
+    resolve_target,
+)
 
 #: ffmpeg's stream-specifier letters, as `docs/design/degradation-ladder.md` uses them.
 MAP_LETTERS = {"v": "video", "a": "audio", "s": "subtitle", "t": "attachment", "d": "data"}
@@ -90,6 +100,10 @@ class TestMp4Profile:
         assert MP4.label == "MP4"
         assert MP4.target_suffix == ".mp4"
 
+    def test_name_and_description(self):
+        assert MP4.name == "mp4"
+        assert MP4.description
+
     def test_container_options_carry_faststart_once(self):
         assert MP4.container_options == ("-movflags", "+faststart")
 
@@ -136,6 +150,10 @@ class TestWavProfile:
         assert WAV.label == "WAV"
         assert WAV.target_suffix == ".wav"
 
+    def test_name_and_description(self):
+        assert WAV.name == "wav"
+        assert WAV.description
+
     def test_no_container_options(self):
         assert WAV.container_options == ()
 
@@ -172,6 +190,36 @@ class TestWavProfile:
         assert WAV.rules["audio"].stream_limit == 1
 
 
+class TestRegistry:
+    def test_keys_are_each_profile_s_own_name(self):
+        assert PROFILES == {"mp4": MP4, "wav": WAV}
+
+
+class TestResolveTarget:
+    @pytest.mark.parametrize("target", ["mp4", "MP4", ".mp4", ".MP4", "Mp4"])
+    def test_accepts_name_case_and_dot_variants(self, target):
+        assert resolve_target(target) is MP4
+
+    def test_resolves_wav_too(self):
+        assert resolve_target("wav") is WAV
+
+    def test_unknown_target_raises_value_error_listing_available_targets(self):
+        with pytest.raises(ValueError, match=r"mkv.*available targets: mp4, wav"):
+            resolve_target("mkv")
+
+
+class TestSourceSuffixes:
+    def test_holds_the_old_job_suffixes_and_each_shipped_profile_s_own_suffix(self):
+        """`.mkv`/`.opus` are what the old sub-commands read; `.mp4`/`.wav` are
+        what let a source already carrying the target suffix take part in
+        selection (the self-write and existing-output cases,
+        `docs/design/source-selection.md`)."""
+        assert {".mkv", ".mp4", ".opus", ".wav"} == SOURCE_SUFFIXES
+
+    def test_every_shipped_profile_s_target_suffix_is_a_source_suffix(self):
+        assert all(profile.target_suffix in SOURCE_SUFFIXES for profile in SHIPPED)
+
+
 class TestValueTypesAreFrozen:
     def test_attempt_is_frozen(self):
         attempt = Attempt(label="x", options=())
@@ -195,6 +243,8 @@ class TestValueTypesAreFrozen:
 
         assert fields == {
             "label",
+            "name",
+            "description",
             "target_suffix",
             "container_options",
             "cheap_attempt",

@@ -1,10 +1,16 @@
-"""Declarative target-format profiles: value types plus the MP4 and WAV entries.
+"""Declarative target-format profiles: value types, the registry, and lookup.
 
 A leaf module by design (`docs/architecture.md`): it holds no ``from converter``
 or ``import converter`` statement at all, so a target format can only ever be
 data, never new logic. That is also why ``flags()`` and ``Attempt`` live here
 instead of being imported from ``jobs.py`` -- importing them would break the
 leaf property in the other direction.
+
+``PROFILES`` is the target-name -> profile registry a target-driven CLI needs,
+``resolve_target`` is how it looks a target up, and ``SOURCE_SUFFIXES`` is the
+curated set of suffixes discovery walks (`docs/design/source-selection.md`) --
+curated by hand for the same reason a profile's copy mask is: ffmpeg can be
+asked what a file contains, never what it will accept as an input.
 
 See ``docs/design/degradation-ladder.md`` for how the engine in ``jobs.py``
 turns one profile into an ordered ladder of attempts, and
@@ -72,9 +78,16 @@ class Profile:
     even when its cheap attempt exits 0, so a stream that attempt silently left
     behind is named rather than reported as a plain success
     (``docs/design/degradation-ladder.md``).
+
+    ``name`` is the registry key and the ``--to`` token (``"mp4"``); ``label``
+    stays the display form ``--list-formats`` and progress bars print
+    (``"MP4"``). ``description`` is the one-line explanation
+    ``--list-formats`` and the interactive prompt print next to ``name``.
     """
 
     label: str
+    name: str
+    description: str
     target_suffix: str
     container_options: tuple[str, ...]
     cheap_attempt: Attempt
@@ -95,6 +108,8 @@ TEXT_SUBTITLE_CODECS = frozenset({"subrip", "srt", "ass", "ssa", "mov_text", "we
 
 MP4 = Profile(
     label="MP4",
+    name="mp4",
+    description="Video: copies compatible streams, re-encodes the rest to h264/aac",
     target_suffix=".mp4",
     container_options=FASTSTART,
     # Deliberately not "-map 0": that also selects MKV attachments (font files
@@ -147,6 +162,8 @@ MP4 = Profile(
 
 WAV = Profile(
     label="WAV",
+    name="wav",
+    description="Audio: single stream, uncompressed 16-bit PCM",
     target_suffix=".wav",
     container_options=(),
     # The stream is selected explicitly rather than left to ffmpeg's implicit
@@ -172,3 +189,35 @@ WAV = Profile(
         ),
     },
 )
+
+#: Target name -> profile. Built from each profile's own ``name`` rather than
+#: repeating it as a literal key, so the two can never drift apart.
+PROFILES: dict[str, Profile] = {profile.name: profile for profile in (MP4, WAV)}
+
+#: The curated set of suffixes discovery walks (`docs/design/source-selection.md`):
+#: a file is a candidate only if its suffix is in this set, never discovered from
+#: what ffmpeg happens to accept. Phase 2 seeds it with exactly what the old
+#: ``video``/``audio`` sub-commands read (``.mkv``, ``.opus``) plus each shipped
+#: profile's own target suffix (``.mp4``, ``.wav``) -- the latter is what lets a
+#: source that already carries the target suffix take part in selection at all
+#: (the self-write and existing-output-skip cases `source-selection.md` and this
+#: phase's QA gate both need). Later phases extend this set as they add profiles.
+SOURCE_SUFFIXES: frozenset[str] = frozenset({".mkv", ".mp4", ".opus", ".wav"})
+
+
+def resolve_target(target: str) -> Profile:
+    """Look up *target* in ``PROFILES``, accepting a name or a dotted suffix.
+
+    ``mp4``, ``MP4`` and ``.mp4`` all resolve to the same profile (Prior
+    decisions, ``spec-target-driven-cli.md``). An unknown target is a usage
+    error, not a conversion failure -- the same shape as ``--jobs`` being out
+    of range -- so it is raised as a plain ``ValueError`` for ``cli.py`` to
+    turn into its exit-2 ``UsageError``, with a message that lists every
+    target actually available rather than just naming the typo.
+    """
+    name = target.lower().removeprefix(".")
+    try:
+        return PROFILES[name]
+    except KeyError:
+        available = ", ".join(sorted(PROFILES))
+        raise ValueError(f"unknown target {target!r}; available targets: {available}") from None
