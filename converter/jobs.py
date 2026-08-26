@@ -24,7 +24,14 @@ from converter.profiles import MP4, WAV, Attempt, Profile
 
 @dataclass(frozen=True)
 class Job:
-    """A source suffix, a target suffix, and how to get from one to the other."""
+    """A source suffix, a target suffix, and how to get from one to the other.
+
+    ``verify_success`` turns the source's stream list into the notes the *cheap*
+    attempt owes once it has already succeeded, and is ``None`` for a cheap
+    attempt whose mapping is exhaustive -- which is how ``batch.py`` knows
+    whether that success is worth an ffprobe round-trip at all
+    (``docs/design/degradation-ladder.md``).
+    """
 
     name: str
     description: str
@@ -32,6 +39,9 @@ class Job:
     target_suffix: str
     first_attempt: Callable[[], Attempt] = field(repr=False)
     retries: Callable[[Sequence[Stream]], list[Attempt]] = field(repr=False)
+    verify_success: Callable[[Sequence[Stream]], tuple[str, ...]] | None = field(
+        default=None, repr=False
+    )
 
 
 def _with_container_options(attempt: Attempt, profile: Profile) -> Attempt:
@@ -69,6 +79,43 @@ def _room_reason(profile: Profile, stream_type: str, limit: int) -> str:
     return f"{profile.label} holds {limit} {stream_type} {noun}"
 
 
+def _structural_drop(profile: Profile, stream: Stream, counts: dict[str, int]) -> str | None:
+    """D1 and D2 of stream-decision.md: the drops the profile's *shape* forces.
+
+    Split out because both verdicts are reached from the declared rules alone,
+    without ever looking at the stream's codec. That is what lets the
+    success-side verification in :func:`_unmapped_notes` reuse them without
+    asserting anything about what an already-successful attempt encoded.
+    """
+    rule = profile.rules.get(stream.codec_type)
+    if rule is None:
+        return _drop_note(stream, f"not supported by {profile.label}")
+
+    position = counts.get(stream.codec_type, 0)
+    if rule.stream_limit is not None and position >= rule.stream_limit:
+        return _drop_note(stream, _room_reason(profile, stream.codec_type, rule.stream_limit))
+    return None
+
+
+def _unmapped_notes(profile: Profile, streams: Sequence[Stream]) -> tuple[str, ...]:
+    """Name what a structurally partial cheap attempt cannot have carried over.
+
+    Only the structural verdicts above are consulted. Codec-level ones are
+    deliberately left out: the cheap attempt has already exited 0, so whatever
+    it did with a stream's codec worked, and announcing a re-encode it never
+    performed would just swap one dishonest report for another.
+    """
+    notes: list[str] = []
+    counts: dict[str, int] = {}
+    for stream in streams:
+        note = _structural_drop(profile, stream, counts)
+        if note is None:
+            counts[stream.codec_type] = counts.get(stream.codec_type, 0) + 1
+        else:
+            notes.append(note)
+    return tuple(notes)
+
+
 def _decide_stream(
     profile: Profile, stream: Stream, counts: dict[str, int]
 ) -> tuple[list[str], list[str], str | None]:
@@ -78,15 +125,12 @@ def _decide_stream(
     produces (or ``None``). ``counts`` is mutated so later streams see how many
     output streams of their type already exist.
     """
-    rule = profile.rules.get(stream.codec_type)
-    if rule is None:
-        return [], [], _drop_note(stream, f"not supported by {profile.label}")
+    structural = _structural_drop(profile, stream, counts)
+    if structural is not None:
+        return [], [], structural
 
+    rule = profile.rules[stream.codec_type]
     position = counts.get(stream.codec_type, 0)
-    if rule.stream_limit is not None and position >= rule.stream_limit:
-        reason = _room_reason(profile, stream.codec_type, rule.stream_limit)
-        return [], [], _drop_note(stream, reason)
-
     maps = ["-map", f"0:{stream.index}"]
     if stream.codec_name in rule.copy_mask:
         codecs = list(_substitute_position(rule.accept_options, position))
@@ -148,6 +192,22 @@ def make_attempts(
     return first_attempt, retries
 
 
+def make_verifier(profile: Profile) -> Callable[[Sequence[Stream]], tuple[str, ...]] | None:
+    """Build the success-side verifier of degradation-ladder.md, if one is owed.
+
+    A profile whose cheap attempt maps the source exhaustively gets ``None``, and
+    its happy path then still costs no ffprobe round-trip -- the narrowed form of
+    the rule in ``docs/constitution.md``.
+    """
+    if not profile.partial_mapping:
+        return None
+
+    def verify(streams: Sequence[Stream]) -> tuple[str, ...]:
+        return _unmapped_notes(profile, streams)
+
+    return verify
+
+
 @dataclass(frozen=True)
 class _Binding:
     """A source-pair binding: CLI-visible name plus which suffixes feed which
@@ -189,6 +249,7 @@ def _job_from_binding(binding: _Binding) -> Job:
         target_suffix=binding.profile.target_suffix,
         first_attempt=first_attempt,
         retries=retries,
+        verify_success=make_verifier(binding.profile),
     )
 
 

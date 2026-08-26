@@ -54,6 +54,11 @@ class TestMp4Profile:
     def test_cheap_attempt_selects_streams_blindly(self):
         assert MP4.explicit_streams is False
 
+    def test_cheap_attempt_is_declared_partial(self):
+        """`-map 0:v? -map 0:a? -map 0:s?` selects no attachment and no data
+        stream, so a source carrying one loses it without ffmpeg complaining."""
+        assert MP4.partial_mapping is True
+
     def test_last_resort_excludes_container_options_too(self):
         assert MP4.last_resort is not None
         assert MP4.last_resort.label == "re-encode"
@@ -88,6 +93,11 @@ class TestWavProfile:
     def test_cheap_attempt_selects_streams_explicitly(self):
         assert WAV.explicit_streams is True
         assert WAV.cheap_attempt.options == ("-map", "0:a:0", "-c:a", "pcm_s16le")
+
+    def test_cheap_attempt_is_declared_partial(self):
+        """One index is named and nothing else is, so a second audio stream or
+        an embedded cover image is left behind."""
+        assert WAV.partial_mapping is True
 
     def test_declares_no_last_resort(self):
         assert WAV.last_resort is None
@@ -140,6 +150,7 @@ class TestValueTypesAreFrozen:
             "container_options",
             "cheap_attempt",
             "explicit_streams",
+            "partial_mapping",
             "rules",
             "last_resort",
         }

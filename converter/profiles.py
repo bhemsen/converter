@@ -64,6 +64,14 @@ class Profile:
     by index (WAV's ``-map 0:a:0``) rather than blindly by type (MP4's
     ``-map 0:v?``) -- the one fact the engine cannot derive without parsing
     ffmpeg's own option syntax, per ``docs/design/degradation-ladder.md``.
+
+    ``partial_mapping`` says whether ``cheap_attempt``'s mapping can, *by
+    construction*, leave source streams unmapped. It is declared for the same
+    reason ``explicit_streams`` is: deriving it would mean parsing the option
+    list. A profile that declares it true is verified by an ffprobe round-trip
+    even when its cheap attempt exits 0, so a stream that attempt silently left
+    behind is named rather than reported as a plain success
+    (``docs/design/degradation-ladder.md``).
     """
 
     label: str
@@ -71,6 +79,7 @@ class Profile:
     container_options: tuple[str, ...]
     cheap_attempt: Attempt
     explicit_streams: bool
+    partial_mapping: bool
     rules: dict[str, StreamRule]
     last_resort: Attempt | None = None
 
@@ -97,6 +106,10 @@ MP4 = Profile(
         options=flags("-map 0:v? -map 0:a? -map 0:s? -c copy -c:s mov_text"),
     ),
     explicit_streams=False,
+    # The same "?" selectors that make the remux survivable also make it
+    # incomplete: nothing selects attachments or data streams, so a source
+    # carrying either loses it without ffmpeg ever complaining.
+    partial_mapping=True,
     rules={
         "video": StreamRule(
             copy_mask=MP4_VIDEO_CODECS,
@@ -141,6 +154,9 @@ WAV = Profile(
     # predictably instead of quietly depending on which one ffmpeg prefers.
     cheap_attempt=Attempt(label="pcm_s16le", options=flags("-map 0:a:0 -c:a pcm_s16le")),
     explicit_streams=True,
+    # One index is named and nothing else is, so every further stream the
+    # source carries -- a second audio track, cover art -- is left behind.
+    partial_mapping=True,
     rules={
         "audio": StreamRule(
             # Empty by construction: WAV holds nothing as-is, only PCM.

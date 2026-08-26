@@ -11,8 +11,8 @@ Everything else exists today.
 | Component | Responsibility |
 | --------- | -------------- |
 | `converter/cli.py` | Argument parsing, target-format selection, the interactive prompt, usage errors, exit codes |
-| `converter/profiles.py` | One declarative profile per target format: the copy mask, the fallback encoder and the drop reason per stream type, the container flags, and the cheap and last-resort attempts the format declares as data |
-| `converter/jobs.py` | The generic conversion engine: turns a profile plus a probed stream list into an ordered ladder of attempts. It owns the *order* of the rungs and how the selective rung is built; the profiles own what each declared rung contains |
+| `converter/profiles.py` | One declarative profile per target format: the copy mask, the fallback encoder and the drop reason per stream type, the container flags, the cheap and last-resort attempts the format declares as data, and whether that cheap attempt's mapping is partial by construction |
+| `converter/jobs.py` | The generic conversion engine: turns a profile plus a probed stream list into an ordered ladder of attempts, and into the notes a *successful* partial cheap attempt owes. It owns the *order* of the rungs and how the selective rung is built; the profiles own what each declared rung contains |
 | `converter/batch.py` | Bounded parallel execution, the per-file outcome, progress reporting, the aggregate summary and the process exit code |
 | `converter/paths.py` | Input discovery, output-path construction, tree mirroring, collision detection, Windows path-length diagnosis |
 | `converter/ffmpegtool.py` | Locating ffmpeg and ffprobe, building argv, running without a shell, probing streams |
@@ -50,7 +50,15 @@ The internal import graph is acyclic today and must stay that way:
    `paths.find_sources` collects the inputs, `paths.find_collisions` refuses up
    front if two inputs would write to the same output, then `batch.run_batch`
    runs the profile's cheapest attempt per file through the engine in `jobs.py`.
-   On success nothing else happens — no ffprobe round-trip is ever spent.
+   On success nothing else happens — no ffprobe round-trip is ever spent —
+   *provided* that attempt's mapping is exhaustive. A profile that declares its
+   cheap attempt **partial by construction** (`partial_mapping`: MP4's blind
+   `?`-selectors reach no attachment, WAV's single index reaches no second audio
+   stream) spends one probe on success too, and every source stream that mapping
+   could not carry becomes a note. The verification reads the profile's
+   *structural* verdicts only — whether it declares a rule for the stream's type,
+   and how many streams of that type it holds — never a codec-level one: the
+   attempt exited 0, so what it did with a codec worked.
 2. **Degradation.** The attempt exits non-zero, so *now* `ffmpegtool.probe_streams`
    describes the file. The engine matches each stream against the profile's copy
    mask: streams the mask accepts pass through unchanged — as a literal `copy`, or

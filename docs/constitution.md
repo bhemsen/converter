@@ -26,8 +26,13 @@
 - Maximum 50 lines per function.
 - Every function parameter and every return value carries a type annotation.
 - Every module has a module docstring.
-- `ffprobe` never runs on the happy path — only after a conversion attempt has
-  actually failed.
+- `ffprobe` never runs on the happy path of a cheap attempt whose mapping is
+  *exhaustive* — for that attempt it runs only after a conversion attempt has
+  actually failed. A cheap attempt that is **partial by construction** — one
+  whose mapping can leave source streams unmapped, and which says so as a
+  declared field on its profile — is probed once even when it succeeds, so that
+  what it dropped is named rather than reported as a plain success. Either way,
+  at most one probe per file.
 - A target format is data, not code: adding one must produce no diff in
   `cli.py`, `batch.py` or `paths.py`.
 - One broken input file must not abort the batch.

@@ -76,8 +76,11 @@ and milestone. A completed spec is moved to `docs/specs/archive/`.
   imported.
 - `jobs.py` may import `profiles` and `ffmpegtool`, and nothing else. The import
   graph stays acyclic.
-- `ffprobe` never runs on the happy path (`docs/constitution.md`): the engine
-  probes at most once per file, and only after an attempt has already failed.
+- `ffprobe` never runs on the happy path of an exhaustive cheap attempt
+  (`docs/constitution.md`): the engine probes at most once per file — after an
+  attempt has failed, or, for a cheap attempt the profile declares partial by
+  construction, once on its success so that what it dropped is named. See the
+  2026-08-26 (issue #18) Decision log entry for how that narrowing was reached.
 - Maximum 50 lines per function, every parameter and return annotated, a
   docstring on every module and public function (`docs/constitution.md`).
   `_mp4_selective` is 51 lines today and is listed as tech debt to be cleared by
@@ -197,6 +200,11 @@ Machine checks — Verify is the per-iteration gate (`docs/workflow.md`):
       attempt's own two notes (lossy re-encode; 10-bit/HDR reduced to 8-bit).
 - [ ] A test asserting WAV's PCM conversion emits **no** note — the one re-encode
       that is not a degradation.
+- [ ] A test per symptom of issue #18, driving the *cheap-attempt-succeeds* path
+      rather than calling `.retries()` directly: the dropped attachment and the
+      dropped surplus audio stream are each named on a run that reports
+      `converted`, and an exhaustive cheap attempt still spends no probe on
+      success.
 - [ ] A test per failure-path delta, since the QA gate cannot reach them: the
       engine-built rung is labelled `selective` for WAV too (delta 3), and a WAV
       source carrying a non-audio stream yields exactly one rung that drops it
@@ -363,3 +371,51 @@ why both audio fixtures use that suffix.
   machine-dependent, which contradicts the mask being declarative data
   (`docs/architecture.md`). Not a design fork requiring escalation: the prior-art
   AVOID note and the playability criterion already answer it.
+- 2026-08-26 (issue #18): the `ffprobe`-never-on-the-happy-path rule is
+  **narrowed** rather than kept absolute. `ffprobe` stays off the happy path of a
+  cheap attempt whose mapping is *exhaustive*; a cheap attempt that is
+  **structurally partial** — one whose mapping can by construction leave source
+  streams unmapped (MP4's blind `-map 0:v? -map 0:a? -map 0:s?`, WAV's
+  single-index `-map 0:a:0`) — is verified by a probe **on success**, so a silent
+  drop is never reported as a plain success. Issue #18 escalated this as a design
+  fork because `docs/constitution.md` states both "`ffprobe` never runs on the
+  happy path" and "never report success for a conversion that silently dropped
+  something", and naming a dropped stream's index and codec is only knowable from
+  the source's stream list — parsing ffmpeg's stderr for it being an explicit
+  Don't. Rationale for narrowing: the ladder's cost argument is about the common
+  case, a copyable source converting without a round-trip. Keeping the rule
+  absolute would have forced the two fixture-specific acceptance items
+  (`attached.mkv` naming the `ttf` attachment, `two-tone.opus` naming the second
+  audio stream and its codec) to be relaxed, trading away the loss-accounting USP
+  in `docs/vision.md` to protect a probe on a minority of runs. All four
+  restatements of the old rule moved together — `docs/constitution.md`
+  (Architecture principles), `docs/architecture.md` (Key flows §1),
+  `docs/design.md` (Cost markers), `docs/design/degradation-ladder.md` (the
+  diagram gains a success-side probe node) — plus this spec's Constraints and the
+  `probe_streams` docstring, which restated it a fifth time in code.
+- 2026-08-26 (issue #18): "partial by construction" is a **declared field on the
+  profile** (`Profile.partial_mapping`), with no default, rather than inferred.
+  Inferring it would mean parsing the cheap attempt's option list for `?`
+  selectors and stream indices, which is exactly the ffmpeg-syntax knowledge
+  `docs/design/degradation-ladder.md` keeps out of the engine — the same
+  reasoning that already made `explicit_streams` a declared flag. Omitting the
+  default forces every future target profile to state the answer instead of
+  inheriting a silent one.
+- 2026-08-26 (issue #18): the success-side verification reads only the profile's
+  **structural** verdicts — no rule declared for the stream's type (D1), or the
+  container already holding as many streams of that type as it can (D2) — and
+  never a codec-level one (the D3 no-fallback drop, or a re-encode). Both
+  structural verdicts follow from the declared rules alone, independently of what
+  the source's codecs turned out to be, so they are exactly the drops a
+  structurally partial mapping cannot avoid. A codec-level verdict would be a
+  lie on this path: ffmpeg exited 0, so the stream was carried over whatever the
+  copy mask says, and reporting a re-encode that never ran would trade one
+  dishonest report for another. The shared helper is `_structural_drop` in
+  `converter/jobs.py`, used by both `_decide_stream` and `_unmapped_notes` so the
+  two readings of D1/D2 cannot drift.
+- 2026-08-26 (issue #18): a verification probe that itself fails does not fail the
+  conversion — the output is written and valid — but the run is reported with the
+  note `could not verify which source streams were kept: <error>` instead of as a
+  plain success. Failing an otherwise good conversion because its bookkeeping
+  could not be completed would be worse than the silence being fixed; saying
+  nothing would re-open it.

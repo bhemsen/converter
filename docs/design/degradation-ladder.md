@@ -8,20 +8,26 @@
 
 In which order the engine tries to produce one output file, where a subprocess is
 spent, and which conditions move it down a rung. The point of the ladder is that
-`ffprobe` never runs on the happy path (`docs/constitution.md`), so every node
-that costs a process call is marked.
+`ffprobe` stays off the happy path of an *exhaustive* cheap attempt
+(`docs/constitution.md`), so every node that costs a process call is marked —
+including the one node on the success side, which only a cheap attempt the
+profile declares *partial by construction* ever reaches.
 
 ```mermaid
 flowchart TD
     A["Attempt 1 — the profile's cheap attempt<br/>(ffmpeg)"]
-    P["describe the source's streams<br/>(ffprobe — first and only probe)"]
+    V["verify what that mapping could carry<br/>(ffprobe — the only probe on the success side)"]
+    P["describe the source's streams<br/>(ffprobe — the only probe on the failure side)"]
     PLAN["build the selective plan<br/>(no subprocess — see stream-decision.md)"]
     SEL["Attempt 2 — selective<br/>(ffmpeg)"]
     FIN["Attempt 3 — the profile's last-resort attempt<br/>(ffmpeg; a profile may declare none)"]
     OK["converted — the winning attempt's notes are reported"]
     BAD["failed — partial output removed, ffmpeg's stderr kept per rung"]
 
-    A -->|"exit 0"| OK
+    A -->|"exit 0, and the profile declares the mapping exhaustive"| OK
+    A -->|"exit 0, and the profile declares the mapping partial"| V
+    V -->|"stream list — plus a note per source stream<br/>the mapping could not carry"| OK
+    V -->|"probe failed — plus a note that the run is unverified,<br/>so it is not a plain success"| OK
     A -->|"exit != 0"| P
     P -->|"probe failed"| BAD
     P -->|"stream list"| PLAN
@@ -36,9 +42,23 @@ flowchart TD
 
 ## Rules the diagram encodes
 
-- **One probe per file, never on the happy path.** The `ffprobe` node sits behind
-  the first non-zero exit and is reached at most once; every later rung reuses the
-  same stream list.
+- **At most one probe per file, and none for an exhaustive cheap attempt.** The
+  failure-side `ffprobe` node sits behind the first non-zero exit and is reached
+  at most once; every later rung reuses the same stream list. The success-side
+  node is reached only when the profile declares its cheap attempt *partial by
+  construction*. The two are mutually exclusive — a file takes one path or the
+  other — so no file is ever probed twice.
+- **A partial cheap attempt's success is verified, not assumed.** A mapping is
+  partial by construction when it can leave source streams unmapped whatever the
+  source turns out to contain: MP4's `-map 0:v? -map 0:a? -map 0:s?` selects no
+  attachment and no data stream, WAV's `-map 0:a:0` selects no second audio
+  stream. The profile declares this as data, exactly as it declares whether the
+  attempt is stream-explicit — the engine never parses an option list to find
+  out. The verification consults only the *structural* verdicts of
+  `stream-decision.md` — is there a rule for this stream's type, and is the
+  container already holding as many of that type as it can — never a codec-level
+  one: ffmpeg exited 0, so whatever the attempt did with a codec worked, and
+  naming a re-encode that never ran would trade one dishonest report for another.
 - **Cheapest first.** Rung 1 is whatever the profile declares as its cheap attempt:
   a *blind* stream copy for a container that can hold the source codecs
   (`-map 0:v? -map 0:a? ...`), or a *stream-explicit* selection where it cannot
@@ -54,7 +74,10 @@ flowchart TD
   re-encode declares one; a container with nothing further to give up (WAV) does
   not, and a failure at the rung before it is then the end of the ladder.
 - **Every rung carries its own notes.** The notes of the attempt that actually
-  succeeded are what the batch reports — the discarded rungs' notes are not.
+  succeeded are what the batch reports — the discarded rungs' notes are not. Only
+  the cheap attempt's notes are ever added to, and only by the verification node
+  above it; a later rung was built from the stream list itself, so its notes are
+  already complete and it is never verified a second time.
 - **Container-wide options are appended by the engine, once, at the end of every
   attempt.** The profile declares them in one place instead of repeating them in
   each attempt it declares.
