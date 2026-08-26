@@ -194,7 +194,7 @@ class TestListFormats:
         positions = [out.index(f" {name} ") for name in sorted(PROFILES)]
         assert positions == sorted(positions)
 
-    def test_prints_exactly_one_line_per_registry_entry(self, capsys):
+    def test_prints_no_line_beyond_the_registry(self, capsys):
         """Guard rail for issue #23: the issue's own wording ("prints seven
         lines") was accurate only for the two-plus-five audio profiles this
         phase shipped -- video and image profiles are landing in parallel
@@ -203,7 +203,9 @@ class TestListFormats:
         of a literal keeps the check meaningful (it still fails if a line goes
         missing or an extra one is printed) without going stale the moment a
         sixth format lands, exactly the registry-driven shape this issue asks
-        every guard rail here to have.
+        every guard rail here to have. Complements
+        `test_one_line_per_registry_entry` above, which proves every profile
+        *has* a line but not that nothing extra was printed.
         """
         code = main([cli.LIST_FORMATS_FLAG])
         lines = capsys.readouterr().out.splitlines()
@@ -213,10 +215,11 @@ class TestListFormats:
         assert len(lines) - 1 == len(PROFILES)
 
     def test_readme_format_list_matches_the_command_byte_for_byte(self, capsys):
-        """CLAUDE.md: if README.md's format list is touched, it must byte-match
-        what `cli.py` actually prints, ragged column padding included, rather
-        than being a hand-maintained block that can silently drift out of sync
-        the next time a profile is added.
+        """`docs/roadmap.md`: "each coverage phase maintains its own format
+        list" -- so README.md's block must byte-match what `cli.py` actually
+        prints, ragged column padding included, rather than being a
+        hand-maintained copy that can silently drift out of sync the next
+        time a profile is added.
         """
         main([cli.LIST_FORMATS_FLAG])
         actual = capsys.readouterr().out.rstrip("\n")

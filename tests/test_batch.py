@@ -157,7 +157,6 @@ class TestConvertOne:
         result = convert_one(FLAC, task, TOOLS, overwrite=False)
 
         assert result.outcome is Outcome.CONVERTED
-        assert result.outcome is not Outcome.FAILED
         assert result.attempt == "selective"
         assert len(fake_ffmpeg.calls) == 2
 

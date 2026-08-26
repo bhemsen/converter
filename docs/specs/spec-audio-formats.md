@@ -564,8 +564,9 @@ New-Item -ItemType Directory -Force art
   issue's own "seven lines" (accurate only until the video and image
   milestones' parallel PRs widened the registry past seven) -- and a
   byte-match test between README.md's fenced format block and the command's
-  actual output, per CLAUDE.md's rule that a hand-maintained copy of ragged
-  column padding must be checked, not trusted. `README.md` and
+  actual output, per `docs/roadmap.md`'s "each coverage phase maintains its
+  own format list": a hand-maintained copy of ragged column padding must be
+  checked, not trusted. `README.md` and
   `converter/profiles.py` needed no edits: both already carry the thirteen
   shipped profiles and the m4a/ogg/opus multi-stream line from earlier issues
   in this milestone. Every new guard rail was proven to bite with a scratch
