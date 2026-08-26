@@ -209,8 +209,10 @@ PROFILES: dict[str, Profile] = {profile.name: profile for profile in (MP4, WAV)}
 #: they land -- `.opus` and `.wav` are covered already. Phase 4 (issue #26,
 #: `spec-video-formats.md`) widens it once more with the video containers no
 #: earlier phase added, ahead of the `mkv`/`webm`/`mov` profiles that milestone
-#: still adds. Later phases extend this set further as they add profiles (#33 for
-#: image ones); none of them re-adds a suffix this set already holds.
+#: still adds. Phase 5 (issue #33, `spec-image-formats.md`) widens it once more
+#: with the image containers the seven image profiles that milestone still adds
+#: will need, ahead of those profiles landing. None of them re-adds a suffix this
+#: set already holds.
 SOURCE_SUFFIXES: frozenset[str] = frozenset(
     {
         # phase 2: old sub-commands plus the two shipped profiles' own suffixes
@@ -248,6 +250,19 @@ SOURCE_SUFFIXES: frozenset[str] = frozenset(
         ".vob",
         ".ogv",
         ".3gp",
+        # phase 5: image containers ahead of the seven image profiles
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".webp",
+        ".avif",
+        ".gif",
+        ".tif",
+        ".tiff",
+        ".bmp",
+        ".ppm",
+        ".pgm",
+        ".tga",
     }
 )
 

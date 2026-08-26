@@ -411,7 +411,7 @@ class TestResolveTarget:
 
 
 class TestSourceSuffixes:
-    def test_holds_the_phase_2_through_phase_4_suffixes(self):
+    def test_holds_the_phase_2_through_phase_5_suffixes(self):
         """`.mkv`/`.opus` are what the old sub-commands read; `.mp4`/`.wav` are
         what let a source already carrying the target suffix take part in
         selection (the self-write and existing-output cases,
@@ -420,7 +420,9 @@ class TestSourceSuffixes:
         containers a "rip the audio" run needs, and the remaining audio target
         suffixes ahead of the profiles that will claim them. Issue #26
         (`spec-video-formats.md`) widens it once more with the video containers
-        no earlier phase added."""
+        no earlier phase added. Issue #33 (`spec-image-formats.md`) widens it
+        once more with the image containers ahead of the seven image profiles
+        that milestone still adds."""
         assert {
             ".mkv",
             ".mp4",
@@ -452,6 +454,18 @@ class TestSourceSuffixes:
             ".vob",
             ".ogv",
             ".3gp",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".webp",
+            ".avif",
+            ".gif",
+            ".tif",
+            ".tiff",
+            ".bmp",
+            ".ppm",
+            ".pgm",
+            ".tga",
         } == SOURCE_SUFFIXES
 
     def test_every_shipped_profile_s_target_suffix_is_a_source_suffix(self):
@@ -473,6 +487,27 @@ class TestSourceSuffixes:
         covered by the phase-2/phase-3 suffixes above."""
         phase_4_suffixes = {".mpg", ".mpeg", ".ts", ".m2ts", ".mts", ".vob", ".ogv", ".3gp"}
         assert phase_4_suffixes <= SOURCE_SUFFIXES
+
+    def test_holds_the_phase_5_image_container_suffixes(self):
+        """Issue #33 (`spec-image-formats.md`): the twelve image container
+        suffixes ahead of the seven image profiles (`png`, `jpg`, `webp`, `avif`,
+        `gif`, `tiff`, `bmp`) that milestone still adds. None of the twelve was
+        already present in the set seeded by phases 2 through 4."""
+        phase_5_suffixes = {
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".webp",
+            ".avif",
+            ".gif",
+            ".tif",
+            ".tiff",
+            ".bmp",
+            ".ppm",
+            ".pgm",
+            ".tga",
+        }
+        assert phase_5_suffixes <= SOURCE_SUFFIXES
 
 
 class TestValueTypesAreFrozen:
