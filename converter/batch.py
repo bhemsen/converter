@@ -24,6 +24,9 @@ from pathlib import Path
 from tqdm import tqdm
 
 from converter import ffmpegtool
+
+# Aliased: run_batch's own `jobs` keyword (parallelism count) would otherwise
+# shadow the module name inside this file.
 from converter import jobs as engine
 from converter.ffmpegtool import ProbeError, Tools
 from converter.paths import ensure_directory

@@ -188,11 +188,27 @@ def describe_unsupported(profile: Profile, streams: Sequence[Stream]) -> tuple[s
     ``None`` means the source carries at least one stream type *profile* has a
     rule for -- that stream may still be dropped for shape or codec reasons, but
     that is a genuine ``failed``, not this (``docs/specs/spec-target-driven-cli.md``).
-    Otherwise returns one drop note per stream, reusing D1 of
+    ``None`` also for an *empty* stream list: that is the fingerprint of a probe
+    that could not find anything to work with -- typically a corrupt or
+    truncated source -- not positive evidence that the format holds nothing the
+    profile could use, so it stays a genuine ``failed`` with ffmpeg's stderr
+    rather than being reported as a silent, note-less ``unsupported``. Otherwise
+    returns one drop note per stream, reusing D1 of
     ``docs/design/stream-decision.md`` so the reporting stays identical to an
     ordinary unsupported-type drop. Derived entirely from the probe, never from
     ffmpeg's stderr (``docs/constitution.md``).
     """
-    if any(stream.codec_type in profile.rules for stream in streams):
+    if not streams or any(stream.codec_type in profile.rules for stream in streams):
         return None
     return tuple(_drop_note(stream, f"not supported by {profile.label}") for stream in streams)
+
+
+# Invariant this discriminator leans on, and does not itself check: a profile's
+# `last_resort` must never map a stream type it declares no rule for, or the
+# short-circuit in `batch._attempt_conversion` -- which reports `unsupported`
+# and never calls `retries()` -- would skip a rung that could have succeeded.
+# Both shipped profiles satisfy this by construction (MP4's last resort maps
+# only the video/audio types its own rules cover; WAV declares none at all),
+# the same way `docs/design/degradation-ladder.md` already asks
+# `partial_mapping` profiles to keep their rules and their cheap attempt in
+# agreement.

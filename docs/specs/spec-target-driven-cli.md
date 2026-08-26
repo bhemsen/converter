@@ -373,3 +373,11 @@ reusing the fixtures the phase-1 gate synthesises:
   inserting `unsupported` in the middle — existing tests and the vision's
   `0 converted, 0 failed` phrasing both check substrings, so appending keeps
   every one of them true unchanged instead of requiring a coordinated update.
+- 2026-08-26 (#14, review round 1): `jobs.describe_unsupported` returned a
+  non-`None` empty tuple for an *empty* probed-stream list, so a corrupt or
+  truncated source (a probe that succeeds but finds nothing) was reported as
+  `unsupported` with no notes and no error text — losing ffmpeg's stderr that
+  a plain `failed` used to carry, and quietly relabelling exactly the case this
+  spec's own mixed-tree write-up warns against. Fixed: an empty stream list now
+  returns `None` too, so the source falls through to the ordinary ladder and
+  ends up `failed` with its stderr kept, same as before this issue.

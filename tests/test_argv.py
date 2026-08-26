@@ -447,6 +447,14 @@ class TestUnsupportedDiscriminator:
 
         assert notes == ("attachment stream 0 (ttf) dropped: not supported by MP4",)
 
+    def test_an_empty_stream_list_is_not_reported_as_unsupported(self):
+        """An empty probe result is the fingerprint of a corrupt or truncated
+        source, not positive evidence the format holds nothing usable -- it
+        must fall through to a genuine ``failed`` with ffmpeg's stderr kept,
+        rather than a silent, note-less ``unsupported``."""
+        assert jobs.describe_unsupported(MP4, []) is None
+        assert jobs.describe_unsupported(WAV, []) is None
+
 
 class TestSuccessSideVerification:
     """`jobs.needs_verification` / `jobs.verify_success`: what the engine owes

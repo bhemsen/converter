@@ -339,15 +339,18 @@ class TestUnsupportedOutcome:
         assert result.notes == ("video stream 0 (h264) dropped: not supported by WAV",)
 
     def test_unsupported_does_not_climb_the_rest_of_the_ladder(self, tmp_path, fake_ffmpeg):
-        """Only the cheap attempt and one probe are spent -- further ffmpeg
-        attempts would only reconfirm what the probe already established."""
-        task = self._video_only_task(tmp_path)
+        """Only the cheap attempt and one probe are spent. WAV declares no
+        last-resort rung at all, so a video-only source proves nothing here --
+        MP4 does declare one, and an attachment-only source would let it
+        *succeed* if the short-circuit did not stop the ladder first."""
+        task = make_task(tmp_path)
         task.dst.parent.mkdir(parents=True)
-        fake_ffmpeg.exit_codes = [1, 0]  # a second call would succeed if it ran
-        fake_ffmpeg.streams = [Stream(0, "video", "h264")]
+        fake_ffmpeg.exit_codes = [1, 0]  # the last-resort rung would succeed if it ran
+        fake_ffmpeg.streams = [Stream(0, "attachment", "ttf")]
 
-        convert_one(WAV, task, TOOLS, overwrite=False)
+        result = convert_one(MP4, task, TOOLS, overwrite=False)
 
+        assert result.outcome is Outcome.UNSUPPORTED
         assert len(fake_ffmpeg.calls) == 1
 
     def test_unsupported_output_is_removed_like_a_failure(self, tmp_path, fake_ffmpeg):
@@ -400,6 +403,23 @@ class TestUnsupportedOutcome:
         assert (summary.converted, summary.unsupported, summary.failed) == (1, 1, 0)
         assert summary.total == 2
         assert summary.exit_code == 0
+
+    def test_a_probe_that_finds_no_streams_at_all_stays_a_genuine_failure(
+        self, tmp_path, fake_ffmpeg
+    ):
+        """A probe that succeeds but reports zero streams is what a corrupt or
+        truncated source looks like -- not evidence the format holds nothing
+        usable -- so it must not be quietly relabelled `unsupported` with no
+        notes and no error text (docs/specs/spec-target-driven-cli.md)."""
+        task = self._video_only_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        fake_ffmpeg.exit_codes = [1]
+        fake_ffmpeg.streams = []
+
+        result = convert_one(WAV, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.FAILED
+        assert "boom" in result.error
 
 
 class TestRunBatch:
