@@ -359,3 +359,28 @@ New-Item -ItemType Directory -Force in
   seven image profiles this milestone still adds, following the phase-3/phase-4
   precedent of widening the suffix set before its profiles land. None of the
   twelve was already present.
+- 2026-08-26: Issue #34 landed the image2 four — `png`, `jpg`, `tiff`, `bmp` —
+  exactly as this spec's decisions pin: cheap attempt forces the encoder,
+  `accept_options=flags("-c:v copy")`, `stream_limit=1` muxer-enforced (not
+  mapping-enforced), `fallback_name=None` for the three lossless targets and
+  `"mjpeg"` for `jpg`, and a `last_resort` that extracts the first frame with a
+  note. Re-verified against real ffmpeg 9.0: `flat.jpg --to png` produces a
+  genuine `codec_name=png` output rather than a mislabelled JPEG, and the
+  reverse holds for `flat.png --to jpg`; `alpha.png --to jpg` prints the
+  transparency standing note and drops to `pix_fmt=yuvj444p`, while `--to bmp`,
+  `--to png` and `--to tiff` keep `pix_fmt` alpha-bearing and print nothing;
+  `clip.mp4` (20 frames) into any of the four lands on the `last_resort` and
+  writes exactly one frame with the multi-frame note; a second run over an
+  already-converted tree reports `0 converted`, exit 0.
+- 2026-08-26: PR review on issue #34 found the `last_resort` naming only the
+  frame loss: an audio-bearing video into `--to png/jpg/tiff/bmp` dropped its
+  audio track (and, for `jpg`, its transparency) in complete silence, because
+  `-map 0:v:0` is explicit-index and -- unlike the selective rung -- cannot
+  name a per-stream drop itself, the same shape `mp3`'s and `flac`'s
+  index-named last resort already carries a standing note for. Fixed by
+  extending each `last_resort`'s notes with what the explicit index cannot
+  reach, and by repeating `jpg`'s transparency note there too, since a source
+  with alpha that also needs the last resort never passes through the cheap
+  attempt whose standing note would otherwise have named it. Re-verified
+  against real ffmpeg 9.0 with an h264+aac source: the audio-drop note now
+  prints where it previously printed nothing.
