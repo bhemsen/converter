@@ -70,10 +70,16 @@ orchestrators (`docs/workflow.md`).
   that mapping could not carry is named (`docs/constitution.md`, narrowed by
   issue #18). Every cheap attempt in the table below selects by type or by
   index, so every profile in this phase is partial and must declare it --
-  together with a rule for each stream type it maps, per the invariant in
-  `docs/design/degradation-ladder.md`. `mkv`'s `-map 0:t?` is the case to
-  watch: it carries attachments, so the profile owes an `attachment` rule or
-  the fonts it keeps get reported as dropped.
+  together with a rule for each stream type it can *successfully carry*, per
+  the load-bearing form of the invariant in `docs/design/degradation-ladder.md`
+  (issue #39). `mkv` and `mov` both map `-map 0:t?`, and the two resolve
+  oppositely: `mkv`'s muxer holds an attachment, so it carries fonts on the
+  success side and the profile owes an `attachment` rule, or the fonts it
+  keeps get reported as dropped. `mov`'s muxer rejects any mapped attachment
+  outright, so mapping it there only ever forces the cheap attempt to fail
+  into the ladder when the source has one -- the type never reaches the
+  success side, so `mov` needs no `attachment` rule to keep the verification
+  honest.
 - Never report success for a conversion that silently dropped something.
 - The test suite keeps passing with no ffmpeg installed.
 
@@ -256,3 +262,15 @@ New-Item -ItemType Directory -Force in
 - 2026-08-26: `mp4`'s standing-note hole is left open deliberately, following the
   phase-3 gate's `wav` precedent — the two holes are better closed together in
   one later phase than piecemeal.
+- 2026-08-26 (issue #39): The cheap-attempt invariant in
+  `docs/design/degradation-ladder.md` ("a rule for every stream type its cheap
+  attempt maps") was too broad: `mov` maps `attachment` via `-map 0:t?`
+  deliberately to force a failure into the ladder, never to carry one on the
+  success side, so a mov-shaped profile has no `attachment` rule and would
+  fail that reading. Resolved by narrowing the invariant to the types the
+  cheap attempt can *successfully carry* -- a type mapped only to force a
+  failure never reaches the success-side check -- rather than by adding a
+  drop-only `attachment` `StreamRule` to `mov`. Both docs now name `mov`
+  alongside `mkv` as the pair that distinguishes the two readings, and
+  `tests/test_profiles.py` proves the narrowed form with a mov-shaped profile
+  in its test corpus.
