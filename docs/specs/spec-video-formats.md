@@ -162,7 +162,7 @@ existing entry needs no companion.)
 
 ## Tracking
 
-- Milestone: video-formats (created at the spec-acceptance gate)
+- Milestone: [video-formats](https://github.com/bhemsen/converter/milestone/4) (#4)
 - Issues: created from this spec once it is merged (one per implementable step)
 
 ## Verification
