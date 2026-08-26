@@ -7,7 +7,7 @@ import pytest
 
 from converter import ffmpegtool, jobs
 from converter.ffmpegtool import Stream, build_argv, cli_path
-from converter.profiles import BMP, FLAC, JPG, MKV, MOV, MP3, MP4, PNG, TIFF, WAV
+from converter.profiles import AVIF, BMP, FLAC, GIF, JPG, MKV, MOV, MP3, MP4, PNG, TIFF, WAV, WEBP
 
 
 def options_of(argv: list[str], src: str, dst: str) -> list[str]:
@@ -1499,6 +1499,317 @@ class TestImageProfileArgvPinning:
         assert last_resort.notes == (
             "only the first frame was kept; BMP cannot hold more than one image",
             "non-video streams, and any video stream beyond the first, are not carried into BMP",
+        )
+
+
+class TestAnimatedProfileArgvPinning:
+    """Verification (spec-image-formats.md): the full argv `gif`, `webp` and
+    `avif` build, pinned byte-for-byte, for a copyable and a non-copyable
+    input each. `gif` and `avif` force their encoder on the cheap attempt, the
+    same exception png/jpg/tiff/bmp carry; `webp` alone keeps a real copy
+    there, so its copyable case is reached on the cheap attempt itself rather
+    than only on the selective rung. All three reach their selective rung the
+    same way png/jpg/tiff/bmp do: a second video stream trips the
+    muxer-enforced `stream_limit=1` and forces the cheap attempt to fail."""
+
+    def test_gif_cheap_attempt_forces_the_encoder(self):
+        argv = build_argv("ffmpeg", "in.png", jobs.first_attempt(GIF).options, "out.gif")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.png",
+            "-map",
+            "0:v?",
+            "-c:v",
+            "gif",
+            "out.gif",
+        ]
+
+    def test_gif_copyable_source_on_the_selective_rung(self):
+        streams = [Stream(0, "video", "gif"), Stream(1, "video", "h264")]
+        selective = jobs.retries(GIF, streams)[0]
+
+        argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.gif")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:0",
+            "-c:v",
+            "copy",
+            "out.gif",
+        ]
+        assert selective.notes == ("video stream 1 (h264) dropped: GIF holds 1 video stream",)
+
+    def test_gif_non_copyable_source_on_the_selective_rung(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "video", "h264")]
+        selective = jobs.retries(GIF, streams)[0]
+
+        argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.gif")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:0",
+            "-c:v",
+            "gif",
+            "out.gif",
+        ]
+        assert selective.notes == (
+            "video stream 0 (h264) re-encoded to gif",
+            "video stream 1 (h264) dropped: GIF holds 1 video stream",
+        )
+
+    def test_gif_last_resort_argv(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "video", "h264")]
+        last_resort = jobs.retries(GIF, streams)[-1]
+
+        argv = build_argv("ffmpeg", "in.mkv", last_resort.options, "out.gif")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:v:0",
+            "-c:v",
+            "gif",
+            "out.gif",
+        ]
+        assert last_resort.notes == (
+            "transparency is not carried by GIF",
+            "the image was re-quantised to GIF's 256-colour palette",
+            "non-video streams, and any video stream beyond the first, are not carried into GIF",
+        )
+
+    def test_webp_cheap_attempt_keeps_a_real_copy(self):
+        argv = build_argv("ffmpeg", "in.webp", jobs.first_attempt(WEBP).options, "out.webp")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.webp",
+            "-map",
+            "0:v?",
+            "-c",
+            "copy",
+            "out.webp",
+        ]
+
+    def test_webp_copyable_source_on_the_selective_rung(self):
+        streams = [Stream(0, "video", "webp"), Stream(1, "video", "h264")]
+        selective = jobs.retries(WEBP, streams)[0]
+
+        argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.webp")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:0",
+            "-c:v",
+            "copy",
+            "out.webp",
+        ]
+        assert selective.notes == ("video stream 1 (h264) dropped: WEBP holds 1 video stream",)
+
+    def test_webp_non_copyable_source_on_the_selective_rung(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "video", "h264")]
+        selective = jobs.retries(WEBP, streams)[0]
+
+        argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.webp")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:0",
+            "-c:v",
+            "libwebp",
+            "-quality:v",
+            "80",
+            "out.webp",
+        ]
+        assert selective.notes == (
+            "video stream 0 (h264) re-encoded to webp",
+            "video stream 1 (h264) dropped: WEBP holds 1 video stream",
+        )
+
+    def test_webp_last_resort_argv(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "video", "h264")]
+        last_resort = jobs.retries(WEBP, streams)[-1]
+
+        argv = build_argv("ffmpeg", "in.mkv", last_resort.options, "out.webp")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:v:0",
+            "-c:v",
+            "libwebp",
+            "-quality:v",
+            "80",
+            "out.webp",
+        ]
+        assert last_resort.notes == (
+            "the image was re-encoded to WebP (lossy)",
+            "non-video streams, and any video stream beyond the first, are not carried into WEBP",
+        )
+
+    def test_avif_cheap_attempt_forces_the_encoder(self):
+        argv = build_argv("ffmpeg", "in.png", jobs.first_attempt(AVIF).options, "out.avif")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.png",
+            "-map",
+            "0:v?",
+            "-c:v",
+            "libaom-av1",
+            "-crf:v",
+            "30",
+            "-still-picture",
+            "1",
+            "out.avif",
+        ]
+
+    def test_avif_copyable_source_on_the_selective_rung(self):
+        streams = [Stream(0, "video", "av1"), Stream(1, "video", "h264")]
+        selective = jobs.retries(AVIF, streams)[0]
+
+        argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.avif")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:0",
+            "-c:v",
+            "copy",
+            "out.avif",
+        ]
+        assert selective.notes == ("video stream 1 (h264) dropped: AVIF holds 1 video stream",)
+
+    def test_avif_non_copyable_source_on_the_selective_rung(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "video", "h264")]
+        selective = jobs.retries(AVIF, streams)[0]
+
+        argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.avif")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:0",
+            "-c:v",
+            "libaom-av1",
+            "-crf:v",
+            "30",
+            "-still-picture",
+            "1",
+            "out.avif",
+        ]
+        assert selective.notes == (
+            "video stream 0 (h264) re-encoded to av1",
+            "video stream 1 (h264) dropped: AVIF holds 1 video stream",
+        )
+
+    def test_avif_last_resort_argv(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "video", "h264")]
+        last_resort = jobs.retries(AVIF, streams)[-1]
+
+        argv = build_argv("ffmpeg", "in.mkv", last_resort.options, "out.avif")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:v:0",
+            "-c:v",
+            "libaom-av1",
+            "-crf",
+            "30",
+            "-still-picture",
+            "1",
+            "out.avif",
+        ]
+        assert last_resort.notes == (
+            "transparency is not carried by AVIF",
+            "a multi-frame source is reduced to a single frame",
+            "non-video streams, and any video stream beyond the first, are not carried into AVIF",
         )
 
 
