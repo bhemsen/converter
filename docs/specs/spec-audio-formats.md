@@ -469,3 +469,22 @@ New-Item -ItemType Directory -Force art
   `TestSourceSuffixes` was updated in the same PR to pin the new exact set --
   its prior exact-equality assertion would otherwise fail the moment the set
   grew, regardless of who touches it next.
+- 2026-08-26 (#21): `mp3` and `flac` landed exactly as the fixed table and the
+  muxer facts above pin them -- blind `-map 0:a? -c:a copy`, `stream_limit=1`
+  backed by the muxer rather than the mapping, `flac`'s `fallback_name=None`,
+  and each declaring the standing non-audio note issue #21's own acceptance
+  carried forward from the gate's first decision. Measured against ffmpeg 9.0:
+  a stream copy of an already-mp3 file is packet-identical; `--to flac` from a
+  PCM `.wav` reaches the selective rung, not the last resort, and its re-encode
+  note is silent as designed; `--to mp3` on an mp3-plus-`attached_pic` source
+  now names the dropped picture stream on the *success* path, because issue
+  #18's `partial_mapping` verification (declared `True` on both profiles)
+  already covers what the superseded part of the cover-art decision above
+  worried was still an open hole -- the standing note and that precise
+  per-stream note print together for such a file, exactly the doubling-up the
+  superseded note flagged and issue #21's acceptance chose to keep anyway.
+  `tests/test_profiles.py`'s `MP3_SHAPED` stand-in was retired in the same PR:
+  the real `MP3` and `FLAC` profiles now prove the muxer-enforced
+  `stream_limit` exemption directly, so `SHIPPED` and `INVARIANT_CASES` carry
+  them instead of a shape-alike fixture describing a profile that no longer
+  needs standing in for.
