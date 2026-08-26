@@ -353,3 +353,9 @@ New-Item -ItemType Directory -Force in
   `gif` and `avif` force their encoder, so every standing note sits on a rung that
   always wins — `gif` pays nothing for it, `avif` pays a generation loss and seven
   seconds per already-AVIF file, accepted rather than leaving its losses silent.
+- 2026-08-26: Issue #33 widened `SOURCE_SUFFIXES` with the twelve image
+  containers this phase's `In scope` names — `.png`, `.jpg`, `.jpeg`, `.webp`,
+  `.avif`, `.gif`, `.tif`, `.tiff`, `.bmp`, `.ppm`, `.pgm`, `.tga` — ahead of the
+  seven image profiles this milestone still adds, following the phase-3/phase-4
+  precedent of widening the suffix set before its profiles land. None of the
+  twelve was already present.
