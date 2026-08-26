@@ -7,7 +7,7 @@ import pytest
 
 from converter import ffmpegtool, jobs
 from converter.ffmpegtool import Stream, build_argv, cli_path
-from converter.profiles import FLAC, MKV, MP3, MP4, WAV
+from converter.profiles import FLAC, MKV, MOV, MP3, MP4, WAV
 
 
 def options_of(argv: list[str], src: str, dst: str) -> list[str]:
@@ -593,6 +593,176 @@ class TestMkvDegradationNotes:
         )
 
 
+class TestMovRemux:
+    def test_maps_every_stream_type_including_attachments(self):
+        """`0:t?` is mapped deliberately so an attachment-bearing source fails
+        this attempt (Acceptance, spec-video-formats.md)."""
+        options = jobs.first_attempt(MOV).options
+
+        assert options == (
+            "-map",
+            "0:v?",
+            "-map",
+            "0:a?",
+            "-map",
+            "0:s?",
+            "-map",
+            "0:t?",
+            "-c",
+            "copy",
+            "-c:s",
+            "mov_text",
+            "-movflags",
+            "+faststart",
+        )
+
+    def test_does_not_use_bare_map_zero(self):
+        options = list(jobs.first_attempt(MOV).options)
+        mapped = [options[i + 1] for i, flag in enumerate(options) if flag == "-map"]
+
+        assert "0" not in mapped
+        assert mapped == ["0:v?", "0:a?", "0:s?", "0:t?"]
+
+    def test_target_suffix(self):
+        assert MOV.target_suffix == ".mov"
+
+
+class TestMovRetries:
+    def test_ladder_ends_with_a_full_reencode(self):
+        attempts = jobs.retries(MOV, [Stream(0, "video", "h264")])
+
+        assert [a.label for a in attempts] == ["selective", "re-encode"]
+
+    def test_selective_copies_compatible_streams(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "audio", "aac")]
+
+        selective = jobs.retries(MOV, streams)[0]
+
+        assert selective.options[:8] == (
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:v:0",
+            "copy",
+            "-c:a:0",
+            "copy",
+        )
+        assert selective.notes == ()
+
+    def test_selective_reencodes_vp9_video_mov_cannot_hold(self):
+        """The likeliest copy-paste mistake in the phase: MOV rejects vp9
+        (and av1, and vp8) unlike MP4 (Acceptance, spec-video-formats.md)."""
+        streams = [Stream(0, "video", "vp9"), Stream(1, "audio", "aac")]
+
+        selective = jobs.retries(MOV, streams)[0]
+
+        assert "-c:v:0" in selective.options
+        assert selective.options[selective.options.index("-c:v:0") + 1] == "libx264"
+        assert selective.notes == ("video stream 0 (vp9) re-encoded to h264",)
+
+    def test_selective_reencodes_audio_mov_cannot_hold(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "audio", "opus")]
+
+        selective = jobs.retries(MOV, streams)[0]
+
+        assert "-c:a:0" in selective.options
+        assert selective.options[selective.options.index("-c:a:0") + 1] == "aac"
+        assert selective.notes == ("audio stream 1 (opus) re-encoded to aac",)
+
+    def test_selective_transcodes_text_subtitle_to_mov_text(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "subtitle", "subrip")]
+
+        selective = jobs.retries(MOV, streams)[0]
+
+        assert "-c:s:0" in selective.options
+        assert selective.options[selective.options.index("-c:s:0") + 1] == "mov_text"
+        assert selective.notes == ()
+
+    def test_selective_drops_bitmap_subtitles_with_a_note(self):
+        streams = [
+            Stream(0, "video", "h264"),
+            Stream(1, "audio", "aac"),
+            Stream(2, "subtitle", "hdmv_pgs_subtitle"),
+        ]
+
+        selective = jobs.retries(MOV, streams)[0]
+
+        assert "0:2" not in selective.options
+        assert selective.notes == (
+            "subtitle stream 2 (hdmv_pgs_subtitle) dropped: "
+            "bitmap subtitles cannot be stored in MOV",
+        )
+
+    def test_selective_drops_an_attachment_via_the_ladder_with_a_note(self):
+        """The point of the phase: MOV has no `attachment` rule, so an
+        attachment that reached the ladder (because the cheap attempt's
+        mapped `0:t?` made MOV reject it outright) is dropped here with a
+        real per-stream note instead of a blanket one."""
+        streams = [Stream(0, "video", "h264"), Stream(1, "attachment", "unknown")]
+
+        selective = jobs.retries(MOV, streams)[0]
+
+        assert "0:1" not in selective.options
+        assert selective.notes == ("attachment stream 1 (unknown) dropped: not supported by MOV",)
+
+    def test_reencode_states_what_it_sacrifices(self):
+        reencode = jobs.retries(MOV, [])[-1]
+
+        assert "libx264" in reencode.options
+        assert "aac" in reencode.options
+        assert reencode.notes
+        assert any("lossy" in note for note in reencode.notes)
+
+
+class TestMovDegradationNotes:
+    """Verification (spec-video-formats): one test per degradation branch this
+    profile introduces, each pinning the exact note."""
+
+    def test_video_reencode_note_is_exact(self):
+        streams = [Stream(0, "video", "vp9"), Stream(1, "audio", "aac")]
+
+        selective = jobs.retries(MOV, streams)[0]
+
+        assert selective.notes == ("video stream 0 (vp9) re-encoded to h264",)
+
+    def test_audio_reencode_note_is_exact(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "audio", "opus")]
+
+        selective = jobs.retries(MOV, streams)[0]
+
+        assert selective.notes == ("audio stream 1 (opus) re-encoded to aac",)
+
+    def test_bitmap_subtitle_drop_note_is_exact(self):
+        streams = [
+            Stream(0, "video", "h264"),
+            Stream(1, "audio", "aac"),
+            Stream(2, "subtitle", "hdmv_pgs_subtitle"),
+        ]
+
+        selective = jobs.retries(MOV, streams)[0]
+
+        assert selective.notes == (
+            "subtitle stream 2 (hdmv_pgs_subtitle) dropped: "
+            "bitmap subtitles cannot be stored in MOV",
+        )
+
+    def test_attachment_drop_note_is_exact(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "attachment", "unknown")]
+
+        selective = jobs.retries(MOV, streams)[0]
+
+        assert selective.notes == ("attachment stream 1 (unknown) dropped: not supported by MOV",)
+
+    def test_last_resort_notes_are_pinned(self):
+        reencode = jobs.retries(MOV, [])[-1]
+
+        assert reencode.notes == (
+            "re-encoded to h264/aac (lossy); subtitles and extra video streams dropped",
+            "10-bit or HDR sources are reduced to 8-bit yuv420p for player compatibility",
+        )
+
+
 class TestProfileArgvPinning:
     """Verification: the full argv each profile builds, pinned byte-for-byte
     (docs/specs/spec-profile-registry.md)."""
@@ -730,6 +900,66 @@ class TestProfileArgvPinning:
             "-b:a:0",
             "192k",
             "out.mkv",
+        ]
+
+    def test_mov_copyable_source(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "audio", "aac")]
+        selective = jobs.retries(MOV, streams)[0]
+
+        argv = build_argv("ffmpeg", "in.mts", selective.options, "out.mov")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mts",
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:v:0",
+            "copy",
+            "-c:a:0",
+            "copy",
+            "-movflags",
+            "+faststart",
+            "out.mov",
+        ]
+
+    def test_mov_non_copyable_source(self):
+        streams = [Stream(0, "video", "vp9"), Stream(1, "audio", "opus")]
+        selective = jobs.retries(MOV, streams)[0]
+
+        argv = build_argv("ffmpeg", "in.mts", selective.options, "out.mov")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mts",
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:v:0",
+            "libx264",
+            "-crf:v:0",
+            "18",
+            "-c:a:0",
+            "aac",
+            "-b:a:0",
+            "192k",
+            "-movflags",
+            "+faststart",
+            "out.mov",
         ]
 
     def test_wav_two_audio_source(self):
@@ -924,6 +1154,7 @@ class TestSuccessSideVerification:
         assert jobs.needs_verification(MP4) is True
         assert jobs.needs_verification(WAV) is True
         assert jobs.needs_verification(MKV) is True
+        assert jobs.needs_verification(MOV) is True
 
     def test_an_exhaustive_profile_does_not(self):
         """`False` is what keeps the probe off an exhaustive profile's happy path."""
@@ -941,7 +1172,7 @@ class TestSuccessSideVerification:
 
         assert notes == ("audio stream 1 (opus) dropped: WAV holds 1 audio stream",)
 
-    @pytest.mark.parametrize("profile", [MP4, WAV, MKV], ids=lambda profile: profile.label)
+    @pytest.mark.parametrize("profile", [MP4, WAV, MKV, MOV], ids=lambda profile: profile.label)
     def test_no_profile_invents_a_loss_for_a_source_it_fully_maps(self, profile):
         """One stream of each type the profile declares a rule for, and never more
         than one, so nothing in this source can have been left behind.
@@ -949,9 +1180,9 @@ class TestSuccessSideVerification:
         Built from ``profile.rules`` rather than the cheap attempt's own
         ``mapped_types`` (`tests/test_profiles.py`), which is sound only because
         ``TestPartialMappingInvariant`` there pins the two as equal for every
-        shipped profile -- if that equality ever broke for `MP4`, `WAV` or `MKV`,
-        this source would silently stop matching what the cheap attempt actually
-        maps.
+        shipped profile (modulo `MOV`'s force-failure exemption for
+        `attachment`) -- if that equality ever broke, this source would
+        silently stop matching what the cheap attempt actually maps.
         """
         streams = [Stream(i, kind, "whatever") for i, kind in enumerate(profile.rules)]
 

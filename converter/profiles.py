@@ -327,6 +327,87 @@ MKV = Profile(
     ),
 )
 
+#: Codecs a MOV container accepts as a stream copy for video, measured against
+#: ffmpeg 9.0. Narrower than MP4's mask in *two* codecs -- vp9 and av1, both
+#: rejected by MOV's muxer ("vp9 only supported in MP4", "av1 only supported
+#: in MP4 and AVIF") -- and also rejects vp8 ("VP8 muxing is currently not
+#: supported"). Adds ffv1 and theora, which MP4 does not carry either, so this
+#: is its own curated set rather than MP4_VIDEO_CODECS with an entry struck.
+MOV_VIDEO_CODECS = frozenset(
+    {"h264", "hevc", "prores", "mpeg4", "mpeg2video", "mjpeg", "ffv1", "theora"}
+)
+#: Codecs a MOV container accepts as a stream copy for audio, measured the same
+#: way -- adds dts and pcm_s16le (tags dtsc, sowt) over MP4's mask.
+MOV_AUDIO_CODECS = frozenset({"aac", "alac", "mp3", "ac3", "eac3", "dts", "pcm_s16le"})
+
+MOV = Profile(
+    label="MOV",
+    name="mov",
+    description="Video: copies compatible streams, re-encodes the rest to h264/aac; no attachments",
+    target_suffix=".mov",
+    container_options=FASTSTART,
+    # Deliberately maps "0:t?" even though MOV holds no attachment rule below:
+    # MOV's muxer rejects any mapped attachment outright ("Could not find tag
+    # for codec ttf", measured), so an attachment-bearing source fails this
+    # cheap attempt and lands on the ladder's failure side instead, where the
+    # missing rule drops it with a real per-stream note -- better than a
+    # blanket standing note for the one case MOV can make loud. Still not
+    # "-map 0": that would also select data and timecode streams, which no
+    # "v/a/s/t" map -- MOV's included -- carries at all (measured).
+    cheap_attempt=Attempt(
+        label="remux",
+        options=flags("-map 0:v? -map 0:a? -map 0:s? -map 0:t? -c copy -c:s mov_text"),
+        notes=("data and timecode streams are not carried into MOV",),
+    ),
+    explicit_streams=False,
+    # The blind "?" selectors carry every video, audio and subtitle stream
+    # MOV's muxer can hold, but never a data or timecode one, and an attachment
+    # only ever forces the cheap attempt to fail -- exactly the standing note's
+    # claim, verified once per successful cheap attempt rather than assumed.
+    partial_mapping=True,
+    rules={
+        "video": StreamRule(
+            copy_mask=MOV_VIDEO_CODECS,
+            accept_options=flags("-c:v:{n} copy"),
+            fallback_options=flags("-c:v:{n} libx264 -crf:v:{n} 18"),
+            fallback_name="h264",
+        ),
+        "audio": StreamRule(
+            copy_mask=MOV_AUDIO_CODECS,
+            accept_options=flags("-c:a:{n} copy"),
+            fallback_options=flags("-c:a:{n} aac -b:a:{n} 192k"),
+            fallback_name="aac",
+        ),
+        "subtitle": StreamRule(
+            copy_mask=TEXT_SUBTITLE_CODECS,
+            # A cheap in-kind transcode, not a literal copy: MOV only holds
+            # text subtitles as its own mov_text, same as MP4.
+            accept_options=flags("-c:s:{n} mov_text"),
+            drop_reason="bitmap subtitles cannot be stored in MOV",
+        ),
+        # No "attachment" rule: MOV's muxer rejects any mapped attachment, so
+        # mapping "0:t?" only ever forces this cheap attempt to fail when the
+        # source has one. The type never reaches the success side, so it is
+        # exempted from the partial_mapping equality (FORCED_FAILURE_TYPES,
+        # docs/design/degradation-ladder.md, issue #39) rather than needing a
+        # drop-only rule here. An attachment-bearing source falls through to
+        # the selective rung, where the missing rule drops it with a real
+        # per-stream note via _structural_drop (converter/jobs.py).
+    },
+    last_resort=Attempt(
+        label="re-encode",
+        options=flags(
+            "-map 0:v:0? -map 0:a? "
+            "-c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p "
+            "-c:a aac -b:a 192k"
+        ),
+        notes=(
+            "re-encoded to h264/aac (lossy); subtitles and extra video streams dropped",
+            "10-bit or HDR sources are reduced to 8-bit yuv420p for player compatibility",
+        ),
+    ),
+)
+
 MP3 = Profile(
     label="MP3",
     name="mp3",
@@ -418,7 +499,9 @@ FLAC = Profile(
 
 #: Target name -> profile. Built from each profile's own ``name`` rather than
 #: repeating it as a literal key, so the two can never drift apart.
-PROFILES: dict[str, Profile] = {profile.name: profile for profile in (MP4, WAV, MKV, MP3, FLAC)}
+PROFILES: dict[str, Profile] = {
+    profile.name: profile for profile in (MP4, WAV, MKV, MP3, FLAC, MOV)
+}
 
 #: The curated set of suffixes discovery walks (`docs/design/source-selection.md`):
 #: a file is a candidate only if its suffix is in this set, never discovered from
