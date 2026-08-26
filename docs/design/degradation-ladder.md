@@ -91,30 +91,47 @@ flowchart TD
     it should: `_structural_drop` (`converter/jobs.py`) finds the rule, sees no
     stream-limit trip, and treats the stream as accepted, even though the cheap
     attempt never mapped that type at all — a stream that really was dropped
-    produces no note. A cover-art profile of the shape `docs/specs/spec-audio-formats.md`
-    once contemplated — an audio-only cheap attempt carrying a `video` rule —
-    is exactly this: it silently drops the artwork (issue #18's bug class,
-    reintroduced through the design contract). This is why the clause once here
-    admitting a `stream_limit` on "a type that does not map at all" is gone —
-    such a rule cannot exist at all once the equality holds, so there was
-    nothing left for that clause to permit.
+    produces no note. A hypothetical audio profile that maps audio only and
+    still carries a `video` rule for cover art — the motivating case issue #40
+    was filed against — is exactly this: it would silently drop the artwork
+    (issue #18's bug class, reintroduced through the design contract). No
+    shipped or planned profile is shaped that way today — `spec-audio-formats.md`
+    resolved the opposite, that no audio profile declares a video rule at all,
+    precisely to avoid this — but the contract has to forbid the shape outright
+    rather than rely on every future profile happening to avoid it by
+    discipline. This is why the clause once here admitting a `stream_limit` on
+    "a type that does not map at all" is gone — such a rule cannot exist at all
+    once the equality holds, so there was nothing left for that clause to
+    permit.
 
   `stream_limit` adds one more constraint on top of the equality: **no
-  `stream_limit` on a type its cheap attempt selects blindly.** A blind
-  `-map 0:a?` maps *every* audio stream, so a limit the mapping does not
-  enforce would have the verification report surplus streams the output does
-  contain. A limit belongs only to a type the cheap attempt names by index
-  (WAV's `-map 0:a:0`), and matches the count of indices actually named — one
-  index named, one stream, exactly WAV's `stream_limit=1`.
+  `stream_limit` on a type its cheap attempt selects blindly, unless the
+  container's own muxer enforces that same limit and rejects a surplus
+  outright.** A blind `-map 0:a?` maps *every* audio stream, so a limit the
+  mapping does not enforce would normally have the verification report
+  surplus streams the output does contain. The one exception mirrors the
+  force-failure exemption above rather than adding a new mechanism: `mp3` and
+  `flac` (`docs/specs/spec-audio-formats.md`) both map audio blindly yet
+  declare `stream_limit=1`, because their muxers reject a second audio stream
+  outright — measured, both exit non-zero — so a source that would trip the
+  limit never reaches the success side at all; it fails the cheap attempt and
+  lands on the failure side, where the declared limit drives the selective
+  rung's own note instead. Outside that exception, a limit belongs to a type
+  the cheap attempt names by index (WAV's `-map 0:a:0`), and matches the count
+  of indices actually named — one index named, one stream, exactly WAV's
+  `stream_limit=1`.
 
   The two shipped profiles satisfy the equality by construction — MP4's
   selectors match its three rules exactly and it declares no limit, WAV names
   one audio index and limits audio to 1 — and `tests/test_profiles.py` checks
   it per profile rather than leaving it to review. A mov-shaped profile in that
-  same test corpus proves the exemption specifically: it maps `attachment` with
-  no rule for it and still passes, because the type is exempted on both sides
-  as force-failure only, not because either direction of the check was
-  skipped.
+  same test corpus proves the force-failure exemption: it maps `attachment`
+  with no rule for it and still passes, because the type is exempted on both
+  sides as force-failure only, not because either direction of the check was
+  skipped. An mp3-shaped profile proves the muxer-enforced `stream_limit`
+  exemption the same way: it maps audio blindly and still carries
+  `stream_limit=1`, because the mp3 muxer — not the mapping — is what turns a
+  second audio stream into a failure.
 - **Cheapest first.** Rung 1 is whatever the profile declares as its cheap attempt:
   a *blind* stream copy for a container that can hold the source codecs
   (`-map 0:v? -map 0:a? ...`), or a *stream-explicit* selection where it cannot

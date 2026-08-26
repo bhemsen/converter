@@ -278,21 +278,41 @@ New-Item -ItemType Directory -Force in
   a rule for a type the cheap attempt does not map (modulo the force-failure
   exemption) was still admitted, and `degradation-ladder.md` even endorsed it
   ("a limit belongs to a type ... or does not map at all"). That is issue
-  #18's bug class reintroduced: an audio-only cheap attempt carrying a
-  `video` rule for cover art -- the shape this milestone's own
-  `spec-audio-formats.md` once contemplated -- would pass both existing
-  checks and silently drop the artwork, because `_structural_drop`
-  (`converter/jobs.py`) finds the rule, sees no stream-limit trip, and treats
-  the stream as accepted. Resolved by stating the invariant as the equality
-  its justification already relied on, `set(profile.rules) ==
+  #18's bug class reintroduced: a hypothetical audio-only cheap attempt
+  carrying a `video` rule for cover art -- the motivating case this issue was
+  filed against -- would pass both existing checks and silently drop the
+  artwork, because `_structural_drop` (`converter/jobs.py`) finds the rule,
+  sees no stream-limit trip, and treats the stream as accepted. No shipped or
+  planned profile is actually shaped that way -- phase 3's
+  `spec-audio-formats.md` resolved the opposite, that no audio profile
+  declares a video rule at all -- but the contract had to forbid the shape
+  outright rather than rely on every future profile avoiding it by
+  discipline. Resolved by stating the invariant as the equality its
+  justification already relied on, `set(profile.rules) ==
   set(mapped_types(profile))` modulo #39's exemption, and striking the "or
   does not map at all" clause -- a `stream_limit` on a type absent from the
   mapping cannot arise once the equality holds, so nothing was left for that
   clause to permit. `tests/test_profiles.py` adds the mirrored assertion
   (`set(profile.rules) <= set(mapped_types(profile))`) and an index-count
-  check for `stream_limit`; `mapped_types` itself now asserts it recognised
-  at least one selector, so a form it cannot read (`-map 0:0`, `-map -0:s`)
-  fails loudly instead of returning `{}` and passing every check vacuously.
+  check for `stream_limit`; `mapped_types` itself now asserts every `-map`
+  selector it sees is one it recognises, so a form it cannot read
+  (`-map 0:0`, `-map -0:s`) fails loudly instead of being skipped and passing
+  every check vacuously.
+
+  Review surfaced a second, real collision while checking this: phase 3's
+  `mp3` and `flac` map audio *blindly* (`-map 0:a?`) yet declare
+  `stream_limit=1`, because their muxers reject a second audio stream outright
+  (measured) -- exactly the shape the plain "no `stream_limit` on a blindly
+  mapped type" rule would reject once those profiles are implemented. Not a
+  gap the equality introduced, but one this PR's own tightening would have
+  shipped as newly-false documentation against an already-merged spec.
+  Resolved the same way as the rule-1 exemption: `degradation-ladder.md` now
+  states a `stream_limit` on a blindly-mapped type is legitimate exactly when
+  the container's own muxer enforces that limit and rejects a surplus
+  outright, and `tests/test_profiles.py` adds an `mp3`-shaped profile
+  (`MP3_SHAPED`/`MUXER_ENFORCED_LIMIT_TYPES`) proving it the way `MOV_SHAPED`
+  proves the rule-1 exemption.
+
   No shipped profile was affected -- MP4 and WAV both already satisfy the
   equality -- so this closes a hole in the contract before phases 3-5 write
   target profiles against it, not a live bug.
