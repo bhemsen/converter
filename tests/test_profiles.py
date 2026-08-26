@@ -4,6 +4,7 @@ import ast
 import dataclasses
 import inspect
 import itertools
+import re
 
 import pytest
 
@@ -1500,6 +1501,30 @@ class TestAvifProfile:
         assert AVIF.last_resort is not None
         assert "transparency is not carried by AVIF" in AVIF.last_resort.notes
         assert "a multi-frame source is reduced to a single frame" in AVIF.last_resort.notes
+
+
+@pytest.mark.parametrize("profile", PROFILES.values(), ids=lambda profile: profile.label)
+class TestNoExifOrIccPromiseInDescription:
+    """Guard rail for issue #36, registry-wide rather than image-only:
+    `docs/vision.md`'s Non-goals list "EXIF/ICC preservation" -- ffmpeg
+    strips metadata by default, and PNG cannot carry EXIF at all by
+    construction, so no profile's user-facing `description` (the text
+    `--list-formats` prints and `README.md` mirrors byte-for-byte,
+    `TestListFormats.test_readme_format_list_matches_the_command_byte_for_byte`
+    in `tests/test_cli.py`) may claim otherwise.
+
+    Deliberately scoped to `description` alone, not a rung's notes: a note
+    exists to name a *loss* (`Attempt.notes`'s own docstring), so a future
+    "EXIF metadata is not carried" note would be the honest disclosure
+    `docs/vision.md`'s loss-accounting goal asks for, not the promise this
+    non-goal forbids. Scanning notes too would fail exactly the text this
+    project wants to see. Nothing in the registry mentions either word
+    today, image or otherwise.
+    """
+
+    def test_description_does_not_mention_exif_or_icc(self, profile):
+        assert not re.search(r"\bexif\b", profile.description, re.IGNORECASE)
+        assert not re.search(r"\bicc\b", profile.description, re.IGNORECASE)
 
 
 class TestRegistry:
