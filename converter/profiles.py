@@ -190,9 +190,138 @@ WAV = Profile(
     },
 )
 
+#: Phase 5 (`docs/specs/spec-image-formats.md`): the image2 muxer -- the one
+#: behind PNG, JPEG, TIFF and BMP -- accepts *any* video codec under
+#: ``-c copy``, so a stream copy would ship a mislabelled file (measured:
+#: ``flat.jpg -c copy out.png`` exits 0 and writes a JPEG named ``.png``).
+#: Every profile below forces its encoder in the cheap attempt instead, and the
+#: copy mask -- and the copy branch it drives on the rarely-reached selective
+#: rung -- exists only for the case a source's video stream already carries the
+#: target's own codec.
+#:
+#: The same muxer also refuses to write more than one frame to one output file
+#: ("Cannot write more than one file with the same name"), so a multi-frame
+#: source fails both the cheap attempt and the selective rung; only the
+#: ``last_resort`` below, which adds ``-frames:v 1``, can turn a video into a
+#: still. A source with two video streams (cover art beside the real one) hits
+#: the same failure for the same reason, which is what ``stream_limit=1``
+#: (muxer-enforced, not mapping-enforced -- the cheap attempt still maps
+#: ``0:v?`` blindly) is for.
+PNG = Profile(
+    label="PNG",
+    name="png",
+    description="Image: force-encoded to PNG, lossless",
+    target_suffix=".png",
+    container_options=(),
+    cheap_attempt=Attempt(label="force-encode", options=flags("-map 0:v? -c:v png")),
+    explicit_streams=False,
+    partial_mapping=True,
+    rules={
+        "video": StreamRule(
+            copy_mask=frozenset({"png"}),
+            accept_options=flags("-c:v copy"),
+            fallback_options=flags("-c:v png"),
+            # No fallback_name: re-encoding into PNG's own lossless codec
+            # gives up nothing worth naming.
+            fallback_name=None,
+            stream_limit=1,
+        ),
+    },
+    last_resort=Attempt(
+        label="single-frame",
+        options=flags("-map 0:v:0 -frames:v 1 -c:v png"),
+        notes=("only the first frame was kept; PNG cannot hold more than one image",),
+    ),
+)
+
+JPG = Profile(
+    label="JPG",
+    name="jpg",
+    description="Image: force-encoded to JPEG; transparency is not carried",
+    target_suffix=".jpg",
+    container_options=(),
+    cheap_attempt=Attempt(
+        label="force-encode",
+        options=flags("-map 0:v? -c:v mjpeg -q:v 2"),
+        # Standing note, not a fallback-branch one: this cheap attempt always
+        # wins for an ordinary single-frame image (it forces the encoder
+        # unconditionally), so it is the only rung whose notes are ever
+        # actually reported for the overwhelming majority of inputs.
+        notes=("transparency is not carried by JPEG; the image was re-encoded",),
+    ),
+    explicit_streams=False,
+    partial_mapping=True,
+    rules={
+        "video": StreamRule(
+            copy_mask=frozenset({"mjpeg"}),
+            accept_options=flags("-c:v copy"),
+            fallback_options=flags("-c:v mjpeg -q:v 2"),
+            fallback_name="mjpeg",
+            stream_limit=1,
+        ),
+    },
+    last_resort=Attempt(
+        label="single-frame",
+        options=flags("-map 0:v:0 -frames:v 1 -c:v mjpeg -q:v 2"),
+        notes=("only the first frame was kept; JPEG cannot hold more than one image",),
+    ),
+)
+
+TIFF = Profile(
+    label="TIFF",
+    name="tiff",
+    description="Image: force-encoded to TIFF, lossless",
+    target_suffix=".tiff",
+    container_options=(),
+    cheap_attempt=Attempt(label="force-encode", options=flags("-map 0:v? -c:v tiff")),
+    explicit_streams=False,
+    partial_mapping=True,
+    rules={
+        "video": StreamRule(
+            copy_mask=frozenset({"tiff"}),
+            accept_options=flags("-c:v copy"),
+            fallback_options=flags("-c:v tiff"),
+            fallback_name=None,
+            stream_limit=1,
+        ),
+    },
+    last_resort=Attempt(
+        label="single-frame",
+        options=flags("-map 0:v:0 -frames:v 1 -c:v tiff"),
+        notes=("only the first frame was kept; TIFF cannot hold more than one image",),
+    ),
+)
+
+BMP = Profile(
+    label="BMP",
+    name="bmp",
+    description="Image: force-encoded to BMP, lossless",
+    target_suffix=".bmp",
+    container_options=(),
+    cheap_attempt=Attempt(label="force-encode", options=flags("-map 0:v? -c:v bmp")),
+    explicit_streams=False,
+    partial_mapping=True,
+    rules={
+        "video": StreamRule(
+            copy_mask=frozenset({"bmp"}),
+            accept_options=flags("-c:v copy"),
+            fallback_options=flags("-c:v bmp"),
+            fallback_name=None,
+            stream_limit=1,
+        ),
+    },
+    last_resort=Attempt(
+        label="single-frame",
+        options=flags("-map 0:v:0 -frames:v 1 -c:v bmp"),
+        notes=("only the first frame was kept; BMP cannot hold more than one image",),
+    ),
+)
+
 #: Target name -> profile. Built from each profile's own ``name`` rather than
 #: repeating it as a literal key, so the two can never drift apart.
-PROFILES: dict[str, Profile] = {profile.name: profile for profile in (MP4, WAV)}
+PROFILES: dict[str, Profile] = {
+    profile.name: profile for profile in (MP4, WAV, PNG, JPG, TIFF, BMP)
+}
 
 #: The curated set of suffixes discovery walks (`docs/design/source-selection.md`):
 #: a file is a candidate only if its suffix is in this set, never discovered from

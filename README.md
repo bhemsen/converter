@@ -15,8 +15,12 @@ installed version supports; today that is:
 
 ```
 Target formats:
-  mp4  .mp4  Video: copies compatible streams, re-encodes the rest to h264/aac
-  wav  .wav  Audio: single stream, uncompressed 16-bit PCM
+  bmp   .bmp  Image: force-encoded to BMP, lossless
+  jpg   .jpg  Image: force-encoded to JPEG; transparency is not carried
+  mp4   .mp4  Video: copies compatible streams, re-encodes the rest to h264/aac
+  png   .png  Image: force-encoded to PNG, lossless
+  tiff  .tiff  Image: force-encoded to TIFF, lossless
+  wav   .wav  Audio: single stream, uncompressed 16-bit PCM
 ```
 
 More target formats can be added — see [Contributing](#contributing).

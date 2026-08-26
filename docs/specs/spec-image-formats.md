@@ -359,3 +359,16 @@ New-Item -ItemType Directory -Force in
   seven image profiles this milestone still adds, following the phase-3/phase-4
   precedent of widening the suffix set before its profiles land. None of the
   twelve was already present.
+- 2026-08-26: Issue #34 landed the image2 four — `png`, `jpg`, `tiff`, `bmp` —
+  exactly as this spec's decisions pin: cheap attempt forces the encoder,
+  `accept_options=flags("-c:v copy")`, `stream_limit=1` muxer-enforced (not
+  mapping-enforced), `fallback_name=None` for the three lossless targets and
+  `"mjpeg"` for `jpg`, and a `last_resort` that extracts the first frame with a
+  note. Re-verified against real ffmpeg 9.0: `flat.jpg --to png` produces a
+  genuine `codec_name=png` output rather than a mislabelled JPEG, and the
+  reverse holds for `flat.png --to jpg`; `alpha.png --to jpg` prints the
+  transparency standing note and drops to `pix_fmt=yuvj444p`, while `--to bmp`,
+  `--to png` and `--to tiff` keep `pix_fmt` alpha-bearing and print nothing;
+  `clip.mp4` (20 frames) into any of the four lands on the `last_resort` and
+  writes exactly one frame with the multi-frame note; a second run over an
+  already-converted tree reports `0 converted`, exit 0.

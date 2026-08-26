@@ -7,7 +7,7 @@ import pytest
 
 from converter import ffmpegtool, jobs
 from converter.ffmpegtool import Stream, build_argv, cli_path
-from converter.profiles import MP4, WAV
+from converter.profiles import BMP, JPG, MP4, PNG, TIFF, WAV
 
 
 def options_of(argv: list[str], src: str, dst: str) -> list[str]:
@@ -419,6 +419,392 @@ class TestProfileArgvPinning:
             "pcm_s16le",
             "out.wav",
         ]
+
+
+class TestImageProfileArgvPinning:
+    """Verification (spec-image-formats.md): the full argv `png`, `jpg`, `tiff`
+    and `bmp` build, pinned byte-for-byte, for a copyable and a non-copyable
+    input each. png/jpg/tiff/bmp carry the same exception phase 3 recorded for
+    `opus`: their cheap attempt never copies -- it always forces the encoder --
+    so the copyable case exists only on the selective rung, reached here with a
+    second video stream that trips the muxer-enforced `stream_limit=1` and
+    forces the cheap attempt to fail."""
+
+    def test_png_cheap_attempt_forces_the_encoder(self):
+        argv = build_argv("ffmpeg", "in.jpg", jobs.first_attempt(PNG).options, "out.png")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.jpg",
+            "-map",
+            "0:v?",
+            "-c:v",
+            "png",
+            "out.png",
+        ]
+
+    def test_png_copyable_source_on_the_selective_rung(self):
+        streams = [Stream(0, "video", "png"), Stream(1, "video", "h264")]
+        selective = jobs.retries(PNG, streams)[0]
+
+        argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.png")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:0",
+            "-c:v",
+            "copy",
+            "out.png",
+        ]
+        assert selective.notes == ("video stream 1 (h264) dropped: PNG holds 1 video stream",)
+
+    def test_png_non_copyable_source_on_the_selective_rung(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "video", "h264")]
+        selective = jobs.retries(PNG, streams)[0]
+
+        argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.png")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:0",
+            "-c:v",
+            "png",
+            "out.png",
+        ]
+
+    def test_png_last_resort_extracts_the_first_frame(self):
+        streams = [Stream(0, "video", "h264")]
+        last_resort = jobs.retries(PNG, streams)[-1]
+
+        argv = build_argv("ffmpeg", "in.mp4", last_resort.options, "out.png")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mp4",
+            "-map",
+            "0:v:0",
+            "-frames:v",
+            "1",
+            "-c:v",
+            "png",
+            "out.png",
+        ]
+        assert last_resort.notes == (
+            "only the first frame was kept; PNG cannot hold more than one image",
+        )
+
+    def test_jpg_cheap_attempt_forces_the_encoder(self):
+        argv = build_argv("ffmpeg", "in.png", jobs.first_attempt(JPG).options, "out.jpg")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.png",
+            "-map",
+            "0:v?",
+            "-c:v",
+            "mjpeg",
+            "-q:v",
+            "2",
+            "out.jpg",
+        ]
+
+    def test_jpg_copyable_source_on_the_selective_rung(self):
+        streams = [Stream(0, "video", "mjpeg"), Stream(1, "video", "h264")]
+        selective = jobs.retries(JPG, streams)[0]
+
+        argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.jpg")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:0",
+            "-c:v",
+            "copy",
+            "out.jpg",
+        ]
+        assert selective.notes == ("video stream 1 (h264) dropped: JPG holds 1 video stream",)
+
+    def test_jpg_non_copyable_source_on_the_selective_rung(self):
+        """The re-encode note is now reachable, unlike png/tiff/bmp: jpg is the
+        one image2 target whose fallback is declared lossy."""
+        streams = [Stream(0, "video", "h264"), Stream(1, "video", "h264")]
+        selective = jobs.retries(JPG, streams)[0]
+
+        argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.jpg")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:0",
+            "-c:v",
+            "mjpeg",
+            "-q:v",
+            "2",
+            "out.jpg",
+        ]
+        assert selective.notes == (
+            "video stream 0 (h264) re-encoded to mjpeg",
+            "video stream 1 (h264) dropped: JPG holds 1 video stream",
+        )
+
+    def test_jpg_last_resort_extracts_the_first_frame(self):
+        streams = [Stream(0, "video", "h264")]
+        last_resort = jobs.retries(JPG, streams)[-1]
+
+        argv = build_argv("ffmpeg", "in.mp4", last_resort.options, "out.jpg")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mp4",
+            "-map",
+            "0:v:0",
+            "-frames:v",
+            "1",
+            "-c:v",
+            "mjpeg",
+            "-q:v",
+            "2",
+            "out.jpg",
+        ]
+        assert last_resort.notes == (
+            "only the first frame was kept; JPEG cannot hold more than one image",
+        )
+
+    def test_tiff_cheap_attempt_forces_the_encoder(self):
+        argv = build_argv("ffmpeg", "in.png", jobs.first_attempt(TIFF).options, "out.tiff")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.png",
+            "-map",
+            "0:v?",
+            "-c:v",
+            "tiff",
+            "out.tiff",
+        ]
+
+    def test_tiff_copyable_source_on_the_selective_rung(self):
+        streams = [Stream(0, "video", "tiff"), Stream(1, "video", "h264")]
+        selective = jobs.retries(TIFF, streams)[0]
+
+        argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.tiff")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:0",
+            "-c:v",
+            "copy",
+            "out.tiff",
+        ]
+        assert selective.notes == ("video stream 1 (h264) dropped: TIFF holds 1 video stream",)
+
+    def test_tiff_non_copyable_source_on_the_selective_rung(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "video", "h264")]
+        selective = jobs.retries(TIFF, streams)[0]
+
+        argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.tiff")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:0",
+            "-c:v",
+            "tiff",
+            "out.tiff",
+        ]
+
+    def test_tiff_last_resort_extracts_the_first_frame(self):
+        streams = [Stream(0, "video", "h264")]
+        last_resort = jobs.retries(TIFF, streams)[-1]
+
+        argv = build_argv("ffmpeg", "in.mp4", last_resort.options, "out.tiff")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mp4",
+            "-map",
+            "0:v:0",
+            "-frames:v",
+            "1",
+            "-c:v",
+            "tiff",
+            "out.tiff",
+        ]
+        assert last_resort.notes == (
+            "only the first frame was kept; TIFF cannot hold more than one image",
+        )
+
+    def test_bmp_cheap_attempt_forces_the_encoder(self):
+        argv = build_argv("ffmpeg", "in.png", jobs.first_attempt(BMP).options, "out.bmp")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.png",
+            "-map",
+            "0:v?",
+            "-c:v",
+            "bmp",
+            "out.bmp",
+        ]
+
+    def test_bmp_copyable_source_on_the_selective_rung(self):
+        streams = [Stream(0, "video", "bmp"), Stream(1, "video", "h264")]
+        selective = jobs.retries(BMP, streams)[0]
+
+        argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.bmp")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:0",
+            "-c:v",
+            "copy",
+            "out.bmp",
+        ]
+        assert selective.notes == ("video stream 1 (h264) dropped: BMP holds 1 video stream",)
+
+    def test_bmp_non_copyable_source_on_the_selective_rung(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "video", "h264")]
+        selective = jobs.retries(BMP, streams)[0]
+
+        argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.bmp")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:0",
+            "-c:v",
+            "bmp",
+            "out.bmp",
+        ]
+
+    def test_bmp_last_resort_extracts_the_first_frame(self):
+        streams = [Stream(0, "video", "h264")]
+        last_resort = jobs.retries(BMP, streams)[-1]
+
+        argv = build_argv("ffmpeg", "in.mp4", last_resort.options, "out.bmp")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mp4",
+            "-map",
+            "0:v:0",
+            "-frames:v",
+            "1",
+            "-c:v",
+            "bmp",
+            "out.bmp",
+        ]
+        assert last_resort.notes == (
+            "only the first frame was kept; BMP cannot hold more than one image",
+        )
 
 
 class TestUnsupportedDiscriminator:
