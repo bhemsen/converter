@@ -579,6 +579,140 @@ FLAC = Profile(
     ),
 )
 
+M4A = Profile(
+    label="M4A",
+    name="m4a",
+    description="Audio: every stream the source has; most players use only the first",
+    target_suffix=".m4a",
+    container_options=(),
+    # ".m4a" auto-selects the "ipod" muxer, whose accept set is narrower than a
+    # standard MP4's -- it rejects mp3, opus and flac stream copies -- so the
+    # mask below is curated by hand rather than reused from MP4_AUDIO_CODECS
+    # (docs/specs/spec-audio-formats.md).
+    cheap_attempt=Attempt(
+        label="remux",
+        options=flags("-map 0:a? -c:a copy"),
+        notes=("non-audio streams, including cover art, are not carried into M4A",),
+    ),
+    explicit_streams=False,
+    partial_mapping=True,
+    rules={
+        "audio": StreamRule(
+            copy_mask=frozenset({"aac", "alac"}),
+            # No stream_limit: the ipod muxer holds several audio streams, so
+            # every one the source has is carried rather than one kept and the
+            # rest silently dropped -- unlike mp3/flac, whose muxers enforce
+            # exactly one. The position placeholder is required here, unlike
+            # mp3/flac's bare form: ffmpeg's unindexed "-c:a" options are not
+            # positional -- when several are given, the *last* one wins for
+            # every audio output stream, not one per stream in map order
+            # (measured against ffmpeg 9.0: a two-stream source with one
+            # mask hit and one miss had its accepted stream silently
+            # re-encoded anyway). MP4's video/audio rules already carry this
+            # placeholder for the same reason.
+            accept_options=flags("-c:a:{n} copy"),
+            fallback_options=flags("-c:a:{n} aac -b:a:{n} 192k"),
+            fallback_name="aac",
+        ),
+    },
+    last_resort=Attempt(
+        label="re-encode",
+        options=flags("-map 0:a:0 -c:a aac -b:a 192k"),
+        notes=(
+            "non-audio streams, and any audio stream beyond the first, are not carried into M4A",
+        ),
+    ),
+)
+
+OGG = Profile(
+    label="OGG",
+    name="ogg",
+    description="Audio: every stream the source has; most players use only the first",
+    target_suffix=".ogg",
+    container_options=(),
+    # "-c copy" rather than "-c:a copy": the ogg muxer's own video codec is
+    # theora, so mapping video here would pass a theora source straight
+    # through as a whole video file renamed ".ogg" -- the same defect that
+    # rules m4a out. The cheap attempt maps audio only, so the two spellings
+    # behave identically; "-c copy" is what the spec pins.
+    cheap_attempt=Attempt(
+        label="remux",
+        options=flags("-map 0:a? -c copy"),
+        notes=("non-audio streams, including cover art, are not carried into OGG",),
+    ),
+    explicit_streams=False,
+    partial_mapping=True,
+    rules={
+        "audio": StreamRule(
+            # The ogg muxer accepts vorbis, opus and flac as-is; it rejects
+            # mp3 and aac (docs/specs/spec-audio-formats.md).
+            copy_mask=frozenset({"vorbis", "opus", "flac"}),
+            # No stream_limit: the ogg muxer holds several audio streams. The
+            # position placeholder is required for the same reason m4a's
+            # audio rule carries one -- see its comment.
+            accept_options=flags("-c:a:{n} copy"),
+            fallback_options=flags("-c:a:{n} libvorbis -q:a:{n} 5"),
+            fallback_name="vorbis",
+        ),
+    },
+    last_resort=Attempt(
+        label="re-encode",
+        options=flags("-map 0:a:0 -c:a libvorbis -q:a 5"),
+        notes=(
+            "non-audio streams, and any audio stream beyond the first, are not carried into OGG",
+        ),
+    ),
+)
+
+OPUS = Profile(
+    label="OPUS",
+    name="opus",
+    description="Audio: every stream the source has; most players use only the first",
+    target_suffix=".opus",
+    container_options=(),
+    # "-c copy": on the happy path the muxer, not the copy mask, decides --
+    # the opus muxer also accepts a Vorbis stream, so a blind copy can ship a
+    # file whose extension lies about its contents. That risk is accepted
+    # (Prior decisions, spec-audio-formats.md: "opus copies") because forcing
+    # every already-Opus file through libopus would be a real generation loss
+    # on the common case to prevent a mislabel reachable only from an Ogg
+    # source.
+    cheap_attempt=Attempt(
+        label="remux",
+        options=flags("-map 0:a? -c copy"),
+        notes=("non-audio streams, including cover art, are not carried into OPUS",),
+    ),
+    explicit_streams=False,
+    partial_mapping=True,
+    rules={
+        "audio": StreamRule(
+            copy_mask=frozenset({"opus"}),
+            # "opus does not copy" describes the cheap attempt alone; the
+            # selective rung does, on a mask hit -- an empty accept_options,
+            # WAV's precedent, would emit a map with no codec option and
+            # produce an undeclared re-encode instead (Prior decisions,
+            # spec-audio-formats.md). The spec's Prior decisions row pins this
+            # as the bare flags("-c:a copy"); review measured that bare form
+            # broken against a real multi-stream, mixed accept/fallback
+            # source (see m4a's audio rule comment) and the spec was amended
+            # accordingly -- this carries the position placeholder like the
+            # other two new profiles rather than the row's original text.
+            accept_options=flags("-c:a:{n} copy"),
+            # No stream_limit: the opus muxer holds several audio streams, by
+            # copy and by encode.
+            fallback_options=flags("-c:a:{n} libopus -b:a:{n} 128k"),
+            fallback_name="opus",
+        ),
+    },
+    last_resort=Attempt(
+        label="re-encode",
+        options=flags("-map 0:a:0 -c:a libopus -b:a 128k"),
+        notes=(
+            "non-audio streams, and any audio stream beyond the first, are not carried into OPUS",
+        ),
+    ),
+)
+
 #: Phase 5 (`docs/specs/spec-image-formats.md`): the image2 muxer -- the one
 #: behind PNG, JPEG, TIFF and BMP -- accepts *any* video codec under
 #: ``-c copy``, so a stream copy would ship a mislabelled file (measured:
@@ -733,7 +867,8 @@ BMP = Profile(
 #: Target name -> profile. Built from each profile's own ``name`` rather than
 #: repeating it as a literal key, so the two can never drift apart.
 PROFILES: dict[str, Profile] = {
-    profile.name: profile for profile in (MP4, WAV, MKV, MOV, MP3, FLAC, WEBM, PNG, JPG, TIFF, BMP)
+    profile.name: profile
+    for profile in (MP4, WAV, MKV, MOV, MP3, FLAC, WEBM, M4A, OGG, OPUS, PNG, JPG, TIFF, BMP)
 }
 
 #: The curated set of suffixes discovery walks (`docs/design/source-selection.md`):
