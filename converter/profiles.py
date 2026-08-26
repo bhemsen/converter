@@ -302,12 +302,16 @@ M4A = Profile(
             # No stream_limit: the ipod muxer holds several audio streams, so
             # every one the source has is carried rather than one kept and the
             # rest silently dropped -- unlike mp3/flac, whose muxers enforce
-            # exactly one. Carried positionally (docs/specs/spec-audio-
-            # formats.md's opus accept_options row): each matched stream
-            # contributes its own bare codec option in map order, so no "{n}"
-            # placeholder is needed even without a limit.
-            accept_options=flags("-c:a copy"),
-            fallback_options=flags("-c:a aac -b:a 192k"),
+            # exactly one. The position placeholder is required here, unlike
+            # mp3/flac's bare form: ffmpeg's unindexed "-c:a" options are not
+            # positional -- when several are given, the *last* one wins for
+            # every audio output stream, not one per stream in map order
+            # (measured against ffmpeg 9.0: a two-stream source with one
+            # mask hit and one miss had its accepted stream silently
+            # re-encoded anyway). MP4's video/audio rules already carry this
+            # placeholder for the same reason.
+            accept_options=flags("-c:a:{n} copy"),
+            fallback_options=flags("-c:a:{n} aac -b:a:{n} 192k"),
             fallback_name="aac",
         ),
     },
@@ -343,9 +347,11 @@ OGG = Profile(
             # The ogg muxer accepts vorbis, opus and flac as-is; it rejects
             # mp3 and aac (docs/specs/spec-audio-formats.md).
             copy_mask=frozenset({"vorbis", "opus", "flac"}),
-            # No stream_limit: the ogg muxer holds several audio streams.
-            accept_options=flags("-c:a copy"),
-            fallback_options=flags("-c:a libvorbis -q:a 5"),
+            # No stream_limit: the ogg muxer holds several audio streams. The
+            # position placeholder is required for the same reason m4a's
+            # audio rule carries one -- see its comment.
+            accept_options=flags("-c:a:{n} copy"),
+            fallback_options=flags("-c:a:{n} libvorbis -q:a:{n} 5"),
             fallback_name="vorbis",
         ),
     },
@@ -385,11 +391,16 @@ OPUS = Profile(
             # selective rung does, on a mask hit -- an empty accept_options,
             # WAV's precedent, would emit a map with no codec option and
             # produce an undeclared re-encode instead (Prior decisions,
-            # spec-audio-formats.md).
-            accept_options=flags("-c:a copy"),
+            # spec-audio-formats.md). The spec's Prior decisions row pins this
+            # as the bare flags("-c:a copy"); review measured that bare form
+            # broken against a real multi-stream, mixed accept/fallback
+            # source (see m4a's audio rule comment) and the spec was amended
+            # accordingly -- this carries the position placeholder like the
+            # other two new profiles rather than the row's original text.
+            accept_options=flags("-c:a:{n} copy"),
             # No stream_limit: the opus muxer holds several audio streams, by
             # copy and by encode.
-            fallback_options=flags("-c:a libopus -b:a 128k"),
+            fallback_options=flags("-c:a:{n} libopus -b:a:{n} 128k"),
             fallback_name="opus",
         ),
     },

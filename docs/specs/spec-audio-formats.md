@@ -151,6 +151,23 @@ reader should re-verify rather than trust the table.
 | **No generation-loss note** (a "your FLAC came from a 128 kbit/s MP3" warning) in this phase | It would need a lossy-codec set plus a new branch in `jobs.py`, and `Stream` carries no such notion — an engine change, which this phase's headline outcome forbids. Recorded below as a roadmap candidate rather than smuggled in | 2026-08-25 |
 | No audio profile declares a **video rule**, so any video stream — cover art included — is dropped by the selective rung with the engine's existing "not supported by TARGET" note | Keeping cover art needs the `attached_pic` disposition, which `probe_streams` does not request and `Stream` does not carry, so the engine cannot tell a picture from a real video stream. The muxer table shows what happens if you guess: `m4a` hard-fails on a real MJPEG while succeeding on a picture, and `mp3` silently truncates it to one frame | 2026-08-25 |
 
+> **Amended, 2026-08-26 (issue #22 review).** Row 145's `opus` `accept_options`
+> pin (`flags("-c:a copy")`, no `"{n}"` position placeholder) is corrected: it
+> is safe only for `mp3`/`flac`, whose `stream_limit=1` guarantees at most one
+> output stream of the type, and does not transfer to a profile with none.
+> Measured against ffmpeg 9.0: ffmpeg's unindexed `-c:a` is **not** applied
+> positionally to successive output streams in map order -- when several are
+> given, the *last* one wins for every audio output stream. On a two-stream
+> source with one mask hit and one miss (e.g. an aac stream plus an mp3
+> stream converting `--to m4a`), the bare form silently re-encoded the
+> stream that should have copied, with no note naming the loss -- a breach
+> of `docs/constitution.md`'s "never report success for a conversion that
+> silently dropped something". `m4a`, `ogg` and `opus` all carry the
+> `"{n}"` placeholder instead, the same shape `MP4`'s video/audio rules
+> already use, which substitutes the correct per-stream index
+> (`converter/jobs.py::_substitute_position`) rather than relying on
+> ffmpeg's option order.
+
 ### The five new profiles, fixed
 
 `wav` is not in this table: it keeps phase 2's shape unchanged.
@@ -496,19 +513,35 @@ New-Item -ItemType Directory -Force art
   gives to `ogg` and `opus`. None declares a `stream_limit` -- their muxers
   hold several audio streams, so `MUXER_ENFORCED_LIMIT_TYPES` gets no new
   entries and the equality invariant is proven the ordinary way for all
-  three. `opus`'s `accept_options` is the bare `flags("-c:a copy")` the Prior
-  decisions row pins, with no `"{n}"` placeholder despite no `stream_limit`;
-  `m4a` and `ogg` follow the same bare shape for consistency with it and with
-  `mp3`/`flac`'s own accept_options, relying on ffmpeg's positional per-type
-  stream-option matching (each matched stream's codec option is appended in
-  the same order its `-map` is, which is what makes the unindexed form
-  correct for more than one output stream of the same type). Measured
-  against ffmpeg 9.0 through the CLI with `--ffmpeg`/`--ffprobe`: an
-  already-aac `.aac` copies straight into `m4a` and an already-vorbis `.ogg`
-  copies straight into `ogg`; a non-mask codec (`mp3`) re-encodes into all
-  three with the exact re-encode note; and `--to opus` on an already-vorbis
-  `.ogg` reproduces the accepted mislabel from the "opus copies" decision --
-  the cheap attempt's blind `-c copy` succeeds, and `ffprobe` on the result
-  confirms the stream inside `tone-vorbis.opus` is still `vorbis`, not
-  `opus`. A second run over the same tree reported `0 converted, 4 skipped`,
-  exit 0, for all three targets.
+  three. Measured against ffmpeg 9.0 through the CLI with
+  `--ffmpeg`/`--ffprobe`: an already-aac `.aac` copies straight into `m4a`
+  and an already-vorbis `.ogg` copies straight into `ogg`; a non-mask codec
+  (`mp3`) re-encodes into all three with the exact re-encode note; and
+  `--to opus` on an already-vorbis `.ogg` reproduces the accepted mislabel
+  from the "opus copies" decision -- the cheap attempt's blind `-c copy`
+  succeeds, and `ffprobe` on the result confirms the stream inside
+  `tone-vorbis.opus` is still `vorbis`, not `opus`. A second run over the
+  same tree reported `0 converted, 4 skipped`, exit 0, for all three
+  targets.
+- 2026-08-26 (#22 review): the first pass shipped `opus`'s `accept_options`
+  as the Prior decisions row's bare `flags("-c:a copy")`, and gave `m4a` and
+  `ogg` the same bare shape for consistency, reasoning that ffmpeg applies
+  repeated unindexed `-c:a` options positionally to successive output
+  streams in map order. Review measured that this is false: ffmpeg's own
+  stderr says so directly ("Multiple -codec/-c/-acodec options specified for
+  stream 0, only the last option ... will be used"), hidden in production by
+  `-loglevel error`. On a real two-stream source (one mask hit, one miss),
+  the bare form silently re-encoded the stream that should have copied, with
+  no note naming the loss. `mp3`/`flac`'s existing bare form is unaffected --
+  their `stream_limit=1` guarantees at most one output stream, so the bug
+  cannot occur -- but it does not transfer to a profile with none. All three
+  new profiles now carry the `"{n}"` position placeholder instead (see the
+  amendment above the "five new profiles, fixed" table), the shape `MP4`'s
+  own audio/video rules already use. Added a mixed-stream test per profile in
+  `tests/test_argv.py` (each named
+  `test_mixed_accept_and_fallback_streams_each_take_their_own_fate`) after
+  confirming the existing `test_second_matching_audio_stream_is_also_carried`
+  tests used two same-outcome streams and so could not have caught this.
+  Re-measured against ffmpeg 9.0: a genuinely mixed aac+mp3 source through
+  `--to m4a` now produces two aac streams, with only the mp3 one named in the
+  re-encode note.

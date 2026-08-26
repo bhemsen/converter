@@ -525,14 +525,25 @@ class TestM4aProfile:
         rule = M4A.rules["audio"]
 
         assert rule.copy_mask == frozenset({"aac", "alac"})
-        assert rule.accept_options == ("-c:a", "copy")
-        assert rule.fallback_options == ("-c:a", "aac", "-b:a", "192k")
+        assert rule.accept_options == ("-c:a:{n}", "copy")
+        assert rule.fallback_options == ("-c:a:{n}", "aac", "-b:a:{n}", "192k")
         assert rule.fallback_name == "aac"
 
     def test_audio_rule_declares_no_stream_limit(self):
         """The ipod muxer holds several audio streams, so every one the
         source has is carried rather than one kept and the rest dropped."""
         assert M4A.rules["audio"].stream_limit is None
+
+    def test_audio_rule_carries_the_position_placeholder(self):
+        """No stream_limit means more than one output audio stream is
+        possible, and ffmpeg's unindexed "-c:a" is not positional -- the last
+        one given wins for every audio stream, not one per stream in map
+        order (measured against ffmpeg 9.0). The placeholder is required for
+        the same reason MP4's video/audio rules carry one."""
+        rule = M4A.rules["audio"]
+
+        assert "{n}" in " ".join(rule.accept_options)
+        assert "{n}" in " ".join(rule.fallback_options)
 
     def test_declares_the_pinned_last_resort(self):
         assert M4A.last_resort is not None
@@ -575,12 +586,19 @@ class TestOggProfile:
         rule = OGG.rules["audio"]
 
         assert rule.copy_mask == frozenset({"vorbis", "opus", "flac"})
-        assert rule.accept_options == ("-c:a", "copy")
-        assert rule.fallback_options == ("-c:a", "libvorbis", "-q:a", "5")
+        assert rule.accept_options == ("-c:a:{n}", "copy")
+        assert rule.fallback_options == ("-c:a:{n}", "libvorbis", "-q:a:{n}", "5")
         assert rule.fallback_name == "vorbis"
 
     def test_audio_rule_declares_no_stream_limit(self):
         assert OGG.rules["audio"].stream_limit is None
+
+    def test_audio_rule_carries_the_position_placeholder(self):
+        """See `TestM4aProfile`'s equivalent test for why."""
+        rule = OGG.rules["audio"]
+
+        assert "{n}" in " ".join(rule.accept_options)
+        assert "{n}" in " ".join(rule.fallback_options)
 
     def test_declares_the_pinned_last_resort(self):
         assert OGG.last_resort is not None
@@ -623,14 +641,21 @@ class TestOpusProfile:
         rule = OPUS.rules["audio"]
 
         assert rule.copy_mask == frozenset({"opus"})
-        assert rule.accept_options == ("-c:a", "copy")
-        assert rule.fallback_options == ("-c:a", "libopus", "-b:a", "128k")
+        assert rule.accept_options == ("-c:a:{n}", "copy")
+        assert rule.fallback_options == ("-c:a:{n}", "libopus", "-b:a:{n}", "128k")
         assert rule.fallback_name == "opus"
 
     def test_audio_rule_declares_no_stream_limit(self):
         """The opus muxer holds several audio streams, by copy and by
         encode (docs/specs/spec-audio-formats.md)."""
         assert OPUS.rules["audio"].stream_limit is None
+
+    def test_audio_rule_carries_the_position_placeholder(self):
+        """See `TestM4aProfile`'s equivalent test for why."""
+        rule = OPUS.rules["audio"]
+
+        assert "{n}" in " ".join(rule.accept_options)
+        assert "{n}" in " ".join(rule.fallback_options)
 
     def test_declares_the_pinned_last_resort(self):
         assert OPUS.last_resort is not None

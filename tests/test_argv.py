@@ -300,7 +300,7 @@ class TestM4aJob:
         attempts = jobs.retries(M4A, streams)
 
         assert [a.label for a in attempts] == ["selective", "re-encode"]
-        assert attempts[0].options == ("-map", "0:0", "-c:a", "copy")
+        assert attempts[0].options == ("-map", "0:0", "-c:a:0", "copy")
         assert attempts[0].notes == ()
 
     def test_non_matching_audio_reencodes_with_a_note(self):
@@ -308,7 +308,7 @@ class TestM4aJob:
 
         selective = jobs.retries(M4A, streams)[0]
 
-        assert selective.options == ("-map", "0:0", "-c:a", "aac", "-b:a", "192k")
+        assert selective.options == ("-map", "0:0", "-c:a:0", "aac", "-b:a:0", "192k")
         assert selective.notes == ("audio stream 0 (mp3) re-encoded to aac",)
 
     def test_second_matching_audio_stream_is_also_carried(self):
@@ -318,8 +318,40 @@ class TestM4aJob:
 
         selective = jobs.retries(M4A, streams)[0]
 
-        assert selective.options == ("-map", "0:0", "-map", "0:1", "-c:a", "copy", "-c:a", "copy")
+        assert selective.options == (
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:a:0",
+            "copy",
+            "-c:a:1",
+            "copy",
+        )
         assert selective.notes == ()
+
+    def test_mixed_accept_and_fallback_streams_each_take_their_own_fate(self):
+        """The position placeholder is what makes this safe: ffmpeg's
+        unindexed "-c:a" is not positional (measured against ffmpeg 9.0) --
+        without "{n}", the second "-c:a" given would win for *both* output
+        streams, silently re-encoding the one that should have been copied."""
+        streams = [Stream(0, "audio", "aac"), Stream(1, "audio", "mp3")]
+
+        selective = jobs.retries(M4A, streams)[0]
+
+        assert selective.options == (
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:a:0",
+            "copy",
+            "-c:a:1",
+            "aac",
+            "-b:a:1",
+            "192k",
+        )
+        assert selective.notes == ("audio stream 1 (mp3) re-encoded to aac",)
 
     def test_video_only_source_skips_straight_to_the_last_resort(self):
         attempts = jobs.retries(M4A, [Stream(0, "video", "h264")])
@@ -363,7 +395,7 @@ class TestOggJob:
         attempts = jobs.retries(OGG, streams)
 
         assert [a.label for a in attempts] == ["selective", "re-encode"]
-        assert attempts[0].options == ("-map", "0:0", "-c:a", "copy")
+        assert attempts[0].options == ("-map", "0:0", "-c:a:0", "copy")
         assert attempts[0].notes == ()
 
     def test_non_matching_audio_reencodes_with_a_note(self):
@@ -372,7 +404,7 @@ class TestOggJob:
 
         selective = jobs.retries(OGG, streams)[0]
 
-        assert selective.options == ("-map", "0:0", "-c:a", "libvorbis", "-q:a", "5")
+        assert selective.options == ("-map", "0:0", "-c:a:0", "libvorbis", "-q:a:0", "5")
         assert selective.notes == ("audio stream 0 (aac) re-encoded to vorbis",)
 
     def test_second_matching_audio_stream_is_also_carried(self):
@@ -380,8 +412,37 @@ class TestOggJob:
 
         selective = jobs.retries(OGG, streams)[0]
 
-        assert selective.options == ("-map", "0:0", "-map", "0:1", "-c:a", "copy", "-c:a", "copy")
+        assert selective.options == (
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:a:0",
+            "copy",
+            "-c:a:1",
+            "copy",
+        )
         assert selective.notes == ()
+
+    def test_mixed_accept_and_fallback_streams_each_take_their_own_fate(self):
+        """See `TestM4aJob`'s equivalent test for why the placeholder matters."""
+        streams = [Stream(0, "audio", "vorbis"), Stream(1, "audio", "aac")]
+
+        selective = jobs.retries(OGG, streams)[0]
+
+        assert selective.options == (
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:a:0",
+            "copy",
+            "-c:a:1",
+            "libvorbis",
+            "-q:a:1",
+            "5",
+        )
+        assert selective.notes == ("audio stream 1 (aac) re-encoded to vorbis",)
 
     def test_video_only_source_skips_straight_to_the_last_resort(self):
         attempts = jobs.retries(OGG, [Stream(0, "video", "h264")])
@@ -426,7 +487,7 @@ class TestOpusJob:
         attempts = jobs.retries(OPUS, streams)
 
         assert [a.label for a in attempts] == ["selective", "re-encode"]
-        assert attempts[0].options == ("-map", "0:0", "-c:a", "copy")
+        assert attempts[0].options == ("-map", "0:0", "-c:a:0", "copy")
         assert attempts[0].notes == ()
 
     def test_non_matching_audio_reencodes_with_a_note(self):
@@ -437,7 +498,7 @@ class TestOpusJob:
 
         selective = jobs.retries(OPUS, streams)[0]
 
-        assert selective.options == ("-map", "0:0", "-c:a", "libopus", "-b:a", "128k")
+        assert selective.options == ("-map", "0:0", "-c:a:0", "libopus", "-b:a:0", "128k")
         assert selective.notes == ("audio stream 0 (vorbis) re-encoded to opus",)
 
     def test_second_matching_audio_stream_is_also_carried(self):
@@ -445,8 +506,39 @@ class TestOpusJob:
 
         selective = jobs.retries(OPUS, streams)[0]
 
-        assert selective.options == ("-map", "0:0", "-map", "0:1", "-c:a", "copy", "-c:a", "copy")
+        assert selective.options == (
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:a:0",
+            "copy",
+            "-c:a:1",
+            "copy",
+        )
         assert selective.notes == ()
+
+    def test_mixed_accept_and_fallback_streams_each_take_their_own_fate(self):
+        """See `TestM4aJob`'s equivalent test for why the placeholder matters
+        -- and, for `opus`, the specific reason the spec's original bare-form
+        pin was amended after this was measured against ffmpeg 9.0."""
+        streams = [Stream(0, "audio", "opus"), Stream(1, "audio", "vorbis")]
+
+        selective = jobs.retries(OPUS, streams)[0]
+
+        assert selective.options == (
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:a:0",
+            "copy",
+            "-c:a:1",
+            "libopus",
+            "-b:a:1",
+            "128k",
+        )
+        assert selective.notes == ("audio stream 1 (vorbis) re-encoded to opus",)
 
     def test_video_only_source_skips_straight_to_the_last_resort(self):
         attempts = jobs.retries(OPUS, [Stream(0, "video", "h264")])
@@ -910,7 +1002,7 @@ class TestProfileArgvPinning:
             "in.mkv",
             "-map",
             "0:0",
-            "-c:a",
+            "-c:a:0",
             "copy",
             "out.m4a",
         ]
@@ -931,9 +1023,9 @@ class TestProfileArgvPinning:
             "in.mp3",
             "-map",
             "0:0",
-            "-c:a",
+            "-c:a:0",
             "aac",
-            "-b:a",
+            "-b:a:0",
             "192k",
             "out.m4a",
         ]
@@ -973,7 +1065,7 @@ class TestProfileArgvPinning:
             "in.mkv",
             "-map",
             "0:0",
-            "-c:a",
+            "-c:a:0",
             "copy",
             "out.ogg",
         ]
@@ -994,9 +1086,9 @@ class TestProfileArgvPinning:
             "in.m4a",
             "-map",
             "0:0",
-            "-c:a",
+            "-c:a:0",
             "libvorbis",
-            "-q:a",
+            "-q:a:0",
             "5",
             "out.ogg",
         ]
@@ -1036,7 +1128,7 @@ class TestProfileArgvPinning:
             "in.ogg",
             "-map",
             "0:0",
-            "-c:a",
+            "-c:a:0",
             "copy",
             "out.opus",
         ]
@@ -1059,9 +1151,9 @@ class TestProfileArgvPinning:
             "in.ogg",
             "-map",
             "0:0",
-            "-c:a",
+            "-c:a:0",
             "libopus",
-            "-b:a",
+            "-b:a:0",
             "128k",
             "out.opus",
         ]
