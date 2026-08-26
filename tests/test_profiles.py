@@ -26,6 +26,44 @@ MAP_LETTERS = {"v": "video", "a": "audio", "s": "subtitle", "t": "attachment", "
 #: Every profile the registry ships. A new one joins the invariant checks here.
 SHIPPED = [MP4, WAV]
 
+#: A stand-in for the not-yet-shipped `mov` profile (`docs/specs/spec-video-formats.md`),
+#: shaped only enough to prove the degradation-ladder invariant's narrowed form:
+#: it maps `attachment` via `-map 0:t?` -- exactly `mov`'s pinned cheap attempt --
+#: but declares no `attachment` rule, because MOV's muxer rejects any mapped
+#: attachment outright. An attachment-bearing source fails the cheap attempt and
+#: is routed into the ladder instead of reaching the success-side check, so the
+#: type never needs a rule to keep that check honest (issue #39).
+MOV_SHAPED = Profile(
+    label="MOV (shaped)",
+    name="mov-shaped",
+    description="Stand-in for the invariant test, not a shipped profile",
+    target_suffix=".mov",
+    container_options=(),
+    cheap_attempt=Attempt(
+        label="remux",
+        options=flags("-map 0:v? -map 0:a? -map 0:s? -map 0:t? -c copy -c:s mov_text"),
+    ),
+    explicit_streams=False,
+    partial_mapping=True,
+    rules={
+        "video": StreamRule(copy_mask=frozenset({"h264"}), accept_options=flags("-c:v:{n} copy")),
+        "audio": StreamRule(copy_mask=frozenset({"aac"}), accept_options=flags("-c:a:{n} copy")),
+        "subtitle": StreamRule(
+            copy_mask=frozenset(), accept_options=(), drop_reason="not modelled here"
+        ),
+    },
+)
+
+#: Stream types each profile maps only to *force* the cheap attempt to fail when
+#: the source carries one -- never to carry it on the success side. The narrowed
+#: invariant (`docs/design/degradation-ladder.md`) exempts these from needing a
+#: rule: a type mapped to force a failure never reaches the success-side check.
+FORCED_FAILURE_TYPES: dict[str, frozenset[str]] = {
+    MP4.name: frozenset(),
+    WAV.name: frozenset(),
+    MOV_SHAPED.name: frozenset({"attachment"}),
+}
+
 
 def mapped_types(profile: Profile) -> dict[str, bool]:
     """Stream types the cheap attempt maps -> whether it maps them *blindly*.
@@ -47,7 +85,13 @@ def mapped_types(profile: Profile) -> dict[str, bool]:
     return mapped
 
 
-@pytest.mark.parametrize("profile", SHIPPED, ids=lambda profile: profile.label)
+#: `SHIPPED` plus the mov-shaped stand-in, so the invariant is checked against a
+#: profile that actually exercises the force-failure exemption -- otherwise the
+#: narrowed reading and the old, broader one would agree on every case tested.
+INVARIANT_CASES = [*SHIPPED, MOV_SHAPED]
+
+
+@pytest.mark.parametrize("profile", INVARIANT_CASES, ids=lambda profile: profile.label)
 class TestPartialMappingInvariant:
     """What `degradation-ladder.md` says a `partial_mapping` profile owes.
 
@@ -57,14 +101,39 @@ class TestPartialMappingInvariant:
     nobody has written yet.
     """
 
-    def test_every_stream_type_the_cheap_attempt_maps_has_a_rule(self, profile):
-        """Otherwise a stream the attempt faithfully copied is announced as lost."""
-        assert set(mapped_types(profile)) <= set(profile.rules)
+    def test_every_successfully_carryable_type_the_cheap_attempt_maps_has_a_rule(self, profile):
+        """Otherwise a stream the attempt faithfully copied is announced as lost.
+
+        Narrowed form (issue #39): a type mapped only to *force* the cheap
+        attempt to fail -- `mov`'s `attachment`, per `FORCED_FAILURE_TYPES` --
+        never reaches the success side this check protects, so it is exempt.
+        """
+        forced_failure = FORCED_FAILURE_TYPES[profile.name]
+
+        assert set(mapped_types(profile)) - forced_failure <= set(profile.rules)
+
+    def test_forced_failure_types_carry_no_rule(self, profile):
+        """The exemption is for a type genuinely absent from `rules`, not a
+        second way to satisfy the requirement -- otherwise `mov`-shaped would
+        stop proving the distinction the moment someone added a belt-and-braces
+        rule alongside it."""
+        forced_failure = FORCED_FAILURE_TYPES[profile.name]
+
+        assert forced_failure.isdisjoint(profile.rules)
 
     def test_no_blindly_mapped_type_carries_a_stream_limit(self, profile):
         """A blind selector maps every stream of its type, so a limit it does not
-        enforce would have the verification report drops the output disproves."""
-        blind = [kind for kind, is_blind in mapped_types(profile).items() if is_blind]
+        enforce would have the verification report drops the output disproves.
+
+        Only checked for a type that actually has a rule: a force-failure type
+        by definition has none, and a limit on a rule that does not exist is not
+        a thing that can be checked.
+        """
+        blind = [
+            kind
+            for kind, is_blind in mapped_types(profile).items()
+            if is_blind and kind in profile.rules
+        ]
 
         assert all(profile.rules[kind].stream_limit is None for kind in blind)
 

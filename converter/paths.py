@@ -20,11 +20,46 @@ def normalise_suffixes(suffixes: Iterable[str]) -> frozenset[str]:
     return frozenset(normalised)
 
 
+def _resolved_key(path: str | os.PathLike[str]) -> str:
+    """Return a case-folded string of *path*, resolved, for identity comparisons.
+
+    Resolving first -- rather than comparing the paths as given -- is what
+    catches a ``--mirror-to`` self-write or hazard: the output root is derived
+    from a resolved input path while discovery returns paths built from the
+    root as typed, so two paths that name the same file can look different
+    until both sides are resolved.
+    """
+    return os.path.normcase(os.fspath(Path(path).resolve()))
+
+
+def _is_within(path: Path, ancestor: Path) -> bool:
+    """Return whether *path* lies strictly inside *ancestor* (both already resolved)."""
+    ancestor_text = os.fspath(ancestor)
+    prefix = ancestor_text if ancestor_text.endswith(os.sep) else ancestor_text + os.sep
+    return os.path.normcase(os.fspath(path)).startswith(os.path.normcase(prefix))
+
+
+def _excluded_subtree(root: Path, exclude: str | os.PathLike[str] | None) -> Path | None:
+    """Resolve *exclude* against *root*, keeping it only if it is a strict descendant.
+
+    An output root that is an ancestor or a sibling of *root* is already
+    outside the walk, and one equal to *root* is the self-write guard's job --
+    see ``docs/design/source-selection.md``'s OWN node for why only the
+    strict-descendant shape is excluded here.
+    """
+    if exclude is None:
+        return None
+    resolved_root = root.resolve()
+    resolved_exclude = Path(exclude).resolve()
+    return resolved_exclude if _is_within(resolved_exclude, resolved_root) else None
+
+
 def find_sources(
     root: str | os.PathLike[str],
     suffixes: Iterable[str],
     *,
     recursive: bool = False,
+    exclude: str | os.PathLike[str] | None = None,
 ) -> list[Path]:
     """Collect the files under *root* whose suffix is in *suffixes*.
 
@@ -32,13 +67,25 @@ def find_sources(
     ``Movie.MKV`` without a word -- and directories are excluded, so a folder
     named ``season.mkv`` is no longer handed to ffmpeg as an input file.
     Results are sorted so runs are reproducible.
+
+    *exclude*, when given, is a subtree to skip -- meant for an output root
+    nested inside *root*, so a converted tree is never rediscovered as input on
+    the next run. It only takes effect when it actually is a strict descendant
+    of *root* once both are resolved; see ``_excluded_subtree``.
     """
     wanted = normalise_suffixes(suffixes)
     root = Path(root)
     if not root.is_dir():
         raise NotADirectoryError(f"input directory does not exist: {root}")
+    excluded = _excluded_subtree(root, exclude)
     candidates = root.rglob("*") if recursive else root.glob("*")
-    return sorted(p for p in candidates if p.suffix.lower() in wanted and p.is_file())
+    return sorted(
+        p
+        for p in candidates
+        if p.suffix.lower() in wanted
+        and p.is_file()
+        and (excluded is None or not _is_within(p.resolve(), excluded))
+    )
 
 
 def output_for(
@@ -142,7 +189,11 @@ def find_collisions(pairs: Iterable[tuple[Path, Path]]) -> dict[Path, list[Path]
     """Return output paths that more than one input would write to.
 
     ``os.path.normcase`` is used for the comparison because Windows would let
-    two differently-cased outputs silently overwrite each other.
+    two differently-cased outputs silently overwrite each other. A
+    self-writing source (see ``is_self_write``) should be filtered out of
+    *pairs* by the caller first: it produces no conversion, so it cannot
+    contend for its own path -- per ``docs/design/source-selection.md``'s COLL
+    node.
     """
     seen: dict[str, tuple[Path, list[Path]]] = {}
     for src, dst in pairs:
@@ -152,3 +203,46 @@ def find_collisions(pairs: Iterable[tuple[Path, Path]]) -> dict[Path, list[Path]
         else:
             seen[key] = (dst, [src])
     return {dst: sources for dst, sources in seen.values() if len(sources) > 1}
+
+
+def is_self_write(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> bool:
+    """Return whether writing *dst* would overwrite *src* itself.
+
+    Both paths are resolved before comparison, then compared case-folded --
+    unlike ``find_collisions``, which case-folds the paths as given. The
+    difference is load-bearing under ``--mirror-to``: the output root is
+    derived from a resolved input path while discovery returns paths built
+    from the root as typed, so comparing as given would miss the self-write.
+    Per ``docs/design/source-selection.md``'s SELF node, a true self-write is
+    reported as a counted skip, never silently dropped, and never refuses the
+    run by itself.
+    """
+    return _resolved_key(src) == _resolved_key(dst)
+
+
+def find_overwrite_hazards(pairs: Iterable[tuple[Path, Path]]) -> list[tuple[Path, Path]]:
+    """Return (victim, writer) pairs where *writer*'s output would destroy *victim*.
+
+    *victim* is a different selected source whose own input path *writer*'s
+    output resolves to. Every selected source is a potential victim,
+    self-writers included -- the motivating case is exactly a self-writer
+    (``a.mp4``) being overwritten by a sibling (``a.mkv``) -- which is why
+    this is its own two-pass check over *pairs*, like ``find_collisions``,
+    rather than a filter on top of it: the first pass indexes every source by
+    its resolved, case-folded path, the second asks whether each output
+    resolves to a *different* source's entry. Per
+    ``docs/design/source-selection.md``'s HAZ node, both sides are resolved
+    before comparison, and this check is meant to fire only under
+    ``--overwrite``, which is the caller's decision, not this function's.
+    """
+    resolved = [(src, _resolved_key(src), dst, _resolved_key(dst)) for src, dst in pairs]
+    victims_by_key: dict[str, Path] = {}
+    for entry_src, entry_src_key, _entry_dst, _entry_dst_key in resolved:
+        victims_by_key[entry_src_key] = entry_src
+
+    hazards = []
+    for src, src_key, _dst, dst_key in resolved:
+        victim = victims_by_key.get(dst_key)
+        if victim is not None and dst_key != src_key:
+            hazards.append((victim, src))
+    return hazards

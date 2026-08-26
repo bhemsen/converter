@@ -341,6 +341,27 @@ reusing the fixtures the phase-1 gate synthesises:
   existing pattern of raising `ValueError` for a usage problem that `cli.py`
   (issue #15) turns into its exit-2 `UsageError` — `profiles.py` cannot import
   `UsageError` itself without breaking the leaf-module constraint.
+- 2026-08-26 (#13): `find_sources` gains `exclude: Path | None` rather than a
+  separate "is this a nested output root" predicate the caller must consult
+  first. `_excluded_subtree` resolves both `root` and `exclude` and applies
+  the strict-descendant test itself, so a future `cli.py` can pass the output
+  root unconditionally and get the OWN node's exact behaviour (ancestor,
+  sibling and equal-root shapes left untouched) without duplicating the test.
+- 2026-08-26 (#13): The self-write guard and the overwrite hazard share one
+  private helper, `_resolved_key`, rather than each re-deriving
+  resolve-then-normcase. `is_self_write(src, dst)` is the SELF predicate
+  directly; `find_overwrite_hazards(pairs)` is the whole-set HAZ pass,
+  returning `(victim, writer)` tuples so the caller can name both files in the
+  exit-2 message. Both stay pure path logic with no `--overwrite` awareness —
+  firing the hazard check only under `--overwrite` is left to the caller
+  (`cli.py`, issue #15), matching how `find_collisions` already has no opinion
+  on when it is invoked.
+- 2026-08-26 (#13): The COLL exclusion of self-writing sources (the third
+  predicate the issue lists) is not a new function: `find_collisions` is
+  unchanged, and a caller filters `is_self_write` pairs out before calling it
+  — the same shape `tests/test_paths.py`'s `select()` helper uses to simulate
+  the full per-file flow. A wrapper would just be `find_collisions(p for p in
+  pairs if not is_self_write(*p))` with no logic of its own.
 - 2026-08-26 (#14): Beyond `jobs.first_attempt(profile)` and
   `jobs.retries(profile, streams)`, which this spec already named, three more
   entry points were needed and were left to this issue to establish:

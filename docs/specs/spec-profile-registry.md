@@ -427,3 +427,38 @@ why both audio fixtures use that suffix.
   plain success. Failing an otherwise good conversion because its bookkeeping
   could not be completed would be worse than the silence being fixed; saying
   nothing would re-open it.
+- 2026-08-26 (issue #41): confirmed directly against `converter/profiles.py` that
+  neither shipped profile is exhaustive — `MP4`'s cheap attempt maps blindly by
+  type (`-map 0:v? -map 0:a? -map 0:s?`) and `WAV`'s names one index
+  (`-map 0:a:0`); both declare `partial_mapping=True`. So the probe-free branch
+  the issue #18 entries above carved out has **no live instance** today: every
+  successful conversion spends one `ffprobe`. That cost is the right trade — it
+  buys the loss accounting `docs/vision.md` names as the USP, and issue #18's
+  gate already accepted it — but it was nowhere written down that the
+  probe-free branch itself is presently unreachable, which left
+  `docs/architecture.md` and this entry's own prose reading as though the
+  round-trip-free case were still the common one.
+- 2026-08-26 (issue #41): the branch is kept as a guard, not as a cost this
+  project plans to pay down — checked against every phase `docs/roadmap.md`
+  currently names. The three coverage phases already specced —
+  `spec-audio-formats.md` (phase 3), `spec-video-formats.md` (phase 4),
+  `spec-image-formats.md` (phase 5) — each state in their own Constraints that
+  every cheap attempt they declare selects by type or by index, so every
+  profile in that phase is partial too and must declare `partial_mapping=True`.
+  A `?`-selector (or a single named index) is what lets a cheap attempt succeed
+  on a source that happens to lack a given stream type instead of failing the
+  whole attempt; an exhaustive mapping would have to enumerate every stream by
+  explicit index, the opposite of that robustness. Phases 6 and 7 are not yet
+  specced, so this is read from `docs/roadmap.md`'s phase descriptions rather
+  than a Constraints section: phase 6 (`stream-disposition`) adds a
+  `disposition` field so `mp3`/`m4a`/`flac` stop dropping cover art, which
+  narrows a standing note but does not change the cheap attempt's mapping shape
+  from type-selector to exhaustive; phase 7 (`lossy-source-notes`) adds a
+  curated lossy-codec set for an advisory note and does not touch mapping shape
+  at all. Neither turns a profile exhaustive on the description available today.
+  So across every phase the roadmap currently names, the probe-on-success
+  branch is not a transitional cost waiting to be retired — it serves the
+  purpose issue #18 built it for: a guard against a silent drop, run on every
+  conversion because every conversion is, structurally, at risk of one. A phase
+  not yet on the roadmap could still introduce an exhaustive profile; nothing
+  here forecloses that.
