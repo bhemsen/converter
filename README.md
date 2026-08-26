@@ -15,6 +15,7 @@ installed version supports; today that is:
 
 ```
 Target formats:
+  mkv  .mkv  Video: copies almost every codec as-is, keeps font attachments
   mp4  .mp4  Video: copies compatible streams, re-encodes the rest to h264/aac
   wav  .wav  Audio: single stream, uncompressed 16-bit PCM
 ```
