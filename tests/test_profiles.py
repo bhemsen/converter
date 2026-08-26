@@ -13,6 +13,7 @@ from converter.profiles import (
     FLAC,
     JPG,
     MKV,
+    MOV,
     MP3,
     MP4,
     PNG,
@@ -34,51 +35,30 @@ from converter.profiles import (
 MAP_LETTERS = {"v": "video", "a": "audio", "s": "subtitle", "t": "attachment", "d": "data"}
 
 #: Every profile the registry ships. A new one joins the invariant checks here.
-SHIPPED = [MP4, WAV, MKV, MP3, FLAC, PNG, JPG, TIFF, BMP]
-
-#: A stand-in for the not-yet-shipped `mov` profile (`docs/specs/spec-video-formats.md`),
-#: shaped only enough to prove the degradation-ladder invariant's narrowed form:
-#: it maps `attachment` via `-map 0:t?` -- exactly `mov`'s pinned cheap attempt --
-#: but declares no `attachment` rule, because MOV's muxer rejects any mapped
-#: attachment outright. An attachment-bearing source fails the cheap attempt and
-#: is routed into the ladder instead of reaching the success-side check, so the
-#: type never needs a rule to keep that check honest (issue #39).
-MOV_SHAPED = Profile(
-    label="MOV (shaped)",
-    name="mov-shaped",
-    description="Stand-in for the invariant test, not a shipped profile",
-    target_suffix=".mov",
-    container_options=(),
-    cheap_attempt=Attempt(
-        label="remux",
-        options=flags("-map 0:v? -map 0:a? -map 0:s? -map 0:t? -c copy -c:s mov_text"),
-    ),
-    explicit_streams=False,
-    partial_mapping=True,
-    rules={
-        "video": StreamRule(copy_mask=frozenset({"h264"}), accept_options=flags("-c:v:{n} copy")),
-        "audio": StreamRule(copy_mask=frozenset({"aac"}), accept_options=flags("-c:a:{n} copy")),
-        "subtitle": StreamRule(
-            copy_mask=frozenset(), accept_options=(), drop_reason="not modelled here"
-        ),
-    },
-)
+SHIPPED = [MP4, WAV, MKV, MOV, MP3, FLAC, PNG, JPG, TIFF, BMP]
 
 #: Stream types each profile maps only to *force* the cheap attempt to fail when
 #: the source carries one -- never to carry it on the success side. The narrowed
 #: invariant (`docs/design/degradation-ladder.md`) exempts these from needing a
 #: rule: a type mapped to force a failure never reaches the success-side check.
+#: `mov` is THE motivating case for this exemption (issue #39): it maps
+#: `attachment` via `-map 0:t?` -- MOV's muxer rejects any mapped attachment
+#: outright -- but declares no `attachment` rule, since an attachment-bearing
+#: source fails the cheap attempt and is routed into the ladder instead of
+#: reaching the success-side check. Previously proven by a stand-in fixture,
+#: `MOV_SHAPED`; retired now that the real profile proves it directly, the same
+#: way `MP3_SHAPED` was retired by PR #53.
 FORCED_FAILURE_TYPES: dict[str, frozenset[str]] = {
     MP4.name: frozenset(),
     WAV.name: frozenset(),
     MKV.name: frozenset(),
+    MOV.name: frozenset({"attachment"}),
     MP3.name: frozenset(),
     FLAC.name: frozenset(),
     PNG.name: frozenset(),
     JPG.name: frozenset(),
     TIFF.name: frozenset(),
     BMP.name: frozenset(),
-    MOV_SHAPED.name: frozenset({"attachment"}),
 }
 
 #: Stream types whose `stream_limit` is enforced by the container's own muxer
@@ -97,6 +77,7 @@ MUXER_ENFORCED_LIMIT_TYPES: dict[str, frozenset[str]] = {
     MP4.name: frozenset(),
     WAV.name: frozenset(),
     MKV.name: frozenset(),
+    MOV.name: frozenset(),
     MP3.name: frozenset({"audio"}),
     FLAC.name: frozenset({"audio"}),
     # image2's muxer refuses to write more than one frame -- or more than one
@@ -107,7 +88,6 @@ MUXER_ENFORCED_LIMIT_TYPES: dict[str, frozenset[str]] = {
     JPG.name: frozenset({"video"}),
     TIFF.name: frozenset({"video"}),
     BMP.name: frozenset({"video"}),
-    MOV_SHAPED.name: frozenset(),
 }
 
 
@@ -165,13 +145,12 @@ def named_index_counts(profile: Profile) -> dict[str, int]:
     return counts
 
 
-#: `SHIPPED` plus the one remaining stand-in, so the invariant is checked
-#: against profiles that actually exercise both exemptions -- otherwise the
-#: narrowed reading and a stricter one would agree on every case tested. The
-#: muxer-enforced `stream_limit` exemption no longer needs a stand-in of its
-#: own: `MP3` and `FLAC` now prove it directly (`docs/specs/spec-audio-formats.md`),
-#: which is what retired the `MP3_SHAPED` fixture this list used to carry.
-INVARIANT_CASES = [*SHIPPED, MOV_SHAPED]
+#: Exactly `SHIPPED`: both exemptions are now proven by shipped profiles rather
+#: than a stand-in -- `MP3` and `FLAC` prove the muxer-enforced `stream_limit`
+#: exemption (`docs/specs/spec-audio-formats.md`, which retired `MP3_SHAPED`),
+#: and `MOV` now proves the force-failure exemption the same way, retiring
+#: `MOV_SHAPED`.
+INVARIANT_CASES = SHIPPED
 
 
 @pytest.mark.parametrize("profile", INVARIANT_CASES, ids=lambda profile: profile.label)
@@ -485,6 +464,90 @@ class TestMkvProfile:
         assert rule.stream_limit is None
 
 
+class TestMovProfile:
+    """Pins the shape Acceptance fixes for `mov` (issue #28,
+    `docs/specs/spec-video-formats.md`)."""
+
+    def test_label_and_suffix(self):
+        assert MOV.label == "MOV"
+        assert MOV.target_suffix == ".mov"
+
+    def test_name_and_description(self):
+        assert MOV.name == "mov"
+        assert MOV.description
+
+    def test_container_options_carry_faststart_once(self):
+        assert MOV.container_options == ("-movflags", "+faststart")
+
+    def test_cheap_attempt_selects_streams_blindly(self):
+        assert MOV.explicit_streams is False
+
+    def test_cheap_attempt_maps_every_stream_type_including_attachments(self):
+        """`0:t?` is mapped deliberately: MOV rejects a mapped attachment, so
+        an attachment-bearing source fails into the ladder instead of being
+        carried (Acceptance, spec-video-formats.md)."""
+        assert MOV.cheap_attempt.options == (
+            "-map",
+            "0:v?",
+            "-map",
+            "0:a?",
+            "-map",
+            "0:s?",
+            "-map",
+            "0:t?",
+            "-c",
+            "copy",
+            "-c:s",
+            "mov_text",
+        )
+
+    def test_cheap_attempt_is_declared_partial(self):
+        assert MOV.partial_mapping is True
+
+    def test_cheap_attempt_carries_the_standing_note(self):
+        assert MOV.cheap_attempt.notes == ("data and timecode streams are not carried into MOV",)
+
+    def test_last_resort_excludes_container_options(self):
+        assert MOV.last_resort is not None
+        assert MOV.last_resort.label == "re-encode"
+        assert "-movflags" not in MOV.last_resort.options
+
+    def test_has_exactly_the_three_stream_rules(self):
+        """No `attachment` rule: mapping `0:t?` only ever forces a failure,
+        never carries one on the success side (FORCED_FAILURE_TYPES above)."""
+        assert set(MOV.rules) == {"video", "audio", "subtitle"}
+
+    def test_video_and_audio_rules_carry_the_position_placeholder(self):
+        for stream_type in ("video", "audio"):
+            rule = MOV.rules[stream_type]
+            assert "{n}" in " ".join(rule.accept_options)
+            assert rule.fallback_options is not None
+            assert "{n}" in " ".join(rule.fallback_options)
+
+    def test_video_mask_excludes_vp9_and_av1_unlike_mp4(self):
+        """The likeliest copy-paste mistake in the phase (Acceptance,
+        spec-video-formats.md): MOV rejects vp9, av1 *and* vp8, while MP4
+        accepts vp9 and av1."""
+        assert "vp9" not in MOV.rules["video"].copy_mask
+        assert "av1" not in MOV.rules["video"].copy_mask
+        assert "vp8" not in MOV.rules["video"].copy_mask
+        assert "vp9" in MP4.rules["video"].copy_mask
+        assert "av1" in MP4.rules["video"].copy_mask
+
+    def test_video_mask_includes_ffv1_and_theora(self):
+        assert {"ffv1", "theora"} <= MOV.rules["video"].copy_mask
+
+    def test_audio_mask_includes_dts_and_pcm_s16le(self):
+        assert {"dts", "pcm_s16le"} <= MOV.rules["audio"].copy_mask
+
+    def test_subtitle_rule_transcodes_to_mov_text_and_has_no_fallback(self):
+        rule = MOV.rules["subtitle"]
+
+        assert rule.accept_options == ("-c:s:{n}", "mov_text")
+        assert rule.fallback_options is None
+        assert rule.drop_reason == "bitmap subtitles cannot be stored in MOV"
+
+
 class TestMp3Profile:
     """Pins the shape Acceptance fixes for `mp3` (issue #21,
     `docs/specs/spec-audio-formats.md`)."""
@@ -768,6 +831,7 @@ class TestRegistry:
             "mkv": MKV,
             "mp3": MP3,
             "flac": FLAC,
+            "mov": MOV,
             "png": PNG,
             "jpg": JPG,
             "tiff": TIFF,
@@ -791,6 +855,10 @@ class TestResolveTarget:
         assert resolve_target("mp3") is MP3
         assert resolve_target("flac") is FLAC
 
+    @pytest.mark.parametrize("target", ["mov", "MOV", ".mov", ".MOV", "Mov"])
+    def test_accepts_mov_name_case_and_dot_variants(self, target):
+        assert resolve_target(target) is MOV
+
     @pytest.mark.parametrize(
         ("target", "profile"), [("png", PNG), ("jpg", JPG), ("tiff", TIFF), ("bmp", BMP)]
     )
@@ -800,7 +868,7 @@ class TestResolveTarget:
     def test_unknown_target_raises_value_error_listing_available_targets(self):
         with pytest.raises(
             ValueError,
-            match=r"webm.*available targets: bmp, flac, jpg, mkv, mp3, mp4, png, tiff, wav",
+            match=r"webm.*available targets: bmp, flac, jpg, mkv, mov, mp3, mp4, png, tiff, wav",
         ):
             resolve_target("webm")
 

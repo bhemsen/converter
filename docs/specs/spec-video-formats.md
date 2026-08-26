@@ -363,3 +363,31 @@ New-Item -ItemType Directory -Force in
   (issues #39/#40); `tests/test_profiles.py` adds `MKV` to `SHIPPED` with an
   empty entry in both exemption dicts, so the existing parametrized invariant
   tests check it machine-side rather than by review.
+
+- 2026-08-26 (issue #28): Added the `mov` `Profile` -- THE motivating case for
+  the `FORCED_FAILURE_TYPES` exemption issue #39 wrote (`docs/design/
+  degradation-ladder.md`): its cheap attempt maps `attachment` via `-map 0:t?`
+  deliberately, but declares no `attachment` rule, because MOV's muxer rejects
+  any mapped attachment outright. Re-measured against real ffmpeg 9.0 while
+  implementing, every muxer fact in the Prior decisions table above held
+  exactly as written: the video mask excludes vp9, av1 *and* vp8 while
+  including ffv1 and theora; the audio mask includes dts and pcm_s16le; a
+  mov_text-transcoded subtitle round-trips on the cheap attempt itself; and an
+  attachment-bearing source fails the cheap attempt (`-map 0:t?` plus `-c
+  copy` on a font stream MOV cannot mux) and lands on the selective rung,
+  which drops it with a real per-stream note -- confirmed end-to-end through
+  the CLI against a font-attached MKV source, ffprobing the MOV output to
+  confirm the attachment stream is gone rather than checking by eye. No spec
+  correction was needed this time, unlike issue #27's `mkv` mov_text finding.
+
+  The stand-in fixture `MOV_SHAPED` (`tests/test_profiles.py`) is retired now
+  that the real `mov` profile proves the force-failure exemption directly --
+  `MOV` joins `SHIPPED` and `INVARIANT_CASES`, with
+  `FORCED_FAILURE_TYPES[MOV.name] == frozenset({"attachment"})` and an empty
+  `MUXER_ENFORCED_LIMIT_TYPES` entry -- the same retirement shape PR #53 used
+  for `MP3_SHAPED` once `MP3` and `FLAC` shipped. `jobs.py` needed no change:
+  the missing `attachment` rule already routes through `_structural_drop`'s
+  existing "no rule for this type" branch, so the per-stream drop note falls
+  out of the engine that shipped for `mp4`'s attachment case rather than
+  needing new logic, keeping the PR's diff to `converter/profiles.py`,
+  `README.md`, `docs/specs/spec-video-formats.md` and `tests/`.
