@@ -149,7 +149,9 @@ milestone. A completed spec is moved to `docs/specs/archive/`.
 ### The mixed-tree decision, in full
 
 Selection cannot know whether a source *can* produce the target: that needs a
-probe, and a probe on the happy path is forbidden. So under `--to wav`, a
+probe before any attempt runs, and selection has none to spend — the
+success-side probe issue #18 added to the ladder happens only *after* an
+attempt has succeeded, so it cannot inform selection. So under `--to wav`, a
 video-only `.mkv` is selected, its attempt fails, the probe finds no audio, the
 selective rung has no streams to map, WAV declares no last-resort rung — and the
 file lands as `failed`, exit 1. Pointing `--to wav` at any mixed tree therefore

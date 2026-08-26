@@ -66,6 +66,25 @@ def _discard_partial_output(dst: Path, *, existed: bool) -> None:
         dst.unlink(missing_ok=True)
 
 
+def _verify_cheap_attempt(job: Job, task: Task, tools: Tools) -> tuple[str, ...]:
+    """Name whatever a structurally partial cheap attempt left behind.
+
+    The one place ffprobe runs after an attempt has *succeeded*. A job whose
+    cheap attempt maps the source exhaustively declares no verifier and never
+    gets here, so the common case keeps its probe-free happy path
+    (``docs/design/degradation-ladder.md``).
+    """
+    if job.verify_success is None:
+        return ()
+    try:
+        streams = ffmpegtool.probe_streams(tools, task.src)
+    except ProbeError as exc:
+        # A run whose completeness could not be established must not read as a
+        # plain success either (``docs/constitution.md``).
+        return (f"could not verify which source streams were kept: {exc}",)
+    return job.verify_success(streams)
+
+
 def _attempt_conversion(job: Job, task: Task, tools: Tools, *, overwrite: bool) -> Result:
     existed = task.dst.exists()
     if existed and not overwrite:
@@ -84,7 +103,11 @@ def _attempt_conversion(job: Job, task: Task, tools: Tools, *, overwrite: bool) 
         argv = ffmpegtool.build_argv(tools.ffmpeg, task.src, attempt.options, task.dst)
         result = ffmpegtool.run(argv)
         if result.ok:
-            return Result(task, Outcome.CONVERTED, attempt.label, attempt.notes)
+            # `probed` still being false means this was the cheap attempt: every
+            # later rung was built from the stream list itself and already
+            # carries accurate notes, so only this one needs verifying.
+            extra = () if probed else _verify_cheap_attempt(job, task, tools)
+            return Result(task, Outcome.CONVERTED, attempt.label, (*attempt.notes, *extra))
 
         errors.append(f"[{attempt.label}] {result.stderr or f'exit code {result.returncode}'}")
         if not probed:

@@ -116,7 +116,11 @@ Instead of UI components, these are the rules a diagram in this project follows.
   engine is generic. A diagram that takes the generic form says so in its header.
 - **Cost markers** — any node that spends a subprocess call says so
   (`ffprobe`, `ffmpeg`). The point of the ladder is that ffprobe stays off the
-  happy path, and a diagram that hides where processes start defeats that.
+  happy path of an *exhaustive* cheap attempt, and that the one exception — a
+  cheap attempt the profile declares partial by construction, which is probed
+  once even on success so its silent drops get named — is visible as its own
+  node on the success side. A diagram that hides where processes start defeats
+  both halves of that.
 
 ## Do's and Don'ts
 

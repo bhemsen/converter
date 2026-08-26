@@ -7,9 +7,39 @@ import pytest
 from converter import batch
 from converter.batch import Outcome, Result, Task, convert_one, run_batch, summarise
 from converter.ffmpegtool import CommandResult, ProbeError, Stream, Tools
-from converter.jobs import MKV_TO_MP4, OPUS_TO_WAV
+from converter.jobs import MKV_TO_MP4, OPUS_TO_WAV, Job, make_attempts, make_verifier
+from converter.profiles import Attempt, Profile, StreamRule, flags
 
 TOOLS = Tools(ffmpeg="ffmpeg", ffprobe="ffprobe")
+
+
+def exhaustive_job() -> Job:
+    """A job whose cheap attempt maps everything its source can carry.
+
+    No shipped profile is exhaustive -- MP4's ``?``-selectors and WAV's single
+    index are both partial by construction -- so the half of the narrowed
+    happy-path rule that keeps an exhaustive cheap attempt probe-free needs a
+    profile of its own before it can be asserted at all.
+    """
+    profile = Profile(
+        label="EXH",
+        target_suffix=".exh",
+        container_options=(),
+        cheap_attempt=Attempt(label="copy-all", options=flags("-c copy")),
+        explicit_streams=False,
+        partial_mapping=False,
+        rules={"video": StreamRule(frozenset({"h264"}), flags("-c:v copy"))},
+    )
+    first_attempt, retries = make_attempts(profile)
+    return Job(
+        name="exhaustive",
+        description="a test double, not a shipped format",
+        suffixes=(".mkv",),
+        target_suffix=profile.target_suffix,
+        first_attempt=first_attempt,
+        retries=retries,
+        verify_success=make_verifier(profile),
+    )
 
 
 @pytest.fixture
@@ -111,16 +141,21 @@ class TestConvertOne:
         assert len(fake_ffmpeg.calls) == 2
         assert any("pcm_s16le" in note for note in result.notes)
 
-    def test_probe_does_not_run_when_the_first_attempt_succeeds(
+    def test_probe_does_not_run_when_an_exhaustive_first_attempt_succeeds(
         self, tmp_path, fake_ffmpeg, monkeypatch
     ):
-        """An ffprobe round-trip per file would be pure waste on the happy path."""
+        """An ffprobe round-trip per file would be pure waste on the happy path.
+
+        The narrowed rule (`docs/constitution.md`): a cheap attempt whose mapping
+        is exhaustive has nothing a probe could reveal, so it never pays for one.
+        """
         task = make_task(tmp_path)
         task.dst.parent.mkdir(parents=True)
         probes = spy_on_probe(monkeypatch, [])
 
-        convert_one(MKV_TO_MP4, task, TOOLS, overwrite=False)
+        result = convert_one(exhaustive_job(), task, TOOLS, overwrite=False)
 
+        assert result.outcome is Outcome.CONVERTED
         assert probes == []
 
     def test_probe_does_run_once_the_first_attempt_fails(self, tmp_path, fake_ffmpeg, monkeypatch):
@@ -191,6 +226,98 @@ class TestConvertOne:
 
         assert result.outcome is Outcome.FAILED
         assert "kaboom" in result.error
+
+
+class TestPartialCheapAttemptVerification:
+    """The success-side probe: a silent drop must never read as a plain success.
+
+    Every test here drives the *cheap-attempt-succeeds* path -- `exit_codes` stays
+    at its default `[0]` -- rather than calling `.retries()` directly, because
+    that path is the one that used to report `converted` with no note at all.
+    """
+
+    def test_a_dropped_attachment_is_named_on_a_successful_remux(
+        self, tmp_path, fake_ffmpeg, monkeypatch
+    ):
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        probes = spy_on_probe(
+            monkeypatch, [Stream(0, "video", "h264"), Stream(1, "attachment", "ttf")]
+        )
+
+        result = convert_one(MKV_TO_MP4, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert result.attempt == "remux"
+        assert len(fake_ffmpeg.calls) == 1
+        # The other half of "at most one probe per file": the success side pays
+        # for exactly one, never one per rung and never a second on the way out.
+        assert probes == [task.src]
+        assert result.notes == ("attachment stream 1 (ttf) dropped: not supported by MP4",)
+
+    def test_a_dropped_surplus_audio_stream_is_named_on_a_successful_pcm_run(
+        self, tmp_path, fake_ffmpeg
+    ):
+        src = tmp_path / "two-tone.opus"
+        src.write_bytes(b"data")
+        task = Task(src, tmp_path / "out" / "two-tone.wav")
+        task.dst.parent.mkdir(parents=True)
+        fake_ffmpeg.streams = [Stream(0, "audio", "opus"), Stream(1, "audio", "opus")]
+
+        result = convert_one(OPUS_TO_WAV, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert result.attempt == "pcm_s16le"
+        assert len(fake_ffmpeg.calls) == 1
+        assert result.notes == ("audio stream 1 (opus) dropped: WAV holds 1 audio stream",)
+
+    def test_a_source_the_cheap_attempt_fully_maps_still_gets_no_note(self, tmp_path, fake_ffmpeg):
+        """The probe is spent, but it must not invent a loss that did not happen."""
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        fake_ffmpeg.streams = [Stream(0, "video", "h264"), Stream(1, "audio", "aac")]
+
+        result = convert_one(MKV_TO_MP4, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert result.notes == ()
+
+    def test_a_codec_the_copy_mask_misses_is_not_reported_as_re_encoded(
+        self, tmp_path, fake_ffmpeg
+    ):
+        """ffmpeg exited 0, so it copied the stream; claiming a re-encode that
+        never ran would swap one dishonest report for another."""
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        fake_ffmpeg.streams = [Stream(0, "video", "ffv1")]
+
+        result = convert_one(MKV_TO_MP4, task, TOOLS, overwrite=False)
+
+        assert result.notes == ()
+
+    def test_an_unreadable_source_is_not_reported_as_a_plain_success(self, tmp_path, fake_ffmpeg):
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        fake_ffmpeg.probe_error = "unreadable"
+
+        result = convert_one(MKV_TO_MP4, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert result.notes == ("could not verify which source streams were kept: unreadable",)
+
+    def test_a_later_rung_is_not_verified_a_second_time(self, tmp_path, fake_ffmpeg, monkeypatch):
+        """The selective rung was built from the stream list itself, so its own
+        notes are already accurate and a second probe would buy nothing."""
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        fake_ffmpeg.exit_codes = [1, 0]
+        probes = spy_on_probe(monkeypatch, [Stream(0, "video", "vp8")])
+
+        result = convert_one(MKV_TO_MP4, task, TOOLS, overwrite=False)
+
+        assert result.attempt == "selective"
+        assert len(probes) == 1
+        assert result.notes == ("video stream 0 (vp8) re-encoded to h264",)
 
 
 class TestRunBatch:

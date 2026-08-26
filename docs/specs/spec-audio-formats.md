@@ -70,9 +70,16 @@ merged.** Everything this phase builds on — the `PROFILES` registry, `name` an
 - A target format is data, not code (`docs/constitution.md`,
   `docs/architecture.md`): `converter/profiles.py` stays a leaf, and this phase's
   diff proves the rule rather than asserting it.
-- `ffprobe` never runs on the happy path. This is what bounds how precise a note
-  can be for a conversion the cheap attempt completes — see the two open
-  decisions.
+- `ffprobe` never runs on the happy path of a cheap attempt whose mapping is
+  *exhaustive*. Issue #18 narrowed this after the spec was merged: a profile
+  whose cheap attempt is partial by construction declares
+  `partial_mapping=True` and is probed once on its success, so what that
+  mapping could not carry is named. Every cheap attempt in the table below is
+  an `-map 0:a?` / `-map 0:a:0` shape, so every profile in this phase is
+  partial and must declare it -- together with a rule for each stream type it
+  maps, per the invariant in `docs/design/degradation-ladder.md`. This is no
+  longer what bounds how precise a note can be on a completed cheap attempt;
+  see the supersession note on the cover-art decision below.
 - No second external dependency, and no second backend.
 - Never report success for a conversion that silently dropped something.
 - The test suite keeps passing with no ffmpeg installed.
@@ -237,6 +244,35 @@ gate picks:
 to `wav`.** The noise was judged the smaller cost against a silent loss, and
 touching `wav` would have changed a phase-1 note assertion this phase promised to
 leave alone. `wav`'s hole stays open and is now written down.
+
+> **Superseded in part, 2026-08-26 (issue #18).** The premise of this whole
+> decision — "a conversion the cheap attempt completes has **no stream list**" —
+> is no longer true. `docs/constitution.md`'s happy-path rule was narrowed: a
+> cheap attempt that is *partial by construction* is probed once on its success,
+> and every source stream its mapping could not carry is named with its index and
+> codec. Two consequences this phase must settle before it implements:
+>
+> - **`wav`'s hole is already closed**, ahead of this spec. `WAV` declares
+>   `partial_mapping=True`, so an `.opus` carrying an `attached_pic` now reports
+>   `video stream 1 (mjpeg) dropped: not supported by WAV` on the success path.
+>   The sentence above saying the hole stays open is obsolete; the phase-1 note
+>   assertion it protected was on `Attempt.notes`, which is untouched — the note
+>   comes from the verification, not from the cheap attempt's data.
+> - **Option 1's standing note is now redundant, and doubles up.** A fixed line
+>   like "non-audio streams, including cover art, are not carried into MP3" would
+>   print *alongside* the verification's precise per-stream note for exactly the
+>   files that lost something, and alone for the majority that lost nothing —
+>   which is the noise cost the gate accepted only because nothing better was
+>   available. Whether to drop the standing note in favour of the verification is
+>   this phase's call to re-take at its own gate, not issue #18's to make; it is
+>   recorded here so the choice is deliberate rather than inherited.
+>
+> The related 2026-08-25 decision row above ("on the happy path the muxer is the
+> authority, not the copy mask") still stands: the verification reads only
+> *structural* verdicts and never a codec-level one, so it still cannot catch a
+> Vorbis stream shipped inside a `.opus`. Only its stated reason — that a probe
+> is forbidden there — has changed to "that probe deliberately does not look at
+> codecs".
 
 ### The opus decision, in full (resolved at the gate)
 

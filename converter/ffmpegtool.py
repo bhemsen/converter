@@ -194,8 +194,10 @@ def version(tools: Tools) -> str:
 def probe_streams(tools: Tools, src: str | os.PathLike[str]) -> list[Stream]:
     """List the elementary streams of *src*.
 
-    Only called after a stream-copy attempt has already failed, so the ffprobe
-    round-trip is never on the happy path.
+    Called at most once per file, and never for a cheap attempt whose mapping is
+    exhaustive: either after an attempt has failed, or -- when the profile
+    declares its cheap attempt partial by construction -- to name what that
+    attempt could not carry (``docs/design/degradation-ladder.md``).
     """
     result = run(
         [

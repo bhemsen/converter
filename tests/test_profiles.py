@@ -3,11 +3,60 @@
 import ast
 import dataclasses
 import inspect
+import itertools
 
 import pytest
 
 from converter import profiles
 from converter.profiles import MP4, WAV, Attempt, Profile, StreamRule, flags
+
+#: ffmpeg's stream-specifier letters, as `docs/design/degradation-ladder.md` uses them.
+MAP_LETTERS = {"v": "video", "a": "audio", "s": "subtitle", "t": "attachment", "d": "data"}
+
+#: Every profile the registry ships. A new one joins the invariant checks here.
+SHIPPED = [MP4, WAV]
+
+
+def mapped_types(profile: Profile) -> dict[str, bool]:
+    """Stream types the cheap attempt maps -> whether it maps them *blindly*.
+
+    Reading the option list is the point here and forbidden in the engine: this
+    check exists precisely to catch a profile whose declared mapping and declared
+    rules disagree, which needs both readings side by side.
+    """
+    options = profile.cheap_attempt.options
+    mapped: dict[str, bool] = {}
+    for flag, value in itertools.pairwise(options):
+        if flag != "-map" or not value.startswith("0:"):
+            continue
+        selector = value[2:].removesuffix("?")
+        letter = selector.split(":")[0]
+        if letter in MAP_LETTERS:
+            # "0:a?" selects every audio stream; "0:a:0" names exactly one.
+            mapped[MAP_LETTERS[letter]] = ":" not in selector
+    return mapped
+
+
+@pytest.mark.parametrize("profile", SHIPPED, ids=lambda profile: profile.label)
+class TestPartialMappingInvariant:
+    """What `degradation-ladder.md` says a `partial_mapping` profile owes.
+
+    The success-side verification reads the declared rules instead of the option
+    list, which is sound only while the two agree. Checked per profile rather
+    than left to review, because the profile that breaks it is by definition one
+    nobody has written yet.
+    """
+
+    def test_every_stream_type_the_cheap_attempt_maps_has_a_rule(self, profile):
+        """Otherwise a stream the attempt faithfully copied is announced as lost."""
+        assert set(mapped_types(profile)) <= set(profile.rules)
+
+    def test_no_blindly_mapped_type_carries_a_stream_limit(self, profile):
+        """A blind selector maps every stream of its type, so a limit it does not
+        enforce would have the verification report drops the output disproves."""
+        blind = [kind for kind, is_blind in mapped_types(profile).items() if is_blind]
+
+        assert all(profile.rules[kind].stream_limit is None for kind in blind)
 
 
 class TestLeafModule:
@@ -54,6 +103,11 @@ class TestMp4Profile:
     def test_cheap_attempt_selects_streams_blindly(self):
         assert MP4.explicit_streams is False
 
+    def test_cheap_attempt_is_declared_partial(self):
+        """`-map 0:v? -map 0:a? -map 0:s?` selects no attachment and no data
+        stream, so a source carrying one loses it without ffmpeg complaining."""
+        assert MP4.partial_mapping is True
+
     def test_last_resort_excludes_container_options_too(self):
         assert MP4.last_resort is not None
         assert MP4.last_resort.label == "re-encode"
@@ -88,6 +142,11 @@ class TestWavProfile:
     def test_cheap_attempt_selects_streams_explicitly(self):
         assert WAV.explicit_streams is True
         assert WAV.cheap_attempt.options == ("-map", "0:a:0", "-c:a", "pcm_s16le")
+
+    def test_cheap_attempt_is_declared_partial(self):
+        """One index is named and nothing else is, so a second audio stream or
+        an embedded cover image is left behind."""
+        assert WAV.partial_mapping is True
 
     def test_declares_no_last_resort(self):
         assert WAV.last_resort is None
@@ -140,6 +199,7 @@ class TestValueTypesAreFrozen:
             "container_options",
             "cheap_attempt",
             "explicit_streams",
+            "partial_mapping",
             "rules",
             "last_resort",
         }

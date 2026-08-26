@@ -51,6 +51,10 @@ flowchart TD
 - **Every note names three things:** the stream index, that stream's codec, and
   what was given up (`docs/vision.md`). A note that omits one of them is a review
   finding. A stream with no codec name reported by ffprobe reads as `unknown`.
+  The one note that names no stream is the ladder's *unverified-run* note, which
+  exists precisely because no stream list could be obtained
+  (`degradation-ladder.md`); it reports the absence of the facts this rule
+  demands, and is not a per-stream verdict at all.
 - **A re-encode that gives up nothing carries no note.** Decoding to a container's
   only codec is the definition of that target format, not a loss — WAV's PCM rule
   declares no note, MP4's `aac` and `h264` fallbacks do. Whether the note exists

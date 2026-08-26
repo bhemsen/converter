@@ -84,8 +84,11 @@ least one file failed, and `2` for a usage error or a missing ffmpeg.
 1. **Remux first.** Video, audio and text subtitles are stream-copied into MP4
    (`-c copy`, subtitles to `mov_text`). Nothing is re-encoded, so there is no
    quality loss and it runs at disk speed. MKV attachments (such as fonts for ASS
-   subtitles) and data streams are dropped, because MP4 cannot hold them.
-2. **If that fails, look at the file.** `ffprobe` reports the streams, and each
+   subtitles) and data streams are dropped, because MP4 cannot hold them — and
+   because that mapping cannot carry them whatever the file turns out to hold,
+   a successful remux still spends one `ffprobe` call to name each stream it left
+   behind, rather than reporting a plain success.
+2. **If that fails, look at the file instead.** `ffprobe` reports the streams, and each
    one is handled individually: compatible streams are still copied, incompatible
    audio or video is re-encoded, and bitmap subtitles (PGS, VobSub) are dropped.
 3. **As a last resort, re-encode.** One video and all audio streams to
