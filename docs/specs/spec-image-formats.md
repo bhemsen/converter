@@ -416,3 +416,30 @@ New-Item -ItemType Directory -Force in
   valid against real ffmpeg (`-map 0:v:0` already selects the one stream a
   bare `-crf` would apply to). A second run over the converted fixtures
   reports `0 converted, 4 skipped`, exit 0.
+- 2026-08-26: Issue #36 found that almost every item on its own acceptance
+  list was already satisfied -- issue #23's registry-wide structural
+  invariants (`--list-formats` line count, the README byte-match) cover the
+  registry-level checks, and issues #34/#35 already shipped per-profile argv
+  pinning for every one of the seven image targets, including the "no
+  audio/subtitle/attachment rule, `stream_limit=1`" shape and a standing note
+  per profile that carries the exact wording this issue asked for. Rather
+  than re-implement that coverage, this issue added the four genuinely new
+  cross-cutting rails no earlier issue stated as one property of the family:
+  (1) `webp` is pinned as the *only* image profile whose cheap attempt keeps
+  a real copy, stated once across all seven rather than left implicit in each
+  profile's own argv pin; (2) no image profile's description, notes or
+  `drop_reason`/`fallback_name` text may mention EXIF or ICC, protecting
+  `docs/vision.md`'s non-goal from a later optimistic edit -- nothing in the
+  registry violates it today; (3)/(4) `gif` and `webp` never carry ffmpeg's
+  `-still-picture` flag on any attempt, while `avif` always does on both its
+  `cheap_attempt` and its `last_resort`, making the "animated" vs "still,
+  self-policing" grouping this spec's own table draws an explicit, checked
+  invariant rather than an implication of the byte-pinned argv. Each of the
+  four was proven to fail against a hand-mutated copy of a shipped profile in
+  a scratch script outside the repo, and to pass against the real registry.
+  No mutation surfaced a defect in a shipped profile -- all four rails hold
+  today; they exist to catch a future regression. Machine coverage still
+  cannot prove a pinned argv is accepted by real ffmpeg -- the test suite
+  stubs the subprocess boundary by constitution -- so that evidence remains
+  whatever issues #34 and #35 already measured against ffmpeg 9.0, recorded
+  above.

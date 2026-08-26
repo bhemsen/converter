@@ -1404,6 +1404,91 @@ class TestAvifProfile:
         assert "a multi-frame source is reduced to a single frame" in AVIF.last_resort.notes
 
 
+#: The full seven-profile image family, independent of the image2/animated
+#: split `TestImage2Profiles` and `TestAnimatedTrioShape` parametrize over --
+#: the rails below hold across the whole family at once, or contrast members
+#: of it directly, rather than pinning one muxer group's argv at a time
+#: (issue #36, docs/specs/spec-image-formats.md).
+IMAGE_PROFILES = [PNG, JPG, TIFF, BMP, GIF, WEBP, AVIF]
+
+
+@pytest.mark.parametrize("profile", IMAGE_PROFILES, ids=lambda profile: profile.label)
+class TestImageProfilesCrossCuttingRails:
+    """Guard rails for issue #36 that state a property of the *family* --
+    distinct from `TestImage2Profiles` and `TestAnimatedTrioShape` above,
+    which already pin each profile's own argv byte-for-byte but never assert
+    either property as a single invariant spanning all seven.
+    """
+
+    def test_webp_is_the_only_cheap_attempt_that_keeps_a_real_copy(self, profile):
+        """`webp`'s muxer self-polices (a non-matching codec copy exits 127,
+        spec-image-formats.md's muxer-facts table), so it alone can keep
+        `-c copy` safely. Every other image profile must force its own
+        encoder instead: the image2 muxer behind `png`/`jpg`/`tiff`/`bmp`
+        accepts *any* video codec under `-c copy` (measured:
+        `flat.jpg -c copy out.png` exits 0 and writes a JPEG named `.png`),
+        and `gif`/`avif` were deliberately moved off a copy-based cheap
+        attempt too, so their standing notes print on the rung that always
+        wins rather than only for the one input that loses nothing. A later
+        edit that "normalises" webp to match the rest, or quietly reverts one
+        of the other six back to a copy, fails here even though it would
+        leave each profile's own argv-pinning test technically unexamined.
+        """
+        if profile.name == "webp":
+            assert "copy" in profile.cheap_attempt.options
+        else:
+            assert "copy" not in profile.cheap_attempt.options
+
+    def test_no_profile_promises_exif_or_icc_preservation(self, profile):
+        """`docs/vision.md`'s Non-goals: "EXIF/ICC preservation" -- ffmpeg
+        strips metadata by default, and PNG cannot carry EXIF at all by
+        construction, so promising either would be a lie. No field in any
+        shipped image profile makes that promise today; this pins that a
+        later edit -- an optimistic description, a note copy-pasted from a
+        format that genuinely does carry EXIF -- cannot reintroduce it
+        without this test naming the regression.
+        """
+        texts = [profile.description, profile.cheap_attempt.label]
+        texts += list(profile.cheap_attempt.notes)
+        if profile.last_resort is not None:
+            texts += [profile.last_resort.label, *profile.last_resort.notes]
+        for rule in profile.rules.values():
+            if rule.drop_reason is not None:
+                texts.append(rule.drop_reason)
+            if rule.fallback_name is not None:
+                texts.append(rule.fallback_name)
+
+        joined = " ".join(texts).lower()
+        assert "exif" not in joined
+        assert "icc" not in joined
+
+
+class TestAnimatedTrioFrameReduction:
+    """Verification (spec-image-formats.md): `gif` and `webp` never reduce
+    frames -- both write every frame of a multi-frame source, a genuine
+    animation -- while `avif`'s muxer keeps exactly one displayed frame no
+    matter what is asked of it (measured: dropping `-still-picture 1` still
+    yields one frame), which is why only its attempts carry that flag. The
+    image2 four's single-frame-ness is a different mechanism entirely --
+    `last_resort`'s own `-frames:v 1` extraction, already pinned by
+    `TestImage2Profiles` -- so this class is scoped to the trio the spec's
+    "animated" vs "still, self-policing" grouping actually contrasts.
+    """
+
+    def test_gif_and_webp_never_carry_the_still_picture_flag(self):
+        for profile in (GIF, WEBP):
+            attempts = [profile.cheap_attempt]
+            if profile.last_resort is not None:
+                attempts.append(profile.last_resort)
+            for attempt in attempts:
+                assert "-still-picture" not in attempt.options
+
+    def test_avif_always_carries_the_still_picture_flag(self):
+        assert AVIF.last_resort is not None
+        for attempt in (AVIF.cheap_attempt, AVIF.last_resort):
+            assert "-still-picture" in attempt.options
+
+
 class TestRegistry:
     def test_keys_are_each_profile_s_own_name(self):
         assert PROFILES == {
