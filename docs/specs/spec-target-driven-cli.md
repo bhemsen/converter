@@ -402,3 +402,60 @@ reusing the fixtures the phase-1 gate synthesises:
   spec's own mixed-tree write-up warns against. Fixed: an empty stream list now
   returns `None` too, so the source falls through to the ordinary ladder and
   ends up `failed` with its stderr kept, same as before this issue.
+- 2026-08-26 (#15): The routing step is a named public function, `cli.dispatch`,
+  rather than an inline block in `main()`. `main()` owns only the bare-invocation
+  prompt and the exception-to-exit-code mapping; everything with an argument list
+  in hand goes through `dispatch`. That is what lets the prompt round-trip test
+  assert on the *router* instead of on one parser, which is the property this
+  spec's Risks table names — a prompted `mirror` argv the convert parser cannot
+  parse is exactly what it protects.
+- 2026-08-26 (#15): `--list-formats` is *also* declared on the convert parser,
+  even though `dispatch` intercepts it before parsing and its parsed value is
+  never read. Without the declaration `converter --help` would not list a flag
+  the epilog tells the reader to run, which is the discoverability regression the
+  epilog decision exists to prevent. The comment at the declaration says so, so
+  the apparently dead argument is not "cleaned up" later.
+- 2026-08-26 (#15): The self-write skips are built in `cli.py` as ordinary
+  `batch.Result` values and folded into the *same* `summarise()` call as the
+  batch's own results. Selection happens before the batch exists, so the
+  alternative would have been handing `run_batch` a list of pre-decided
+  outcomes — plumbing in `batch.py` for a decision `batch.py` does not make. The
+  counted-skip promise of `docs/design/source-selection.md` is therefore met
+  without a second summary type.
+- 2026-08-26 (#15): A run whose selection produces only skips never resolves the
+  tools: `_run_tasks` short-circuits on an empty task list. Otherwise an in-place
+  re-run over a finished tree — the exact invocation `docs/vision.md`'s
+  idempotence criterion names — would fail with "ffmpeg was not found" on a
+  machine where it is not installed, despite having no conversion to run.
+- 2026-08-26 (#15): The pre-batch skip notes are **not** gated on `--quiet`.
+  Found by the hand smoke test: `-q` hid the self-write note while the batch's
+  own skip notes (written through the progress bar, which `-q` only disables)
+  still printed, so one skipped file was named and another was not in the same
+  run. `--quiet` hides the progress bar, not the reasons.
+- 2026-08-26 (#15): The `ast` format-name check lives in `tests/test_cli.py`
+  rather than in `tests/test_argv.py`, and it walks *every* `ast.Constant`
+  string reachable from the module — which covers the literal parts of
+  f-strings, where a format name would most plausibly be interpolated. Two
+  companion tests keep it from going vacuous: a canary asserting the walker
+  finds a planted format name, and one asserting a docstring is excluded.
+- 2026-08-26 (#15): The positional metavars became `INPUT` / `OUTPUT` (the
+  spec's own spelling) while the argparse dests stay `input_dir` /
+  `output_dir`, so `_resolve_output_root` and every caller are unchanged. The
+  two usage messages it raises were reworded to match the metavar the user
+  actually sees.
+- 2026-08-26 (#15, review round 1): The epilog test was vacuous. It asserted the
+  mirror token and the list flag appeared in `format_help()`, which is true with
+  no epilog at all — `--mirror-to` contains the mirror token, and
+  `--list-formats` is an option on that very parser. It now asserts on
+  `parser.epilog` plus the rendered `mirror --help` phrase, so the one thing
+  keeping the mirror *sub-command* discoverable is actually pinned.
+- 2026-08-26 (#15, review round 1): The prompt used `str.isdigit()`, which is
+  true for characters `int()` rejects (a superscript digit). `prompt_for_argv`
+  runs *outside* `main()`'s exception handling, so such an answer escaped as a
+  traceback rather than as "Unknown selection". Changed to `str.isdecimal()`,
+  with a test.
+- 2026-08-26 (#15, review round 1): The only collision test monkeypatched
+  `find_collisions`, justified by a case-sensitivity argument that stopped
+  holding when one target began drawing in several source suffixes: `a.mkv` plus
+  `a.opus` under one target is a genuine collision on every platform. A real one
+  was added next to the stubbed message-formatting test.
