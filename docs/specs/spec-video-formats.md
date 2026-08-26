@@ -447,3 +447,39 @@ New-Item -ItemType Directory -Force in
   (`test_a_source_webm_cannot_hold_at_all_is_unsupported`), using the same
   attachment-only stream shape the real fixture would have produced had
   ffmpeg been willing to write one.
+- 2026-08-26 (issue #30): Issue #23 (PR #61) had already landed registry-wide
+  structural rails (`TestRegistryStructuralInvariants` in
+  `tests/test_profiles.py`) and this phase's own per-profile tests already
+  pinned `mkv`'s and `mov`'s `0:t?` mapping against `webm`'s absence of it, and
+  each of the three profiles' `last_resort is not None`, so those two
+  acceptance bullets needed no new test -- re-implementing them would have
+  been a second copy of an existing guard rail, the cost the parent task
+  explicitly warned against. Two bullets did need new work: `mp4` had no
+  whole-`Profile` snapshot test the way `wav` got in phase 3
+  (`test_profile_is_byte_for_byte_unchanged_since_phase_2`), even though three
+  siblings were landing in the same registry around it, so
+  `test_profile_is_byte_for_byte_unchanged_since_before_this_phase` closes
+  that gap the same way; and the README's format list already carried `mkv`,
+  `mov` and `webm` (added when their own issues landed), so that bullet was
+  already satisfied and needed no edit.
+
+  Beyond the acceptance list, three genuinely cross-profile rails were added
+  to `TestRegistryStructuralInvariants`/a new `TestRegistryTargetCoherence`
+  class, targeting bug classes the per-profile tests structurally cannot catch
+  because each only ever looks at its own profile: (1) every `StreamRule`
+  whose `stream_limit` is `None` must carry ffmpeg's `{n}` position
+  placeholder in its codec options -- generalising issue #22's real bug
+  (an unindexed `-c:a copy` silently re-encoding an already-accepted stream,
+  because ffmpeg's own unindexed codec options are not positional) to the
+  whole registry rather than the one profile that motivated it; (2) every
+  declared `last_resort` must carry at least one note -- generalising issue
+  #34's real bug (the image `last_resort` dropping a stream type with no note
+  at all, a direct violation of the constitution's "never report success for
+  a conversion that silently dropped something") the same way; and (3) no two
+  profiles in `PROFILES` may share a `target_suffix`. Mutation-tested outside
+  the repo against copies of `m4a`, `mkv` and `mov`/`mkv` respectively (a
+  stripped placeholder, an emptied `last_resort.notes`, a collided suffix) to
+  confirm each rail actually fails before trusting it to pass on the real,
+  unmutated registry. None of the three found a live bug in a shipped
+  profile -- every shipped profile already satisfies all three -- so this
+  closes a hole in the contract's test coverage, not a live defect.
