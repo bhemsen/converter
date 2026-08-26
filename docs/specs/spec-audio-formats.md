@@ -452,3 +452,18 @@ New-Item -ItemType Directory -Force art
   carried. `wav` was deliberately left out: closing its hole would have changed a
   phase-1 note assertion this phase promised to leave alone, so the hole stays,
   named, for a later phase.
+- 2026-08-26 (#20): `SOURCE_SUFFIXES` widened with exactly the Scope list --
+  the eight audio containers and the seven video containers (`.mp4` already
+  was in the set, so six of the seven are a net addition) -- plus `.mp3`,
+  `.m4a`, `.flac` and `.ogg`, the four remaining audio target suffixes not yet
+  in the set (`.opus` and `.wav` already were). The last part is not itself in
+  the Scope prose but is a separate Acceptance item on the issue ("the six
+  audio target suffixes are all present in the set"): without it, the four
+  profile-adding issues later in this milestone would each have to widen
+  `SOURCE_SUFFIXES` again for their own target suffix, which is exactly the
+  kind of `converter/profiles.py` churn this phase's per-PR diff check is
+  trying to keep narrow. No new profile, no engine change: pure data, per
+  `converter/profiles.py`'s leaf-module contract. `tests/test_profiles.py`'s
+  `TestSourceSuffixes` was updated in the same PR to pin the new exact set --
+  its prior exact-equality assertion would otherwise fail the moment the set
+  grew, regardless of who touches it next.
