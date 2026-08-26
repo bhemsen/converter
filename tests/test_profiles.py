@@ -1,4 +1,4 @@
-"""Tests for the leaf module and the two profiles it declares."""
+"""Tests for the leaf module and the profiles it declares."""
 
 import ast
 import dataclasses

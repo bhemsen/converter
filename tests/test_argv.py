@@ -658,6 +658,7 @@ class TestSuccessSideVerification:
     def test_a_partial_profile_needs_verification(self):
         assert jobs.needs_verification(MP4) is True
         assert jobs.needs_verification(WAV) is True
+        assert jobs.needs_verification(MKV) is True
 
     def test_an_exhaustive_profile_does_not(self):
         """`False` is what keeps the probe off an exhaustive profile's happy path."""
@@ -675,7 +676,7 @@ class TestSuccessSideVerification:
 
         assert notes == ("audio stream 1 (opus) dropped: WAV holds 1 audio stream",)
 
-    @pytest.mark.parametrize("profile", [MP4, WAV], ids=lambda profile: profile.label)
+    @pytest.mark.parametrize("profile", [MP4, WAV, MKV], ids=lambda profile: profile.label)
     def test_no_profile_invents_a_loss_for_a_source_it_fully_maps(self, profile):
         """One stream of each type the profile declares a rule for, and never more
         than one, so nothing in this source can have been left behind.
@@ -683,8 +684,9 @@ class TestSuccessSideVerification:
         Built from ``profile.rules`` rather than the cheap attempt's own
         ``mapped_types`` (`tests/test_profiles.py`), which is sound only because
         ``TestPartialMappingInvariant`` there pins the two as equal for every
-        shipped profile -- if that equality ever broke for `MP4` or `WAV`, this
-        source would silently stop matching what the cheap attempt actually maps.
+        shipped profile -- if that equality ever broke for `MP4`, `WAV` or `MKV`,
+        this source would silently stop matching what the cheap attempt actually
+        maps.
         """
         streams = [Stream(i, kind, "whatever") for i, kind in enumerate(profile.rules)]
 

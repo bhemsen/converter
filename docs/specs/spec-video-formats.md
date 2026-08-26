@@ -346,8 +346,9 @@ New-Item -ItemType Directory -Force in
 
   The attachment rule (`_AcceptAnyCodec`, `converter/profiles.py`) is
   implemented as a `frozenset` subclass overriding `__contains__` to always
-  return `True`, rather than as an engine change: `docs/design/degradation-ladder.md`'s risk row anticipated this ("a rule keyed on
-  `codec_type == "attachment"` works, and `-c:t:0 copy` is valid ffmpeg"), and
+  return `True`, rather than as an engine change: this spec's own Risks table
+  anticipated this ("a rule keyed on `codec_type == "attachment"` works, and
+  `-c:t:0 copy` is valid ffmpeg"), and
   both were confirmed against real ffmpeg -- a `font/ttf` attachment
   (`codec_name` reported as `unknown`, measured) round-trips through
   `-map 0:t? -c copy` and through the selective rung's `-c:t:0 copy` alike.
