@@ -200,6 +200,16 @@ class TestMp3Job:
 
         assert selective.notes == ("video stream 1 (h264) dropped: not supported by MP3",)
 
+    def test_last_resort_notes_are_pinned(self):
+        """The explicit-index last resort cannot name a per-stream drop itself
+        (unlike the selective rung), so what it gives up has to be its own
+        declared note -- the only place that information exists."""
+        reencode = jobs.retries(MP3, [])[-1]
+
+        assert reencode.notes == (
+            "non-audio streams, and any audio stream beyond the first, are not carried into MP3",
+        )
+
     def test_target_suffix(self):
         assert MP3.target_suffix == ".mp3"
 
@@ -256,6 +266,16 @@ class TestFlacJob:
         selective = jobs.retries(FLAC, streams)[0]
 
         assert selective.notes == ("video stream 1 (h264) dropped: not supported by FLAC",)
+
+    def test_last_resort_notes_are_pinned(self):
+        """Unlike its `StreamRule.fallback_name=None`, the last resort still
+        needs its own note: it is an explicit-index attempt, so it cannot name
+        a per-stream drop the way the selective rung does."""
+        reencode = jobs.retries(FLAC, [])[-1]
+
+        assert reencode.notes == (
+            "non-audio streams, and any audio stream beyond the first, are not carried into FLAC",
+        )
 
     def test_target_suffix(self):
         assert FLAC.target_suffix == ".flac"
