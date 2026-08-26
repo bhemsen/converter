@@ -3,45 +3,22 @@
 The engine holds no format-specific fact -- no codec name, no container option,
 no degradation-note wording. Every such fact lives in the ``Profile`` it is
 handed (``converter/profiles.py``) and is read out of that data, never written
-here. The two exceptions are ``Job`` -- the public shape ``cli.py`` and
-``batch.py`` already depend on -- and ``JOB_BINDINGS`` below it, which is CLI
-wiring (source suffixes, sub-command name, progress-bar label) rather than
-target-format knowledge, and is marked as phase-2 scaffolding: it disappears
-once ``--to`` replaces the ``video``/``audio`` sub-commands
-(``docs/specs/spec-profile-registry.md``).
+here. ``batch.py`` calls this module's entry points directly and never reads a
+profile's rules itself -- the boundary ``docs/architecture.md`` draws between
+"carries a profile" and "decides with one".
 
 See ``docs/design/degradation-ladder.md`` for the order of attempts this module
-builds, and ``docs/design/stream-decision.md`` for how one stream's fate is
-decided inside the engine-built rung.
+builds, ``docs/design/stream-decision.md`` for how one stream's fate is decided
+inside the engine-built rung, and
+``docs/specs/spec-target-driven-cli.md`` for the ``unsupported`` discriminator
+:func:`describe_unsupported` implements.
 """
 
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field, replace
+from collections.abc import Sequence
+from dataclasses import replace
 
 from converter.ffmpegtool import Stream
-from converter.profiles import MP4, WAV, Attempt, Profile
-
-
-@dataclass(frozen=True)
-class Job:
-    """A source suffix, a target suffix, and how to get from one to the other.
-
-    ``verify_success`` turns the source's stream list into the notes the *cheap*
-    attempt owes once it has already succeeded, and is ``None`` for a cheap
-    attempt whose mapping is exhaustive -- which is how ``batch.py`` knows
-    whether that success is worth an ffprobe round-trip at all
-    (``docs/design/degradation-ladder.md``).
-    """
-
-    name: str
-    description: str
-    suffixes: tuple[str, ...]
-    target_suffix: str
-    first_attempt: Callable[[], Attempt] = field(repr=False)
-    retries: Callable[[Sequence[Stream]], list[Attempt]] = field(repr=False)
-    verify_success: Callable[[Sequence[Stream]], tuple[str, ...]] | None = field(
-        default=None, repr=False
-    )
+from converter.profiles import Attempt, Profile
 
 
 def _with_container_options(attempt: Attempt, profile: Profile) -> Attempt:
@@ -172,89 +149,50 @@ def _build_selective(profile: Profile, streams: Sequence[Stream]) -> Attempt | N
     return Attempt("selective", (*maps, *codecs), tuple(notes))
 
 
-def make_attempts(
-    profile: Profile,
-) -> tuple[Callable[[], Attempt], Callable[[Sequence[Stream]], list[Attempt]]]:
-    """Build the ``(first_attempt, retries)`` pair degradation-ladder.md needs."""
-
-    def first_attempt() -> Attempt:
-        return _with_container_options(profile.cheap_attempt, profile)
-
-    def retries(streams: Sequence[Stream]) -> list[Attempt]:
-        attempts: list[Attempt] = []
-        selective = _build_selective(profile, streams)
-        if selective is not None:
-            attempts.append(_with_container_options(selective, profile))
-        if profile.last_resort is not None:
-            attempts.append(_with_container_options(profile.last_resort, profile))
-        return attempts
-
-    return first_attempt, retries
+def first_attempt(profile: Profile) -> Attempt:
+    """Rung 1 of degradation-ladder.md: *profile*'s own cheap attempt."""
+    return _with_container_options(profile.cheap_attempt, profile)
 
 
-def make_verifier(profile: Profile) -> Callable[[Sequence[Stream]], tuple[str, ...]] | None:
-    """Build the success-side verifier of degradation-ladder.md, if one is owed.
+def retries(profile: Profile, streams: Sequence[Stream]) -> list[Attempt]:
+    """The rest of the ladder, built from the source's probed *streams*."""
+    attempts: list[Attempt] = []
+    selective = _build_selective(profile, streams)
+    if selective is not None:
+        attempts.append(_with_container_options(selective, profile))
+    if profile.last_resort is not None:
+        attempts.append(_with_container_options(profile.last_resort, profile))
+    return attempts
 
-    A profile whose cheap attempt maps the source exhaustively gets ``None``, and
-    its happy path then still costs no ffprobe round-trip -- the narrowed form of
-    the rule in ``docs/constitution.md``.
+
+def needs_verification(profile: Profile) -> bool:
+    """Whether a successful cheap attempt is worth an ffprobe round-trip.
+
+    True only for a profile whose cheap attempt is declared partial by
+    construction (``docs/design/degradation-ladder.md``) -- the narrowed happy
+    path in ``docs/constitution.md`` keeps every other profile's success
+    probe-free.
     """
-    if not profile.partial_mapping:
+    return profile.partial_mapping
+
+
+def verify_success(profile: Profile, streams: Sequence[Stream]) -> tuple[str, ...]:
+    """The success-side verifier of degradation-ladder.md: what a partial cheap
+    attempt's mapping could not have carried over, named per stream."""
+    return _unmapped_notes(profile, streams)
+
+
+def describe_unsupported(profile: Profile, streams: Sequence[Stream]) -> tuple[str, ...] | None:
+    """The ``unsupported`` discriminator: "no rule matches any present stream".
+
+    ``None`` means the source carries at least one stream type *profile* has a
+    rule for -- that stream may still be dropped for shape or codec reasons, but
+    that is a genuine ``failed``, not this (``docs/specs/spec-target-driven-cli.md``).
+    Otherwise returns one drop note per stream, reusing D1 of
+    ``docs/design/stream-decision.md`` so the reporting stays identical to an
+    ordinary unsupported-type drop. Derived entirely from the probe, never from
+    ffmpeg's stderr (``docs/constitution.md``).
+    """
+    if any(stream.codec_type in profile.rules for stream in streams):
         return None
-
-    def verify(streams: Sequence[Stream]) -> tuple[str, ...]:
-        return _unmapped_notes(profile, streams)
-
-    return verify
-
-
-@dataclass(frozen=True)
-class _Binding:
-    """A source-pair binding: CLI-visible name plus which suffixes feed which
-    profile. This is CLI wiring, not target-format knowledge -- the exemption
-    the module docstring describes -- and is phase-2 scaffolding, removed once
-    ``--to`` replaces the ``video``/``audio`` sub-commands.
-    """
-
-    name: str
-    description: str
-    suffixes: tuple[str, ...]
-    profile: Profile
-
-
-#: Phase-2 scaffolding (see the module docstring and ``_Binding``).
-JOB_BINDINGS: dict[str, _Binding] = {
-    "video": _Binding(
-        name="mkv-to-mp4",
-        description="Convert .mkv files to .mp4 (stream copy where possible)",
-        suffixes=(".mkv",),
-        profile=MP4,
-    ),
-    "audio": _Binding(
-        name="opus-to-wav",
-        description="Convert .opus files to uncompressed .wav",
-        suffixes=(".opus",),
-        profile=WAV,
-    ),
-}
-
-
-def _job_from_binding(binding: _Binding) -> Job:
-    """The factory the issue asks for: wire the generic engine to one profile."""
-    first_attempt, retries = make_attempts(binding.profile)
-    return Job(
-        name=binding.name,
-        description=binding.description,
-        suffixes=binding.suffixes,
-        target_suffix=binding.profile.target_suffix,
-        first_attempt=first_attempt,
-        retries=retries,
-        verify_success=make_verifier(binding.profile),
-    )
-
-
-MKV_TO_MP4 = _job_from_binding(JOB_BINDINGS["video"])
-OPUS_TO_WAV = _job_from_binding(JOB_BINDINGS["audio"])
-
-#: Sub-command name -> job.
-JOBS: dict[str, Job] = {"video": MKV_TO_MP4, "audio": OPUS_TO_WAV}
+    return tuple(_drop_note(stream, f"not supported by {profile.label}") for stream in streams)

@@ -5,9 +5,8 @@ from dataclasses import replace
 
 import pytest
 
-from converter import ffmpegtool
+from converter import ffmpegtool, jobs
 from converter.ffmpegtool import Stream, build_argv, cli_path
-from converter.jobs import MKV_TO_MP4, OPUS_TO_WAV, make_verifier
 from converter.profiles import MP4, WAV
 
 
@@ -92,7 +91,7 @@ class TestRunIsShellFree:
 
 class TestWavJob:
     def test_first_attempt_is_pcm(self):
-        attempt = OPUS_TO_WAV.first_attempt()
+        attempt = jobs.first_attempt(WAV)
 
         assert attempt.options == ("-map", "0:a:0", "-c:a", "pcm_s16le")
         assert attempt.notes == ()
@@ -100,7 +99,7 @@ class TestWavJob:
     def test_single_audio_stream_needs_no_fallback(self):
         streams = [Stream(0, "audio", "opus")]
 
-        assert OPUS_TO_WAV.retries(streams) == []
+        assert jobs.retries(WAV, streams) == []
 
     def test_multiple_audio_streams_fall_back_to_a_selective_rung(self):
         """Deltas 2 and 3: the note names the dropped stream and its codec, and
@@ -108,7 +107,7 @@ class TestWavJob:
         'first-audio-stream'. The argv is unchanged."""
         streams = [Stream(0, "audio", "opus"), Stream(1, "audio", "opus")]
 
-        attempts = OPUS_TO_WAV.retries(streams)
+        attempts = jobs.retries(WAV, streams)
 
         assert len(attempts) == 1
         assert attempts[0].label == "selective"
@@ -120,16 +119,15 @@ class TestWavJob:
         all; it now reaches a selective rung that drops it with a note."""
         streams = [Stream(0, "audio", "opus"), Stream(1, "video", "mjpeg")]
 
-        attempts = OPUS_TO_WAV.retries(streams)
+        attempts = jobs.retries(WAV, streams)
 
         assert len(attempts) == 1
         assert attempts[0].label == "selective"
         assert attempts[0].options == ("-map", "0:0", "-c:a", "pcm_s16le")
         assert attempts[0].notes == ("video stream 1 (mjpeg) dropped: not supported by WAV",)
 
-    def test_job_metadata(self):
-        assert OPUS_TO_WAV.suffixes == (".opus",)
-        assert OPUS_TO_WAV.target_suffix == ".wav"
+    def test_target_suffix(self):
+        assert WAV.target_suffix == ".wav"
 
     def test_pcm_reencode_of_the_kept_stream_carries_no_note(self):
         """Decoding to PCM is WAV's own definition, not a loss (Verification,
@@ -138,7 +136,7 @@ class TestWavJob:
         Only the surplus stream's drop is reported."""
         streams = [Stream(0, "audio", "opus"), Stream(1, "audio", "opus")]
 
-        attempts = OPUS_TO_WAV.retries(streams)
+        attempts = jobs.retries(WAV, streams)
 
         assert len(attempts[0].notes) == 1
         assert not any("stream 0" in note for note in attempts[0].notes)
@@ -146,7 +144,7 @@ class TestWavJob:
 
 class TestMp4Remux:
     def test_stream_copies_and_converts_text_subtitles(self):
-        options = MKV_TO_MP4.first_attempt().options
+        options = jobs.first_attempt(MP4).options
 
         assert "-c" in options
         assert options[options.index("-c") + 1] == "copy"
@@ -156,16 +154,15 @@ class TestMp4Remux:
     def test_does_not_use_bare_map_zero(self):
         """'-map 0' also selects MKV attachments and data streams, which MP4
         cannot hold, so a remuxable file would fail for no good reason."""
-        options = list(MKV_TO_MP4.first_attempt().options)
+        options = list(jobs.first_attempt(MP4).options)
         mapped = [options[i + 1] for i, flag in enumerate(options) if flag == "-map"]
 
         assert "0" not in mapped
         assert mapped == ["0:v?", "0:a?", "0:s?"]
 
-    def test_job_metadata(self):
-        assert MKV_TO_MP4.suffixes == (".mkv",)
-        assert MKV_TO_MP4.target_suffix == ".mp4"
-        assert MKV_TO_MP4.first_attempt().options == (
+    def test_target_suffix(self):
+        assert MP4.target_suffix == ".mp4"
+        assert jobs.first_attempt(MP4).options == (
             "-map",
             "0:v?",
             "-map",
@@ -183,14 +180,14 @@ class TestMp4Remux:
 
 class TestMp4Retries:
     def test_ladder_ends_with_a_full_reencode(self):
-        attempts = MKV_TO_MP4.retries([Stream(0, "video", "h264")])
+        attempts = jobs.retries(MP4, [Stream(0, "video", "h264")])
 
         assert [a.label for a in attempts] == ["selective", "re-encode"]
 
     def test_selective_copies_compatible_streams(self):
         streams = [Stream(0, "video", "h264"), Stream(1, "audio", "aac")]
 
-        selective = MKV_TO_MP4.retries(streams)[0]
+        selective = jobs.retries(MP4, streams)[0]
 
         assert selective.options[:8] == (
             "-map",
@@ -207,7 +204,7 @@ class TestMp4Retries:
     def test_selective_reencodes_audio_mp4_cannot_hold(self):
         streams = [Stream(0, "video", "h264"), Stream(1, "audio", "pcm_s16le")]
 
-        selective = MKV_TO_MP4.retries(streams)[0]
+        selective = jobs.retries(MP4, streams)[0]
 
         assert "-c:a:0" in selective.options
         assert selective.options[selective.options.index("-c:a:0") + 1] == "aac"
@@ -220,7 +217,7 @@ class TestMp4Retries:
             Stream(2, "subtitle", "hdmv_pgs_subtitle"),
         ]
 
-        selective = MKV_TO_MP4.retries(streams)[0]
+        selective = jobs.retries(MP4, streams)[0]
 
         assert "-map" in selective.options
         assert "0:2" not in selective.options
@@ -229,7 +226,7 @@ class TestMp4Retries:
     def test_selective_keeps_text_subtitles_as_mov_text(self):
         streams = [Stream(0, "video", "h264"), Stream(1, "subtitle", "subrip")]
 
-        selective = MKV_TO_MP4.retries(streams)[0]
+        selective = jobs.retries(MP4, streams)[0]
 
         assert "-c:s:0" in selective.options
         assert selective.options[selective.options.index("-c:s:0") + 1] == "mov_text"
@@ -238,7 +235,7 @@ class TestMp4Retries:
         """Delta 1: the note now names the codec too."""
         streams = [Stream(0, "video", "h264"), Stream(1, "attachment", "ttf")]
 
-        selective = MKV_TO_MP4.retries(streams)[0]
+        selective = jobs.retries(MP4, streams)[0]
 
         assert "0:1" not in selective.options
         assert selective.notes == ("attachment stream 1 (ttf) dropped: not supported by MP4",)
@@ -252,7 +249,7 @@ class TestMp4Retries:
             Stream(3, "audio", "flac"),
         ]
 
-        selective = MKV_TO_MP4.retries(streams)[0]
+        selective = jobs.retries(MP4, streams)[0]
 
         assert "-c:a:0" in selective.options
         assert "-c:a:1" in selective.options
@@ -261,12 +258,12 @@ class TestMp4Retries:
         assert "-c:s:0" in selective.options
 
     def test_no_mappable_stream_skips_straight_to_reencode(self):
-        attempts = MKV_TO_MP4.retries([Stream(0, "attachment", "ttf")])
+        attempts = jobs.retries(MP4, [Stream(0, "attachment", "ttf")])
 
         assert [a.label for a in attempts] == ["re-encode"]
 
     def test_reencode_states_what_it_sacrifices(self):
-        reencode = MKV_TO_MP4.retries([])[-1]
+        reencode = jobs.retries(MP4, [])[-1]
 
         assert "libx264" in reencode.options
         assert "aac" in reencode.options
@@ -282,14 +279,14 @@ class TestMp4DegradationNotes:
     def test_video_reencode_note_is_exact(self):
         streams = [Stream(0, "video", "vp8"), Stream(1, "audio", "aac")]
 
-        selective = MKV_TO_MP4.retries(streams)[0]
+        selective = jobs.retries(MP4, streams)[0]
 
         assert selective.notes == ("video stream 0 (vp8) re-encoded to h264",)
 
     def test_audio_reencode_note_is_exact(self):
         streams = [Stream(0, "video", "h264"), Stream(1, "audio", "pcm_s16le")]
 
-        selective = MKV_TO_MP4.retries(streams)[0]
+        selective = jobs.retries(MP4, streams)[0]
 
         assert selective.notes == ("audio stream 1 (pcm_s16le) re-encoded to aac",)
 
@@ -300,7 +297,7 @@ class TestMp4DegradationNotes:
             Stream(2, "subtitle", "hdmv_pgs_subtitle"),
         ]
 
-        selective = MKV_TO_MP4.retries(streams)[0]
+        selective = jobs.retries(MP4, streams)[0]
 
         assert selective.notes == (
             "subtitle stream 2 (hdmv_pgs_subtitle) dropped: "
@@ -310,7 +307,7 @@ class TestMp4DegradationNotes:
     def test_last_resort_notes_are_pinned(self):
         """The two notes are the last-resort attempt's own data (Verification:
         'lossy re-encode; 10-bit/HDR reduced to 8-bit'), not engine wording."""
-        reencode = MKV_TO_MP4.retries([])[-1]
+        reencode = jobs.retries(MP4, [])[-1]
 
         assert reencode.notes == (
             "re-encoded to h264/aac (lossy); subtitles and extra video streams dropped",
@@ -324,7 +321,7 @@ class TestProfileArgvPinning:
 
     def test_mp4_copyable_source(self):
         streams = [Stream(0, "video", "h264"), Stream(1, "audio", "aac")]
-        selective = MKV_TO_MP4.retries(streams)[0]
+        selective = jobs.retries(MP4, streams)[0]
 
         argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.mp4")
 
@@ -352,7 +349,7 @@ class TestProfileArgvPinning:
 
     def test_mp4_non_copyable_source(self):
         streams = [Stream(0, "video", "vp8"), Stream(1, "audio", "pcm_s16le")]
-        selective = MKV_TO_MP4.retries(streams)[0]
+        selective = jobs.retries(MP4, streams)[0]
 
         argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.mp4")
 
@@ -383,7 +380,7 @@ class TestProfileArgvPinning:
         ]
 
     def test_wav_single_audio_source(self):
-        argv = build_argv("ffmpeg", "in.opus", OPUS_TO_WAV.first_attempt().options, "out.wav")
+        argv = build_argv("ffmpeg", "in.opus", jobs.first_attempt(WAV).options, "out.wav")
 
         assert argv == [
             "ffmpeg",
@@ -403,7 +400,7 @@ class TestProfileArgvPinning:
 
     def test_wav_two_audio_source(self):
         streams = [Stream(0, "audio", "opus"), Stream(1, "audio", "opus")]
-        selective = OPUS_TO_WAV.retries(streams)[0]
+        selective = jobs.retries(WAV, streams)[0]
 
         argv = build_argv("ffmpeg", "in.opus", selective.options, "out.wav")
 
@@ -424,30 +421,54 @@ class TestProfileArgvPinning:
         ]
 
 
+class TestUnsupportedDiscriminator:
+    """`jobs.describe_unsupported`: "no rule matches any present stream"
+    (docs/specs/spec-target-driven-cli.md), derived from the probe alone."""
+
+    def test_a_type_with_no_rule_at_all_is_unsupported(self):
+        notes = jobs.describe_unsupported(WAV, [Stream(0, "video", "h264")])
+
+        assert notes == ("video stream 0 (h264) dropped: not supported by WAV",)
+
+    def test_a_type_the_profile_has_a_rule_for_is_supported(self):
+        """The codec itself may still be dropped or re-encoded later -- that is
+        a structural or codec-level verdict, not this one."""
+        assert jobs.describe_unsupported(WAV, [Stream(0, "audio", "opus")]) is None
+
+    def test_one_matching_stream_among_several_is_enough_to_be_supported(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "attachment", "ttf")]
+
+        assert jobs.describe_unsupported(MP4, streams) is None
+
+    def test_a_source_with_no_stream_the_profile_can_use_at_all_is_unsupported(self):
+        """MP4 declares no ``attachment`` rule, same as WAV declares no
+        ``video`` one -- the discriminator is type-level, not format-specific."""
+        notes = jobs.describe_unsupported(MP4, [Stream(0, "attachment", "ttf")])
+
+        assert notes == ("attachment stream 0 (ttf) dropped: not supported by MP4",)
+
+
 class TestSuccessSideVerification:
-    """`make_verifier`: what the engine owes a cheap attempt that already won."""
+    """`jobs.needs_verification` / `jobs.verify_success`: what the engine owes
+    a cheap attempt that already won."""
 
-    def test_a_partial_profile_gets_a_verifier(self):
-        assert make_verifier(MP4) is not None
-        assert make_verifier(WAV) is not None
+    def test_a_partial_profile_needs_verification(self):
+        assert jobs.needs_verification(MP4) is True
+        assert jobs.needs_verification(WAV) is True
 
-    def test_an_exhaustive_profile_gets_none(self):
-        """`None` is what keeps the probe off an exhaustive profile's happy path."""
-        assert make_verifier(replace(MP4, partial_mapping=False)) is None
+    def test_an_exhaustive_profile_does_not(self):
+        """`False` is what keeps the probe off an exhaustive profile's happy path."""
+        assert jobs.needs_verification(replace(MP4, partial_mapping=False)) is False
 
     def test_mp4_names_the_attachment_its_selectors_cannot_reach(self):
-        verify = make_verifier(MP4)
-        assert verify is not None
+        streams = [Stream(0, "video", "h264"), Stream(1, "attachment", "ttf")]
 
-        notes = verify([Stream(0, "video", "h264"), Stream(1, "attachment", "ttf")])
+        notes = jobs.verify_success(MP4, streams)
 
         assert notes == ("attachment stream 1 (ttf) dropped: not supported by MP4",)
 
     def test_wav_names_the_audio_stream_its_single_index_cannot_reach(self):
-        verify = make_verifier(WAV)
-        assert verify is not None
-
-        notes = verify([Stream(0, "audio", "opus"), Stream(1, "audio", "opus")])
+        notes = jobs.verify_success(WAV, [Stream(0, "audio", "opus"), Stream(1, "audio", "opus")])
 
         assert notes == ("audio stream 1 (opus) dropped: WAV holds 1 audio stream",)
 
@@ -455,25 +476,21 @@ class TestSuccessSideVerification:
     def test_no_profile_invents_a_loss_for_a_source_it_fully_maps(self, profile):
         """One stream of each type the profile declares a rule for, and never more
         than one, so nothing in this source can have been left behind."""
-        verify = make_verifier(profile)
-        assert verify is not None
-
         streams = [Stream(i, kind, "whatever") for i, kind in enumerate(profile.rules)]
 
-        assert verify(streams) == ()
+        assert jobs.verify_success(profile, streams) == ()
 
     def test_a_codec_outside_the_copy_mask_produces_no_note(self):
         """Codec-level verdicts are out of scope here: the attempt exited 0, so
         the stream was carried over whatever the copy mask says."""
-        verify = make_verifier(MP4)
-        assert verify is not None
+        streams = [Stream(0, "video", "vp8"), Stream(1, "subtitle", "dvd_subtitle")]
 
-        assert verify([Stream(0, "video", "vp8"), Stream(1, "subtitle", "dvd_subtitle")]) == ()
+        assert jobs.verify_success(MP4, streams) == ()
 
 
 @pytest.mark.parametrize(
     "attempt",
-    [MKV_TO_MP4.first_attempt(), *MKV_TO_MP4.retries([Stream(0, "video", "h264")])],
+    [jobs.first_attempt(MP4), *jobs.retries(MP4, [Stream(0, "video", "h264")])],
 )
 def test_every_attempt_produces_a_wellformed_command(attempt):
     argv = build_argv("ffmpeg", "in.mkv", attempt.options, "out.mp4")

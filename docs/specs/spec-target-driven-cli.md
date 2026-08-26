@@ -341,3 +341,35 @@ reusing the fixtures the phase-1 gate synthesises:
   existing pattern of raising `ValueError` for a usage problem that `cli.py`
   (issue #15) turns into its exit-2 `UsageError` — `profiles.py` cannot import
   `UsageError` itself without breaking the leaf-module constraint.
+- 2026-08-26 (#14): Beyond `jobs.first_attempt(profile)` and
+  `jobs.retries(profile, streams)`, which this spec already named, three more
+  entry points were needed and were left to this issue to establish:
+  `jobs.needs_verification(profile)` and `jobs.verify_success(profile, streams)`
+  replace the old `make_verifier`-built closure, and `jobs.describe_unsupported(
+  profile, streams)` is the `unsupported` discriminator itself. It returns
+  `None` when the source carries at least one stream type the profile has a
+  rule for, else a tuple of per-stream drop notes (reusing D1 of
+  `docs/design/stream-decision.md` so an unsupported source is reported exactly
+  like an ordinary unsupported-type drop) — never a bare boolean, so `batch.py`
+  gets the notes it reports for free rather than having to invent wording of
+  its own.
+- 2026-08-26 (#14): The discriminator is applied right after the failure-side
+  probe, before `jobs.retries` is ever called, and short-circuits straight to
+  the `unsupported` outcome. A source with no stream of any type the profile
+  declares a rule for cannot produce a non-empty `-map` list on any later rung
+  either, so climbing the rest of the ladder would only re-spend ffmpeg calls to
+  reconfirm what the probe already established — the "one ffmpeg attempt and
+  one ffprobe" cost this spec's mixed-tree write-up already promises, not more.
+- 2026-08-26 (#14): `Job`, `JOBS` and `JOB_BINDINGS` are deleted from
+  `jobs.py` outright, per this spec's decision log, rather than renamed or
+  moved there. The CLI-visible `video`/`audio` -> suffixes/profile wiring they
+  carried still has to live somewhere until issue #15 replaces the
+  sub-commands with `--to`, so it moved to a private `cli._Binding` /
+  `cli._BINDINGS` in `converter/cli.py` — the smallest change that keeps
+  `build_parser` and `convert_command` working without the deleted names, and
+  scaffolding issue #15 already plans to remove.
+- 2026-08-26 (#14): `Summary.describe()`'s format gained a fourth clause
+  (`"... {failed} failed, {unsupported} unsupported (of {total})"`) rather than
+  inserting `unsupported` in the middle — existing tests and the vision's
+  `0 converted, 0 failed` phrasing both check substrings, so appending keeps
+  every one of them true unchanged instead of requiring a coordinated update.
