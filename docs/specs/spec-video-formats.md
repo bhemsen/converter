@@ -70,16 +70,17 @@ orchestrators (`docs/workflow.md`).
   that mapping could not carry is named (`docs/constitution.md`, narrowed by
   issue #18). Every cheap attempt in the table below selects by type or by
   index, so every profile in this phase is partial and must declare it --
-  together with a rule for each stream type it can *successfully carry*, per
-  the load-bearing form of the invariant in `docs/design/degradation-ladder.md`
-  (issue #39). `mkv` and `mov` both map `-map 0:t?`, and the two resolve
-  oppositely: `mkv`'s muxer holds an attachment, so it carries fonts on the
-  success side and the profile owes an `attachment` rule, or the fonts it
-  keeps get reported as dropped. `mov`'s muxer rejects any mapped attachment
-  outright, so mapping it there only ever forces the cheap attempt to fail
-  into the ladder when the source has one -- the type never reaches the
-  success side, so `mov` needs no `attachment` rule to keep the verification
-  honest.
+  together with exactly a rule for each stream type it maps and no rule for
+  any other, per the equality in `docs/design/degradation-ladder.md` (issue
+  #40, narrowing #39). `mkv` and `mov` both map `-map 0:t?`, and the two
+  resolve oppositely: `mkv`'s muxer holds an attachment, so it carries fonts
+  on the success side and the profile owes an `attachment` rule, or the fonts
+  it keeps get reported as dropped. `mov`'s muxer rejects any mapped
+  attachment outright, so mapping it there only ever forces the cheap attempt
+  to fail into the ladder when the source has one -- the type never reaches
+  the success side, so `mov` needs no `attachment` rule to keep the
+  verification honest, and the equality exempts it on both sides rather than
+  admitting a rule-less mapped type as a special case.
 - Never report success for a conversion that silently dropped something.
 - The test suite keeps passing with no ffmpeg installed.
 
@@ -306,12 +307,12 @@ New-Item -ItemType Directory -Force in
   mapped type" rule would reject once those profiles are implemented. Not a
   gap the equality introduced, but one this PR's own tightening would have
   shipped as newly-false documentation against an already-merged spec.
-  Resolved the same way as the rule-1 exemption: `degradation-ladder.md` now
+  Resolved the same way as the force-failure exemption: `degradation-ladder.md` now
   states a `stream_limit` on a blindly-mapped type is legitimate exactly when
   the container's own muxer enforces that limit and rejects a surplus
   outright, and `tests/test_profiles.py` adds an `mp3`-shaped profile
   (`MP3_SHAPED`/`MUXER_ENFORCED_LIMIT_TYPES`) proving it the way `MOV_SHAPED`
-  proves the rule-1 exemption.
+  proves the force-failure exemption.
 
   No shipped profile was affected -- MP4 and WAV both already satisfy the
   equality -- so this closes a hole in the contract before phases 3-5 write

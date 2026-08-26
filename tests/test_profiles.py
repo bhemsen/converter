@@ -144,7 +144,11 @@ def named_index_counts(profile: Profile) -> dict[str, int]:
     blind/explicit bit; a ``stream_limit`` check needs the actual count, so a
     profile that names two indices of a type but declares a limit of one -- or
     the reverse -- is caught rather than passing because *some* index of that
-    type was named.
+    type was named. Left lenient about a selector it cannot read (unlike
+    ``mapped_types``): every profile in ``INVARIANT_CASES`` is parametrized
+    through both helpers in the same test class, so an unreadable ``-map``
+    already fails loudly in ``mapped_types`` before this one is ever asked
+    to make sense of it.
     """
     options = profile.cheap_attempt.options
     counts: dict[str, int] = {}
@@ -216,7 +220,7 @@ class TestPartialMappingInvariant:
         Only checked for a type that actually has a rule: a force-failure type
         by definition has none, and a limit on a rule that does not exist is not
         a thing that can be checked. `MUXER_ENFORCED_LIMIT_TYPES` is exempt for
-        the opposite reason a force-failure type is exempt from the rule-1 check:
+        the opposite reason a force-failure type is exempt from the check above:
         the container's own muxer -- not the mapping -- is what turns a surplus
         stream into a failure, so the limit never needs the mapping to enforce it
         (`mp3`-shaped's `audio`, per `docs/design/degradation-ladder.md`).

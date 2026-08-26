@@ -119,7 +119,11 @@ flowchart TD
   rung's own note instead. Outside that exception, a limit belongs to a type
   the cheap attempt names by index (WAV's `-map 0:a:0`), and matches the count
   of indices actually named — one index named, one stream, exactly WAV's
-  `stream_limit=1`.
+  `stream_limit=1`. The requirement runs the other way too: a type named by
+  index *must* declare a limit equal to that count — without one,
+  `_structural_drop` never trips and the verification accepts an unbounded
+  number of that type's streams, the same false accept the equality above
+  exists to rule out.
 
   The two shipped profiles satisfy the equality by construction — MP4's
   selectors match its three rules exactly and it declares no limit, WAV names
