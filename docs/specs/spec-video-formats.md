@@ -8,9 +8,9 @@ acceptance is the spec merged on the default branch with a milestone and issues,
 and all progress lives in the GitHub issues and milestone. A completed spec is
 moved to `docs/specs/archive/`.
 
-**Depends on milestone #2 (target-driven-cli).** Independent of milestones #3 and
-#5, which is why phases 3, 4 and 5 can run as parallel orchestrators
-(`docs/workflow.md`).
+**Depends on milestone #2 (target-driven-cli).** Independent of phase 3's and
+phase 5's milestones, which is why the three coverage phases can run as parallel
+orchestrators (`docs/workflow.md`).
 
 ## Outcome
 
@@ -26,18 +26,22 @@ moved to `docs/specs/archive/`.
 - [ ] Every degradation branch a new profile introduces has a test asserting the
       note it emits.
 - [ ] An MKV converted to MKV keeps its font attachments, so ASS subtitles still
-      render — the one case in this phase where a target can hold everything its
-      source had.
+      render — the one case in this phase where a target holds everything a
+      typical source had.
+- [ ] Nothing a cheap attempt cannot carry is lost without a word: each new
+      profile's standing note enumerates the stream types it does not map.
 
 ## Scope
 
 ### In scope
 
 - Three new `Profile` entries in `converter/profiles.py` with their stream rules,
-  copy masks, fallback encoders, container options and registry entries.
-- Extending the curated source-suffix set with video containers phase 3 did not
-  already add (`.mkv`, `.webm`, `.mpg`, `.mpeg`, `.ts`, `.m2ts`, `.vob`, `.ogv`,
-  `.3gp`, `.mts`).
+  copy masks, fallback encoders, container options, `cheap_attempt`,
+  `explicit_streams`, `last_resort` and standing notes, plus registry entries.
+- Extending the curated source-suffix set with the containers no earlier phase
+  added: `.mpg`, `.mpeg`, `.ts`, `.m2ts`, `.mts`, `.vob`, `.ogv`, `.3gp`.
+  (`.mkv` comes from phase 2; `.mp4`, `.mov`, `.avi`, `.webm`, `.m4v`, `.wmv`
+  and `.flv` come from phase 3.)
 - An **attachment** stream rule, which no profile has needed before.
 - `README.md`'s format list.
 - The tests those profiles require, per the constitution's two gates.
@@ -56,8 +60,10 @@ moved to `docs/specs/archive/`.
 
 - A target format is data, not code (`docs/constitution.md`,
   `docs/architecture.md`).
-- No `-map 0`: it selects data streams and, for containers that cannot hold them,
-  turns a remuxable file into a failure. Every cheap attempt selects by type.
+- No `-map 0`: it selects data streams, and for a container that cannot hold them
+  it turns a remuxable file into a failure. Measured: `-map 0 -c copy` of a
+  timecode-bearing MOV into MKV exits 127 with "Only audio, video, and subtitles
+  are supported for Matroska". Every cheap attempt selects by type.
 - `ffprobe` never runs on the happy path.
 - Never report success for a conversion that silently dropped something.
 - The test suite keeps passing with no ffmpeg installed.
@@ -70,9 +76,10 @@ moved to `docs/specs/archive/`.
   build contains and never what a muxer will accept. Every mask below was measured
   instead of derived.
 - [Python wrapper structure around the ffmpeg CLI (Phase 3, Phase 4)](../prior-art.md#python-wrapper-structure-around-the-ffmpeg-cli-phase-3-phase-4)
-  — tagged for this phase too. Its AVOID is the live one: WebM's rejection message
-  is informative and tempting, and parsing it to pick an encoder is exactly what
-  the constitution forbids. The copy mask has to carry that knowledge instead.
+  — tagged for this phase too. Its AVOID: never parse values out of ffmpeg's stderr
+  to drive a second pass. Relevant here because WebM's rejection message names the
+  codecs it wants, which is exactly the tempting string to scrape; the copy mask
+  has to carry that knowledge instead.
 
 ## Design
 
@@ -88,53 +95,70 @@ settled.
 
 ### The muxer facts these profiles rest on
 
-Measured against the installed ffmpeg 9.0 during planning, with the exit code
-taken from ffmpeg itself rather than from a pipeline. A later reader should
-re-verify rather than trust the table.
+Measured against ffmpeg 9.0 during planning and re-measured by the
+spec-acceptance review, with exit codes taken from ffmpeg itself rather than from
+the end of a pipeline. A later reader should re-verify rather than trust the
+table.
 
 | Fact | Consequence |
 |---|---|
-| **WebM enforces its own codec set**: "Only VP8 or VP9 or AV1 video and Vorbis or Opus audio and WebVTT subtitles are supported for WebM." An h264+aac source copy fails outright | `webm` is self-policing: a source it cannot hold *fails* into the ladder rather than being silently mangled. Its masks are exactly that list |
-| **MKV accepts everything tried**, including vp9 and opus from a WebM source | The `mkv` masks are broad, and `mkv` is the one target in this phase that rarely re-encodes |
-| **MKV holds attachments, and `-map 0:t?` carries them through** (`0,h264 1,subrip 2,ttf` in, same out). Without `-map 0:t?` the attachment is gone at exit 0 | `mkv` maps attachments; the others cannot, and lose them silently — the standing-note decision below |
-| **MOV rejects an attachment** (`Could not find tag for codec ttf`) and **rejects a subrip copy**, but accepts `-c:s mov_text` | `mov`'s subtitle rule transcodes in kind to `mov_text`, exactly as `mp4`'s does; no attachment rule |
-| **MOV rejects vp9** (`vp9 only supported in MP4`) while **MP4 accepts vp9** | The `mov` video mask is narrower than `mp4`'s — they are not interchangeable, despite sharing a muxer family |
-| **WebM rejects a subrip copy** but accepts `-c:s webvtt` | `webm`'s subtitle rule transcodes in kind to `webvtt` |
+| **WebM enforces its own codec set**: "Only VP8 or VP9 or AV1 video and Vorbis or Opus audio and WebVTT subtitles are supported for WebM." An h264+aac copy fails outright | `webm` is self-policing for codecs: a source it cannot hold *fails* into the ladder rather than being silently mangled |
+| **MKV accepts every codec tried** — all 11 video and all 11 audio codecs in the masks below, vp9 and opus from a WebM source included | `mkv` is the one target in this phase that rarely re-encodes |
+| **MKV holds attachments and `-map 0:t?` carries them** (`0,h264 1,subrip 2,ttf` in, same out). Without `-map 0:t?` the attachment is gone at exit 0; with it, a source that has none still exits 0 | `mkv` maps attachments unconditionally |
+| **MOV *rejects* a mapped attachment** ("Could not find tag for codec ttf") | Mapping `0:t?` makes MOV **fail loudly** on an attachment-bearing source, so the ladder runs and names the loss. This is the phase-3 "turn a quiet loss into a failure the ladder can name" pattern, and it works here |
+| **WebM does *not* reject a mapped attachment — it silently discards it** at exit 0 | The same trick does not work for `webm`; only a standing note can cover it |
+| **Neither MKV nor a `v/a/s/t` map carries data or timecode streams**: a timecode-bearing MOV through `-map 0:v? -map 0:a? -map 0:s? -map 0:t? -c copy` exits 0 with the data stream gone | Every profile in this phase loses data/timecode silently, `mkv` included. The standing notes have to say so |
+| **MOV rejects a subrip copy but accepts `-c:s mov_text`**; **WebM rejects a subrip copy but accepts `-c:s webvtt`** (and `ass` converts into both) | Both need the in-kind transcode in their cheap attempt, as `mp4` already does |
+| **MOV rejects `vp9`, `av1` and `vp8`** ("vp9 only supported in MP4", "av1 only supported in MP4 and AVIF", "VP8 muxing is currently not supported") while **MP4 accepts vp9 and av1** | The `mov` video mask is narrower than `mp4`'s in *two* codecs, not one. Striking only vp9 from a copied `MP4_VIDEO_CODECS` still leaves a bug |
+| **MOV also copies `ffv1`, `theora`, `dts` and `pcm_s16le`** (tags `dtsc`, `sowt`) | Those belong in the `mov` masks; leaving them out would force a lossless stream through `libx264`/`aac` on the failure path for no reason |
+| **ffprobe reports an attachment's `codec_name` from its MIME type**: `application/x-truetype-font` -> `ttf`, `application/vnd.ms-opentype` -> `otf`, but **`font/ttf` and `font/otf` -> `unknown`** | An attachment copy mask enumerating font codec names is wrong by construction. `mkv`'s attachment rule accepts unconditionally |
+| `-movflags +faststart` is accepted by MOV and harmlessly ignored by MKV and WebM | `mov` takes it, matching `mp4`; the other two declare no container options |
 
 ### Decisions
 
 | Decision | Rationale | Date |
 |---|---|---|
-| Cheap attempts: `mkv` -> `flags("-map 0:v? -map 0:a? -map 0:s? -map 0:t? -c copy")`; `webm` -> `flags("-map 0:v? -map 0:a? -map 0:s? -c copy")`; `mov` -> `flags("-map 0:v? -map 0:a? -map 0:s? -c copy -c:s mov_text")`. All three `explicit_streams=False` | Each maps exactly what its muxer can hold, measured. `mkv` is the only one that can take `-map 0:t?`, and mapping it is what keeps a font attachment — and therefore ASS subtitle rendering — alive. `mov` needs `-c:s mov_text` in the cheap attempt for the same reason `mp4` does: a subrip copy is rejected | 2026-08-26 |
-| Copy masks — video: `mkv` broad (h264, hevc, av1, vp8, vp9, mpeg4, mpeg2video, theora, prores, ffv1, mjpeg); `webm` `{vp8, vp9, av1}`; `mov` `{h264, hevc, prores, mpeg4, mpeg2video, mjpeg}` — **not** `mp4`'s, which includes vp9 | Measured. The `mov`/`mp4` difference is the one a reader is most likely to get wrong by copying the neighbouring entry | 2026-08-26 |
-| Copy masks — audio: `mkv` broad (aac, mp3, ac3, eac3, dts, truehd, flac, opus, vorbis, alac, pcm_s16le); `webm` `{opus, vorbis}`; `mov` `{aac, alac, mp3, ac3, eac3}` | Measured against each muxer | 2026-08-26 |
-| Subtitle rules: `mkv` accepts text subtitles as a literal copy; `webm` transcodes in kind to `webvtt`; `mov` to `mov_text`. Bitmap subtitles are dropped with a note for `webm` and `mov`, and copied by `mkv` | The accept-but-transcode branch `docs/design/stream-decision.md` already models, three more times | 2026-08-26 |
-| `mkv` declares an **attachment** rule that copies; `webm` and `mov` declare none, so an attachment is dropped by the selective rung with the engine's "not supported by TARGET" note | This is the first stream type beyond video/audio/subtitle any profile has ruled on. Nothing in the engine special-cases it — a rule keyed on the probed `codec_type` is all it takes | 2026-08-26 |
-| Fallback encoders: `mkv` -> `libx264 -crf:v:{n} 18` / `aac -b:a:{n} 192k`; `mov` -> the same; `webm` -> **`libvpx-vp9`** for video and `libopus -b:a:{n} 128k` for audio | h264/aac for the two permissive containers matches `mp4`'s existing choice, so one reader learns one pair. WebM has no such option: its codec set is the constraint | 2026-08-26 |
-| **`mp4` keeps its standing-note hole; the three new profiles carry one where they drop a whole stream type.** `webm` and `mov` say attachments are not carried; `mkv` says nothing, because it drops nothing | Follows the precedent the phase-3 gate set for `wav`: a new profile gets the note, an existing one is not retro-fitted, because that would edit an argv/note assertion phase 1 pinned as its refactor's safety net. `mp4`'s hole is named here so a later phase can close both at once | 2026-08-26 |
-| OPEN — WebM's video fallback default | resolved at the spec-acceptance gate; see the note below | — |
+| Cheap attempts, all with `explicit_streams=False`: `mkv` -> `flags("-map 0:v? -map 0:a? -map 0:s? -map 0:t? -c copy")`; `mov` -> `flags("-map 0:v? -map 0:a? -map 0:s? -map 0:t? -c copy -c:s mov_text")`; `webm` -> `flags("-map 0:v? -map 0:a? -map 0:s? -c copy -c:s webvtt")` | Each maps what its muxer can hold, measured. `mov` maps `0:t?` **deliberately**: it makes an attachment-bearing source fail into the ladder, which then names the loss per stream — better than a blanket note. `webm` does not, because it silently discards instead of failing, so mapping would buy nothing. Both `mov` and `webm` carry their in-kind subtitle transcode in the cheap attempt, so a subtitled source converts on the first attempt instead of paying a probe and a second run | 2026-08-26 |
+| Video masks: `mkv` = `{h264, hevc, av1, vp8, vp9, mpeg4, mpeg2video, theora, prores, ffv1, mjpeg}`; `webm` = `{vp8, vp9, av1}`; `mov` = `{h264, hevc, prores, mpeg4, mpeg2video, mjpeg, ffv1, theora}` — **not** `mp4`'s, which holds `vp9` and `av1` | Measured. The `mov`/`mp4` difference is two codecs, not one, and is the likeliest copy-paste mistake in the phase | 2026-08-26 |
+| Audio masks: `mkv` = `{aac, mp3, ac3, eac3, dts, truehd, flac, opus, vorbis, alac, pcm_s16le}`; `webm` = `{opus, vorbis}`; `mov` = `{aac, alac, mp3, ac3, eac3, dts, pcm_s16le}` | Measured against each muxer | 2026-08-26 |
+| Subtitle rules: `mkv` accepts text **and bitmap** subtitles as a literal copy, mask `{subrip, ass, ssa, mov_text, webvtt, text, hdmv_pgs_subtitle, dvd_subtitle, dvb_subtitle}`; `webm` transcodes text subtitles in kind to `webvtt`; `mov` to `mov_text`. `webm` and `mov` drop bitmap subtitles with a note | Matroska is the only container here that holds bitmap subtitles; the other two reuse the accept-but-transcode branch `docs/design/stream-decision.md` already models | 2026-08-26 |
+| `mkv` declares an **attachment** rule that copies **unconditionally** — an empty-meaning "accept anything" mask, not a list of font codec names | Measured: ffprobe derives the codec name from the MIME type, so `font/ttf` reads as `unknown`. A rule enumerating `{ttf, otf}` would drop a modern font attachment with the note "attachment stream 1 (unknown) dropped: not supported by MKV" — false, and it fails `stream-decision.md`'s requirement that a note name the stream's codec | 2026-08-26 |
+| `webm` declares no attachment rule; `mov` declares none either, and relies on its cheap attempt failing instead | `webm` cannot fail on one, so its standing note covers it. `mov` fails, so the ladder's selective rung drops it with a real per-stream note | 2026-08-26 |
+| **Standing notes**, on each new profile's `cheap_attempt.notes`: `mkv` — "data and timecode streams are not carried into MKV"; `mov` — the same for MOV; `webm` — "attachments, data and timecode streams are not carried into WebM" | Measured: all three lose data/timecode at exit 0, and `webm` loses attachments the same way. `batch.py` reports only the winning attempt's notes, so a note on the cheap attempt is exactly what a successful conversion prints. This is the phase-3 gate's mechanism, applied to what this phase actually drops | 2026-08-26 |
+| Fallback encoders: `mkv` and `mov` -> `libx264 -crf:v:{n} 18` and `aac -b:a:{n} 192k`; `webm` -> `libopus -b:a:{n} 128k` for audio, and the video encoder the gate picks | h264/aac for the two permissive containers matches `mp4`'s existing choice, so a reader learns one pair. WebM's codec set is the constraint, and its video encoder is the phase's one open decision | 2026-08-26 |
+| `last_resort`: `mkv` and `mov` -> `flags("-map 0:v:0? -map 0:a? -c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p -c:a aac -b:a 192k")` with `mp4`'s two notes; `webm` -> the same shape with the gate's video encoder and `libopus -b:a 128k`, noting subtitles and extra video streams are dropped | Every profile needs one, or a ladder that reaches the end lands as `failed` — and the Risks table's safety-net claim would be fiction. Reusing `mp4`'s shape keeps the three readable side by side | 2026-08-26 |
+| Container options: `mov` -> `FASTSTART`; `mkv` and `webm` -> none | Measured: `+faststart` is accepted by MOV and ignored by the other two, so declaring it there matches `mp4` and declaring it elsewhere would be noise | 2026-08-26 |
+| **`mp4` keeps its standing-note hole**; the three new profiles get one | Follows the precedent the phase-3 gate set for `wav`: a new profile gets the note, an existing one is not retro-fitted, because that edits an assertion phase 1 pinned as its refactor's safety net. `mp4`'s hole is named here so a later phase can close both at once | 2026-08-26 |
+| OPEN — WebM's video fallback encoder and its quality parameter | resolved at the spec-acceptance gate; see the note below | — |
 
 ### The one open decision, in full
 
-`libvpx-vp9` at its defaults is **slow** — minutes per minute of video on a
-desktop CPU, against seconds for `libx264`. `--to webm` over a holiday-video
-folder is where this is felt, and `docs/vision.md` rules out an encoder-tuning
-surface, so whatever is chosen here is what every user gets, with no flag to
-escape it.
+`--to webm` has no flag to escape its encoder (`docs/vision.md` rules out an
+encoder-tuning surface), so whatever is chosen here is what every user gets.
+Measured during review: 30 s of `testsrc2` at 1280x720@30 on this machine.
 
-The measured facts do not settle this; it is a product judgement about who
-`--to webm` is for. The gate picks:
+| Option | Wall time | Output size |
+|---|---|---|
+| `libx264 -crf 18` — the `mkv`/`mov` fallback, for scale | 3.6 s | 17.2 MB |
+| 1: `libvpx-vp9 -crf 32 -b:v 0 -row-mt 1 -cpu-used 4` | 21.7 s | 12.8 MB |
+| 2: `libvpx-vp9 -crf 32 -b:v 0` at default speed | 104.3 s | 12.3 MB |
+| 3: `libvpx` (VP8) at defaults | 11.3 s | 1.2 MB |
 
-1. **`libvpx-vp9` with speed options** — `-row-mt 1 -cpu-used 4` or similar.
-   Still VP9, still widely playable, several times faster than the default, at
-   some quality cost that nobody without a reference file would notice. The
-   options are pinned by the argv test, so the choice stays visible.
-2. **`libvpx-vp9` at its defaults.** Best quality per byte, and honest to the
-   format. A batch conversion may take hours, and the progress bar is the only
-   thing telling the user it is still alive.
-3. **`libvpx` (VP8)** — much faster and universally supported, at a real size and
-   quality penalty against VP9. The conservative choice if `--to webm` is mostly
-   about compatibility rather than archiving.
+1. **VP9 with speed options.** Six times slower than h264 and about a fifth
+   smaller. The quality cost against option 2 is invisible without a reference
+   file, and the options are pinned by the argv test so the choice stays visible.
+2. **VP9 at default speed.** Best quality per byte, ~3.5x realtime — a folder of
+   holiday videos becomes an overnight job, with only the progress bar to say it
+   is alive.
+3. **VP8.** Fast and universally playable, but note what the measurement actually
+   shows: `libvpx` at defaults uses a fixed low target bitrate rather than a
+   quality target, so the 1.2 MB is a different rate-control regime, not codec
+   efficiency. It would need its own quality parameter to be comparable at all.
+
+Unlike the audio fallbacks, VP9 needs `-crf` *and* `-b:v 0` to mean
+"quality-targeted"; `-crf` alone leaves VP9 in constrained-quality mode. (For
+x264, measured, `-crf 18` and `-crf 18 -b:v 0` are byte-identical, so `mp4`'s
+existing entry needs no companion.)
 
 ## Tracking
 
@@ -150,15 +174,21 @@ Machine checks:
       lists only `converter/profiles.py`, `README.md` and paths under `tests/`.
 - [ ] Per new profile, a test pinning the full argv for a copyable input and for
       a non-copyable one — six tests, three profiles, both cases each.
-- [ ] A test that `mkv`'s cheap attempt maps `0:t?` and the others do not.
-- [ ] A test that `mov`'s video mask excludes `vp9` while `mp4`'s includes it —
-      the one difference a copy-paste between the two entries would erase.
+- [ ] A test that `mkv`'s and `mov`'s cheap attempts map `0:t?` and `webm`'s does
+      not.
+- [ ] A test that `mov`'s video mask excludes **both** `vp9` and `av1` while
+      `mp4`'s includes both — the two-codec difference a copy-paste erases.
+- [ ] A test that `mkv`'s attachment rule accepts a stream whose `codec_name` is
+      `unknown`, since that is what ffprobe reports for a `font/ttf` attachment.
 - [ ] A test per degradation branch: video re-encoded, audio re-encoded, a bitmap
-      subtitle dropped by `webm` and by `mov`, an attachment dropped by `webm` and
-      by `mov`, a text subtitle transcoded to `webvtt` and to `mov_text`.
+      subtitle dropped by `webm` and by `mov`, an attachment dropped by `mov` via
+      the ladder, a text subtitle transcoded to `webvtt` and to `mov_text`.
+- [ ] A test per standing note, asserting its exact wording on the profile's
+      `cheap_attempt.notes` — the mechanism that covers what the ladder never
+      sees.
+- [ ] A test that each new profile declares a `last_resort`.
 - [ ] A test that `mp4`'s argv and notes are byte-for-byte what they were before
       this phase.
-- [ ] The registry structural test from phase 3 still passes with the new entries.
 
 Human milestone-QA gate. `$FF` is the absolute ffmpeg path from *This machine*;
 PowerShell, one command per line:
@@ -174,35 +204,46 @@ New-Item -ItemType Directory -Force in
 - [ ] Each of the four targets converts a real source and the result plays.
 - [ ] `--to mkv in out` over `attached.mkv` keeps the font attachment — check with
       `ffprobe`, not by eye. This is the phase's headline behaviour.
+- [ ] `--to mov in out` over `attached.mkv` *fails the cheap attempt*, reaches the
+      ladder, and names the dropped attachment. The one place a drop is reported
+      per stream rather than by a standing note.
+- [ ] `--to webm in out` over `attached.mkv` succeeds and prints WebM's standing
+      note, since nothing failed and there was no ladder to name it.
 - [ ] `--to webm in out` over `h264.mkv` re-encodes video and audio, names both,
       and produces a file that plays in a browser.
 - [ ] `--to webm in out` over `vp9.webm` stream-copies: near-instant, and the
       video stream is packet-identical
       (`& $FF -i out/vp9.webm -map 0:v -c copy -f md5 -` matches the source).
-- [ ] `--to mov in out` over `vp9.webm` re-encodes the video rather than failing —
-      the measured `mov` rejection of vp9, reached through the ladder.
+- [ ] `--to mov in out` over `vp9.webm` re-encodes the video rather than failing.
 - [ ] `--to mp4 in out` behaves exactly as it did before this phase.
 - [ ] A second run over any converted tree reports `0 converted`, exit 0.
 - [ ] Time the `--to webm` run over a 30-second source and record it, so the
-      gate's fallback-encoder decision can be judged against a real number.
+      gate's fallback choice can be checked against a real number on real content.
 
 ## Risks and mitigations
 
 | Risk | Mitigation |
 |---|---|
-| `mov`'s mask is written by copying `mp4`'s, silently admitting vp9 | Its own Verification item, because this is the likeliest mistake in the phase |
-| `--to webm` is so slow that the tool looks hung | The gate decides the fallback with a measured time in front of it, and the QA gate records one |
-| The attachment rule turns out to need an engine change | Measured first: a rule keyed on `codec_type` is all the engine already does. If it is not, escalate as `needs:planning` rather than editing `jobs.py` |
-| A source with a data or timecode stream fails a remux | No cheap attempt uses `-map 0`; every one selects by type, so an unmapped type cannot fail the copy |
-| `mkv`'s broad masks let a stream through that the muxer then refuses | The `last_resort` re-encode is the safety net, and the ladder reaches it |
+| `mov`'s mask is written by copying `mp4`'s, admitting vp9 or av1 | Its own Verification item naming both codecs, because this is the likeliest mistake in the phase |
+| `--to webm` is so slow that the tool looks hung | The gate decides with measured wall times in front of it, and the QA gate records one on real content |
+| Data or timecode streams are lost without a word | Every new profile's standing note says so, with a test pinning the wording |
+| The attachment rule turns out to need an engine change | Measured through the real engine during review: a rule keyed on `codec_type == "attachment"` works, and `-c:t:0 copy` is valid ffmpeg. If that changes, escalate as `needs:planning` |
+| A source with a data stream fails a remux | No cheap attempt uses `-map 0`; every one selects by type, so an unmapped type cannot fail the copy |
+| `mkv`'s broad masks let a stream through that the muxer then refuses | The declared `last_resort` is the safety net, and the ladder reaches it |
 
 ## Decision log
 
 - 2026-08-26: The muxer facts were measured during planning rather than left for
   the review to find, after phase 3 needed five rounds largely because its first
-  draft guessed at them. The table above is the result; the review's job is to
-  falsify it, not to derive it.
+  draft guessed. The review's job was to falsify the table; most rows survived,
+  and the ones that did not are folded in above.
+- 2026-08-26: Review measured that `mov` *rejects* a mapped attachment while
+  `webm` silently discards one. So `mov` maps `0:t?` to force the failure that
+  lets the ladder name the loss, and `webm` cannot — the asymmetry decides which
+  target gets a real note and which gets a standing one.
+- 2026-08-26: Review measured that no profile in this phase carries data or
+  timecode streams, `mkv` included, so the original "mkv drops nothing" claim was
+  wrong and all three profiles need a standing note.
 - 2026-08-26: `mp4`'s standing-note hole is left open deliberately, following the
-  phase-3 gate's `wav` precedent — retro-fitting a note to an existing profile
-  edits an assertion phase 1 pinned as its safety net, and the two holes are
-  better closed together in one later phase than piecemeal.
+  phase-3 gate's `wav` precedent — the two holes are better closed together in
+  one later phase than piecemeal.
