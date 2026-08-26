@@ -7,7 +7,7 @@ import pytest
 
 from converter import ffmpegtool, jobs
 from converter.ffmpegtool import Stream, build_argv, cli_path
-from converter.profiles import MKV, MP4, WAV
+from converter.profiles import FLAC, MKV, MP3, MP4, WAV
 
 
 def options_of(argv: list[str], src: str, dst: str) -> list[str]:
@@ -140,6 +140,145 @@ class TestWavJob:
 
         assert len(attempts[0].notes) == 1
         assert not any("stream 0" in note for note in attempts[0].notes)
+
+
+class TestMp3Job:
+    """Issue #21, `docs/specs/spec-audio-formats.md`: mp3's cheap attempt maps
+    audio *blindly*, unlike WAV's index-explicit one, so unlike WAV a fully
+    compatible single-stream source still gets a selective rung -- the same
+    shape MP4 has (`TestMp4Retries.test_selective_copies_compatible_streams`)."""
+
+    def test_first_attempt_carries_the_standing_note(self):
+        attempt = jobs.first_attempt(MP3)
+
+        assert attempt.options == ("-map", "0:a?", "-c:a", "copy")
+        assert attempt.notes == (
+            "non-audio streams, including cover art, are not carried into MP3",
+        )
+
+    def test_single_mp3_stream_reaches_a_selective_copy(self):
+        streams = [Stream(0, "audio", "mp3")]
+
+        attempts = jobs.retries(MP3, streams)
+
+        assert [a.label for a in attempts] == ["selective", "re-encode"]
+        assert attempts[0].options == ("-map", "0:0", "-c:a", "copy")
+        assert attempts[0].notes == ()
+
+    def test_non_mp3_audio_reencodes_with_a_note(self):
+        streams = [Stream(0, "audio", "aac")]
+
+        selective = jobs.retries(MP3, streams)[0]
+
+        assert selective.options == ("-map", "0:0", "-c:a", "libmp3lame", "-q:a", "2")
+        assert selective.notes == ("audio stream 0 (aac) re-encoded to mp3",)
+
+    def test_second_audio_stream_is_dropped_by_the_muxer_enforced_limit(self):
+        """The mp3 muxer -- not the blind mapping -- is what makes a second
+        stream fail, so the drop is named on the failure-side selective rung,
+        the same shape WAV's own second-audio-stream drop has."""
+        streams = [Stream(0, "audio", "mp3"), Stream(1, "audio", "mp3")]
+
+        selective = jobs.retries(MP3, streams)[0]
+
+        assert selective.options == ("-map", "0:0", "-c:a", "copy")
+        assert selective.notes == ("audio stream 1 (mp3) dropped: MP3 holds 1 audio stream",)
+
+    def test_video_only_source_skips_straight_to_the_last_resort(self):
+        attempts = jobs.retries(MP3, [Stream(0, "video", "h264")])
+
+        assert [a.label for a in attempts] == ["re-encode"]
+
+    def test_video_stream_alongside_audio_is_dropped_with_a_note(self):
+        """No audio profile declares a video rule (spec-audio-formats.md), so
+        a video stream -- cover art included -- is always structurally
+        unsupported, named the same way MP4 names an attachment it has no
+        rule for."""
+        streams = [Stream(0, "audio", "mp3"), Stream(1, "video", "h264")]
+
+        selective = jobs.retries(MP3, streams)[0]
+
+        assert selective.notes == ("video stream 1 (h264) dropped: not supported by MP3",)
+
+    def test_last_resort_notes_are_pinned(self):
+        """The explicit-index last resort cannot name a per-stream drop itself
+        (unlike the selective rung), so what it gives up has to be its own
+        declared note -- the only place that information exists."""
+        reencode = jobs.retries(MP3, [])[-1]
+
+        assert reencode.notes == (
+            "non-audio streams, and any audio stream beyond the first, are not carried into MP3",
+        )
+
+    def test_target_suffix(self):
+        assert MP3.target_suffix == ".mp3"
+
+
+class TestFlacJob:
+    """Issue #21, `docs/specs/spec-audio-formats.md`: same blind-mapping shape
+    as `MP3`, but flac's fallback carries no `fallback_name`, so a re-encode
+    into flac itself is never reported as a loss."""
+
+    def test_first_attempt_carries_the_standing_note(self):
+        attempt = jobs.first_attempt(FLAC)
+
+        assert attempt.options == ("-map", "0:a?", "-c:a", "copy")
+        assert attempt.notes == (
+            "non-audio streams, including cover art, are not carried into FLAC",
+        )
+
+    def test_single_flac_stream_reaches_a_selective_copy(self):
+        streams = [Stream(0, "audio", "flac")]
+
+        attempts = jobs.retries(FLAC, streams)
+
+        assert [a.label for a in attempts] == ["selective", "re-encode"]
+        assert attempts[0].options == ("-map", "0:0", "-c:a", "copy")
+        assert attempts[0].notes == ()
+
+    def test_non_flac_audio_reencodes_with_no_note(self):
+        """Verification (spec-audio-formats.md): converting into flac emits no
+        note for the encode itself -- decoding into a lossless container's own
+        codec is not a loss, the same rule WAV's PCM fallback carries."""
+        streams = [Stream(0, "audio", "pcm_s16le")]
+
+        selective = jobs.retries(FLAC, streams)[0]
+
+        assert selective.options == ("-map", "0:0", "-c:a", "flac")
+        assert selective.notes == ()
+
+    def test_second_audio_stream_is_dropped_by_the_muxer_enforced_limit(self):
+        streams = [Stream(0, "audio", "flac"), Stream(1, "audio", "flac")]
+
+        selective = jobs.retries(FLAC, streams)[0]
+
+        assert selective.options == ("-map", "0:0", "-c:a", "copy")
+        assert selective.notes == ("audio stream 1 (flac) dropped: FLAC holds 1 audio stream",)
+
+    def test_video_only_source_skips_straight_to_the_last_resort(self):
+        attempts = jobs.retries(FLAC, [Stream(0, "video", "h264")])
+
+        assert [a.label for a in attempts] == ["re-encode"]
+
+    def test_video_stream_alongside_audio_is_dropped_with_a_note(self):
+        streams = [Stream(0, "audio", "flac"), Stream(1, "video", "h264")]
+
+        selective = jobs.retries(FLAC, streams)[0]
+
+        assert selective.notes == ("video stream 1 (h264) dropped: not supported by FLAC",)
+
+    def test_last_resort_notes_are_pinned(self):
+        """Unlike its `StreamRule.fallback_name=None`, the last resort still
+        needs its own note: it is an explicit-index attempt, so it cannot name
+        a per-stream drop the way the selective rung does."""
+        reencode = jobs.retries(FLAC, [])[-1]
+
+        assert reencode.notes == (
+            "non-audio streams, and any audio stream beyond the first, are not carried into FLAC",
+        )
+
+    def test_target_suffix(self):
+        assert FLAC.target_suffix == ".flac"
 
 
 class TestMp4Remux:
@@ -613,6 +752,132 @@ class TestProfileArgvPinning:
             "-c:a",
             "pcm_s16le",
             "out.wav",
+        ]
+
+    def test_mp3_cheap_attempt(self):
+        argv = build_argv("ffmpeg", "in.wav", jobs.first_attempt(MP3).options, "out.mp3")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.wav",
+            "-map",
+            "0:a?",
+            "-c:a",
+            "copy",
+            "out.mp3",
+        ]
+
+    def test_flac_cheap_attempt(self):
+        argv = build_argv("ffmpeg", "in.wav", jobs.first_attempt(FLAC).options, "out.flac")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.wav",
+            "-map",
+            "0:a?",
+            "-c:a",
+            "copy",
+            "out.flac",
+        ]
+
+    def test_mp3_copyable_source(self):
+        selective = jobs.retries(MP3, [Stream(0, "audio", "mp3")])[0]
+
+        argv = build_argv("ffmpeg", "in.wav", selective.options, "out.mp3")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.wav",
+            "-map",
+            "0:0",
+            "-c:a",
+            "copy",
+            "out.mp3",
+        ]
+
+    def test_mp3_non_copyable_source(self):
+        selective = jobs.retries(MP3, [Stream(0, "audio", "aac")])[0]
+
+        argv = build_argv("ffmpeg", "in.m4a", selective.options, "out.mp3")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.m4a",
+            "-map",
+            "0:0",
+            "-c:a",
+            "libmp3lame",
+            "-q:a",
+            "2",
+            "out.mp3",
+        ]
+
+    def test_flac_copyable_source(self):
+        selective = jobs.retries(FLAC, [Stream(0, "audio", "flac")])[0]
+
+        argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.flac")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:0",
+            "-c:a",
+            "copy",
+            "out.flac",
+        ]
+
+    def test_flac_non_copyable_source(self):
+        """`--to flac` from a PCM source (Verification, spec-audio-formats.md):
+        reaches the selective rung, not `mp3`/`flac`'s last-resort."""
+        selective = jobs.retries(FLAC, [Stream(0, "audio", "pcm_s16le")])[0]
+
+        argv = build_argv("ffmpeg", "in.wav", selective.options, "out.flac")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.wav",
+            "-map",
+            "0:0",
+            "-c:a",
+            "flac",
+            "out.flac",
         ]
 
 
