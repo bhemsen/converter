@@ -61,34 +61,60 @@ flowchart TD
   naming a re-encode that never ran would trade one dishonest report for another.
 - **What a partial profile owes in exchange.** Reading the declared rules instead
   of the option list is sound only while the rules and the mapping agree, so a
-  profile that sets `partial_mapping` must satisfy both halves of this. A new
-  profile that cannot is the bug — not the verification.
-  1. **A rule for every stream type the cheap attempt can successfully
-     carry.** Otherwise the verification announces a drop that never
-     happened — but a type the cheap attempt maps only to *force a failure*
-     never reaches the success side `V` checks, so it needs no rule to keep
-     that check honest. `mkv` and `mov` both map `-map 0:t?`, and the two
-     need opposite treatment: MKV's muxer holds an attachment, so `mkv`
-     carries fonts on the success side and owes an `attachment` rule, or
-     every font it faithfully copied is reported as lost. MOV's muxer
-     rejects any mapped attachment outright, so `mov` maps `0:t?`
-     deliberately to make an attachment-bearing source fail the cheap
-     attempt and land on the failure side instead — the type never survives
-     to `V`, so `mov` needs no `attachment` rule (`docs/specs/spec-video-formats.md`,
-     issue #39).
-  2. **No `stream_limit` on a type its cheap attempt selects blindly.** A blind
-     `-map 0:a?` maps *every* audio stream, so a limit the mapping does not
-     enforce would have the verification report surplus streams the output does
-     contain. A limit belongs to a type the cheap attempt names by index (WAV's
-     `-map 0:a:0`) or does not map at all.
+  profile that sets `partial_mapping` must satisfy the equality that soundness
+  already rests on:
 
-  The two shipped profiles satisfy both by construction — MP4's selectors match
-  its three rules exactly and it declares no limit, WAV names one audio index and
-  limits audio to 1 — and `tests/test_profiles.py` checks the pair per profile
-  rather than leaving it to review. A mov-shaped profile in that same test corpus
-  proves the narrowed form of rule 1 specifically: it maps `attachment` with no
-  rule for it and still passes, because the type is exempted as force-failure
-  only, not because the check was skipped.
+  `set(profile.rules) == set(mapped_types(profile))`
+
+  where `mapped_types` is the stream types the cheap attempt's own option list
+  maps — read directly off `-map`, exactly as `tests/test_profiles.py` computes
+  it, and never by the engine, which is why the profile has to declare the two
+  sides in agreement instead of the code deriving one from the other. The one
+  exemption (issue #39) removes a type from both sides before comparing: one the
+  cheap attempt maps only to *force a failure*, never to carry it on the success
+  side, so it never reaches the success-side `V` checks and needs no rule to
+  keep them honest. `mkv` and `mov` both map `-map 0:t?`, and the two resolve
+  oppositely: MKV's muxer holds an attachment, so `mkv` carries fonts on the
+  success side and `attachment` stays in the equality — drop the rule and every
+  font it faithfully copied is reported as lost. MOV's muxer rejects any mapped
+  attachment outright, so `mov` maps `0:t?` deliberately to make an
+  attachment-bearing source fail the cheap attempt and land on the failure side
+  instead — `attachment` is exempted from both sides, not carried on either
+  (`docs/specs/spec-video-formats.md`, issue #39). A new profile that cannot
+  satisfy the equality, modulo that one exemption, is the bug — not the
+  verification.
+
+  The equality fails in either direction for a different reason:
+  - **A mapped type with no rule** announces a drop that never happened — a
+    stream the cheap attempt faithfully carried gets reported as lost.
+  - **A rule for a type the cheap attempt does not map** announces nothing when
+    it should: `_structural_drop` (`converter/jobs.py`) finds the rule, sees no
+    stream-limit trip, and treats the stream as accepted, even though the cheap
+    attempt never mapped that type at all — a stream that really was dropped
+    produces no note. A cover-art profile of the shape `docs/specs/spec-audio-formats.md`
+    once contemplated — an audio-only cheap attempt carrying a `video` rule —
+    is exactly this: it silently drops the artwork (issue #18's bug class,
+    reintroduced through the design contract). This is why the clause once here
+    admitting a `stream_limit` on "a type that does not map at all" is gone —
+    such a rule cannot exist at all once the equality holds, so there was
+    nothing left for that clause to permit.
+
+  `stream_limit` adds one more constraint on top of the equality: **no
+  `stream_limit` on a type its cheap attempt selects blindly.** A blind
+  `-map 0:a?` maps *every* audio stream, so a limit the mapping does not
+  enforce would have the verification report surplus streams the output does
+  contain. A limit belongs only to a type the cheap attempt names by index
+  (WAV's `-map 0:a:0`), and matches the count of indices actually named — one
+  index named, one stream, exactly WAV's `stream_limit=1`.
+
+  The two shipped profiles satisfy the equality by construction — MP4's
+  selectors match its three rules exactly and it declares no limit, WAV names
+  one audio index and limits audio to 1 — and `tests/test_profiles.py` checks
+  it per profile rather than leaving it to review. A mov-shaped profile in that
+  same test corpus proves the exemption specifically: it maps `attachment` with
+  no rule for it and still passes, because the type is exempted on both sides
+  as force-failure only, not because either direction of the check was
+  skipped.
 - **Cheapest first.** Rung 1 is whatever the profile declares as its cheap attempt:
   a *blind* stream copy for a container that can hold the source codecs
   (`-map 0:v? -map 0:a? ...`), or a *stream-explicit* selection where it cannot

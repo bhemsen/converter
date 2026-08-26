@@ -75,9 +75,9 @@ Everything below follows from that table.
   declares `partial_mapping=True` and is probed once on its success, so what
   that mapping could not carry is named (`docs/constitution.md`, narrowed by
   issue #18). Every cheap attempt below maps by type, so every profile in
-  this phase is partial and must declare it -- together with a rule for each
-  stream type it maps, per the invariant in
-  `docs/design/degradation-ladder.md`.
+  this phase is partial and must declare it -- together with exactly a rule
+  for each stream type it maps and no rule for any other, per the equality in
+  `docs/design/degradation-ladder.md` (issue #40).
 - Never report success for a conversion that silently dropped something.
 - `{n}` is substituted **only** in `StreamRule` templates. `cheap_attempt` and
   `last_resort` are emitted verbatim, so a `{n}` in either reaches ffmpeg

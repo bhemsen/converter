@@ -74,15 +74,44 @@ def mapped_types(profile: Profile) -> dict[str, bool]:
     """
     options = profile.cheap_attempt.options
     mapped: dict[str, bool] = {}
-    for flag, value in itertools.pairwise(options):
-        if flag != "-map" or not value.startswith("0:"):
+    map_values = [value for flag, value in itertools.pairwise(options) if flag == "-map"]
+    for value in map_values:
+        if not value.startswith("0:"):
             continue
         selector = value[2:].removesuffix("?")
         letter = selector.split(":")[0]
         if letter in MAP_LETTERS:
             # "0:a?" selects every audio stream; "0:a:0" names exactly one.
             mapped[MAP_LETTERS[letter]] = ":" not in selector
+    # A "-map" flag this function cannot read (a bare index like "0:0", or a
+    # negative exclusion like "-0:s") must fail loudly, not return {} and let
+    # the invariant checks pass over a profile they never actually looked at.
+    assert not map_values or mapped, (
+        f"{profile.label}: no -map selector recognised among {map_values!r}"
+    )
     return mapped
+
+
+def named_index_counts(profile: Profile) -> dict[str, int]:
+    """How many distinct stream indices the cheap attempt names, per type.
+
+    ``mapped_types`` collapses a type down to one blind/explicit bit; a
+    ``stream_limit`` check needs the actual count, so a profile that names two
+    indices of a type but declares a limit of one -- or the reverse -- is
+    caught rather than passing because *some* index of that type was named.
+    """
+    options = profile.cheap_attempt.options
+    counts: dict[str, int] = {}
+    for flag, value in itertools.pairwise(options):
+        if flag != "-map" or not value.startswith("0:"):
+            continue
+        selector = value[2:].removesuffix("?")
+        parts = selector.split(":")
+        letter = parts[0]
+        if letter in MAP_LETTERS and len(parts) > 1:
+            kind = MAP_LETTERS[letter]
+            counts[kind] = counts.get(kind, 0) + 1
+    return counts
 
 
 #: `SHIPPED` plus the mov-shaped stand-in, so the invariant is checked against a
@@ -112,6 +141,17 @@ class TestPartialMappingInvariant:
 
         assert set(mapped_types(profile)) - forced_failure <= set(profile.rules)
 
+    def test_no_rule_for_a_type_the_cheap_attempt_does_not_map(self, profile):
+        """The mirrored direction (issue #40): a rule for a type the cheap
+        attempt never maps is never exercised by ffmpeg, so `_structural_drop`
+        (`converter/jobs.py`) finds the rule, sees no stream-limit trip, and
+        treats the stream as accepted -- a stream that really was dropped then
+        produces no note. Together with the test above, this pins the full
+        equality `set(profile.rules) == set(mapped_types(profile))` (modulo the
+        force-failure exemption, which only ever removes from the left).
+        """
+        assert set(profile.rules) <= set(mapped_types(profile))
+
     def test_forced_failure_types_carry_no_rule(self, profile):
         """The exemption is for a type genuinely absent from `rules`, not a
         second way to satisfy the requirement -- otherwise `mov`-shaped would
@@ -136,6 +176,20 @@ class TestPartialMappingInvariant:
         ]
 
         assert all(profile.rules[kind].stream_limit is None for kind in blind)
+
+    def test_stream_limit_matches_the_cheap_attempt_s_named_index_count(self, profile):
+        """A limit belongs to a type the cheap attempt names by index, and
+        must equal how many indices of that type are actually named -- WAV
+        names one audio index and limits audio to 1. Pinning the count, not
+        just that a limit exists, catches a profile that names two indices of
+        a type but limits it to one, or declares a limit with no named index
+        behind it at all.
+        """
+        counts = named_index_counts(profile)
+
+        for kind, rule in profile.rules.items():
+            if rule.stream_limit is not None:
+                assert rule.stream_limit == counts.get(kind, 0)
 
 
 class TestLeafModule:
