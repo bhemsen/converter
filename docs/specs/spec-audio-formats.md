@@ -130,7 +130,8 @@ reader should re-verify rather than trust the table.
 | **On the happy path the muxer is the authority, not the copy mask.** A stream copy that ffmpeg's muxer accepts ships, whether or not the mask lists that codec; the mask governs the *failure* path, where the engine builds the selective rung | Measured, not assumed: `--to opus` from a Vorbis `.ogg` under a blind `-c:a copy` exits 0 and writes a `.opus` file containing Vorbis. Nothing short of a probe can prevent that, and a probe on the happy path is forbidden. The per-profile cheap attempts below are chosen so that where the muxer is looser than the format's identity, the profile does not rely on a copy at all | 2026-08-25 |
 | The `cheap_attempt`, `explicit_streams` and `last_resort` of each of the **five new** profiles are fixed by the table below; `wav` is untouched and keeps phase 2's shape exactly | A blanket rule does not survive contact with the muxers: they differ in whether they enforce the target's codec, whether they hold several audio streams, and whether they reject a picture stream. Each of those differences changes what an honest cheap attempt looks like | 2026-08-25 |
 | `stream_limit=1` for `mp3` and `flac` only. `m4a`, `ogg` and `opus` declare **no** audio stream limit | Measured: the `mp3` and `flac` muxers both enforce exactly one audio stream, so the limit is real and a multi-stream source fails into the ladder, which names the stream it drops. `m4a`, `ogg` and `opus` accept several, so declaring a limit would mean mapping one stream and silently discarding the rest — a loss the tool could not name. Carrying every stream the container holds drops nothing at all, which is the better answer | 2026-08-25 |
-| OPEN — does `opus` copy or always encode? | resolved at the spec-acceptance gate, together with the standing-note decision; see the note below | — |
+| **`opus` copies**: its cheap attempt is `flags("-map 0:a? -c copy")` like the other four, `explicit_streams=False`, and it maps no video | Resolved at the gate on 2026-08-26. Generation loss on every already-Opus file was judged the worse price: it is inflicted on the common case, while the mislabel it would prevent is reachable only by pointing `--to opus` at a `.ogg`/`.oga` source. Consequence: no target maps video, so all five new profiles fall under the standing-note decision | 2026-08-26 |
+| Each of the five new profiles carries a **standing note** on its cheap attempt: non-audio streams, cover art included, are not carried into the target. `wav` does **not** get one | Resolved at the gate on 2026-08-26. Always true, never silent, and it needs no amendment to `docs/constitution.md` -- the price is that it prints on every file, including the many with nothing to lose. `wav` is excluded to keep this phase's "wav unchanged" promise and its phase-1 note assertion intact; its hole is named in this spec for a later phase to close | 2026-08-26 |
 | **Only `opus` maps video** in its cheap attempt. `mp3`, `m4a`, `flac` and `ogg` map audio only | Mapping video is worth it exactly where it turns a quiet loss into a *failure* the ladder can name. Measured, that is true only for `opus`: its cheap attempt carries no `-c:v`, so ffmpeg cannot select a video encoder and errors out, the ladder runs, and the picture stream is named. Every other target has a measured way to swallow video quietly — `m4a` copies a full h264 track through, `ogg` copies theora through (theora is the ogg muxer's own video codec, so a theora source arrives as a whole video file renamed `.ogg`), `flac` discards real video at exit 0 with only a stderr warning, and `mp3` writes a real video as a single frame. For those four, mapping video buys a silent wrong result instead of a note | 2026-08-25 |
 | `opus`'s `accept_options` is `flags("-c:a copy")`: the cheap attempt never copies, but the **selective rung does**, on a mask hit | "`opus` does not copy" is a statement about the cheap attempt alone. Following WAV's `accept_options=()` precedent here would emit a map with no codec option and produce an undeclared re-encode | 2026-08-25 |
 | The happy-path muxer-authority row is a problem only for a **codec-defined** target, where the extension names the codec. `.opus`, `.mp3` and `.flac` are codec-defined; `.m4a` and `.ogg` are container-defined, so an `.m4a` holding `ac3` (measured: it copies through, outside the declared mask) is unusual but not a lie | This is the criterion that exempts `m4a` and `ogg` from the treatment `opus` gets, and it stops `{aac, alac}` from being read later as a guarantee | 2026-08-25 |
@@ -140,7 +141,6 @@ reader should re-verify rather than trust the table.
 | `flac` and `wav` declare **`fallback_name=None`**, so an encode into them emits no note; the other four declare theirs, so a re-encode emits the engine's existing per-stream note naming the source codec and the target codec | Decoding into a container's own lossless codec gives up nothing. This is the rule phase 1 established for WAV, expressed with the one lever `jobs.py` has | 2026-08-25 |
 | **No generation-loss note** (a "your FLAC came from a 128 kbit/s MP3" warning) in this phase | It would need a lossy-codec set plus a new branch in `jobs.py`, and `Stream` carries no such notion — an engine change, which this phase's headline outcome forbids. Recorded below as a roadmap candidate rather than smuggled in | 2026-08-25 |
 | No audio profile declares a **video rule**, so any video stream — cover art included — is dropped by the selective rung with the engine's existing "not supported by TARGET" note | Keeping cover art needs the `attached_pic` disposition, which `probe_streams` does not request and `Stream` does not carry, so the engine cannot tell a picture from a real video stream. The muxer table shows what happens if you guess: `m4a` hard-fails on a real MJPEG while succeeding on a picture, and `mp3` silently truncates it to one frame | 2026-08-25 |
-| OPEN — what a conversion says when the cheap attempt **succeeds** and cover art is lost along the way | resolved at the spec-acceptance gate; see the note below | — |
 
 ### The five new profiles, fixed
 
@@ -152,7 +152,7 @@ reader should re-verify rather than trust the table.
 | `flac` | `-map 0:a? -c:a copy` | False | 1 | `-map 0:a:0 -c:a flac` |
 | `m4a` | `-map 0:a? -c:a copy` | False | none | `-map 0:a:0 -c:a aac -b:a 192k` |
 | `ogg` | `-map 0:a? -c copy` | False | none | `-map 0:a:0 -c:a libvorbis -q:a 5` |
-| `opus` | per the second open decision | False | none | `-map 0:a:0 -c:a libopus -b:a 128k` |
+| `opus` | `-map 0:a? -c copy` | False | none | `-map 0:a:0 -c:a libopus -b:a 128k` |
 
 `explicit_streams` is `False` throughout: every cheap attempt above selects by
 type rather than by index, so the selective rung is never suppressed.
@@ -175,7 +175,7 @@ are not silently lost; seeding them as roadmap phases is `/loopkit:roadmap`'s jo
 2. **Source-lossiness awareness** — a lossy-codec set the engine can consult, so a
    re-encode into a lossless target can warn that the source was already lossy.
 
-### The one open decision, in full
+### The cover-art decision, in full (resolved at the gate)
 
 `ffprobe` never runs on the happy path (`docs/constitution.md`), so a conversion
 the cheap attempt completes has **no stream list** — the engine cannot name what
@@ -233,10 +233,12 @@ gate picks:
    rather than approved as a quiet violation. Phases 1 and 2 both set the
    precedent of amending a foundation doc in the spec's own PR.
 
-Option 1 is the safer reading; option 2 is the quieter tool and costs an
-amendment. Either way the loss is real and the phase records it.
+**Resolved at the gate on 2026-08-26: option 1, the standing note, and not extended
+to `wav`.** The noise was judged the smaller cost against a silent loss, and
+touching `wav` would have changed a phase-1 note assertion this phase promised to
+leave alone. `wav`'s hole stays open and is now written down.
 
-### The second open decision: does `opus` copy?
+### The opus decision, in full (resolved at the gate)
 
 Decided with the first, because both are the same question — how much may the
 happy path lose in exchange for not probing — and because option 1 above already
@@ -263,8 +265,8 @@ common case, to prevent a mislabel only reachable by pointing `--to opus` at a
    including a plain `.mp4` someone wants ripped: a mapped video stream always
    fails encoder selection, so the ladder always runs. Intended, but priced here.
 
-Picking 1 also removes `opus` from the video-mapping group, so no target maps
-video and all six join the first decision's group. Picking 2 keeps `opus` as the
+**Resolved at the gate on 2026-08-26: option 1, `opus` copies.** No target maps
+video, so all five new profiles carry the standing note. Picking 2 keeps `opus` as the
 one target whose cover-art loss is named properly.
 
 ## Tracking
@@ -407,3 +409,10 @@ New-Item -ItemType Directory -Force art
   since phase 1, so the wav muxer's rejection never fires. Named here for the
   first time, and put to the gate as a sub-question, since closing it changes what
   `wav` reports and this phase promised `wav` unchanged.
+- 2026-08-26: Gate resolved both decisions. `opus` copies — a generation loss on
+  every already-Opus file was judged worse than a mislabel reachable only by
+  pointing `--to opus` at an Ogg source. Consequently no target maps video, and
+  all five new profiles carry a standing note that non-audio streams are not
+  carried. `wav` was deliberately left out: closing its hole would have changed a
+  phase-1 note assertion this phase promised to leave alone, so the hole stays,
+  named, for a later phase.
