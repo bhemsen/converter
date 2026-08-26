@@ -408,6 +408,88 @@ MOV = Profile(
     ),
 )
 
+#: Codecs a WebM container accepts as a stream copy for video, measured against
+#: ffmpeg 9.0. WebM enforces its own codec set at the muxer level ("Only VP8 or
+#: VP9 or AV1 video and Vorbis or Opus audio and WebVTT subtitles are supported
+#: for WebM"), so a copy outside this mask does not silently degrade -- it fails
+#: the cheap attempt outright and the ladder re-encodes.
+WEBM_VIDEO_CODECS = frozenset({"vp8", "vp9", "av1"})
+#: Codecs a WebM container accepts as a stream copy for audio, measured the
+#: same way.
+WEBM_AUDIO_CODECS = frozenset({"opus", "vorbis"})
+
+WEBM = Profile(
+    label="WebM",
+    name="webm",
+    description="Video: copies VP8/VP9/AV1 and Opus/Vorbis, re-encodes the rest to VP9/Opus",
+    target_suffix=".webm",
+    # Measured: WebM's muxer enforces its own codec set and has no faststart
+    # equivalent worth declaring, so this stays empty like MKV's.
+    container_options=(),
+    # Unlike MKV and MOV, deliberately does NOT map "0:t?": WebM does not reject
+    # a mapped attachment, it silently discards it at exit 0 (measured), so
+    # mapping it would buy nothing -- the "map to force a failure" trick MOV
+    # uses does not work here. A source with an attachment still loses it, but
+    # only the standing note below can say so, since nothing ever fails on one.
+    # Still not "-map 0": that would also select data and timecode streams,
+    # which no "v/a/s" map -- WebM's included -- carries at all (measured).
+    cheap_attempt=Attempt(
+        label="remux",
+        options=flags("-map 0:v? -map 0:a? -map 0:s? -c copy -c:s webvtt"),
+        notes=("attachments, data and timecode streams are not carried into WebM",),
+    ),
+    explicit_streams=False,
+    # The blind "?" selectors carry every video, audio and subtitle stream
+    # WebM's muxer can hold, but never an attachment, data or timecode stream --
+    # exactly the standing note's claim, verified once per successful cheap
+    # attempt rather than assumed.
+    partial_mapping=True,
+    rules={
+        "video": StreamRule(
+            copy_mask=WEBM_VIDEO_CODECS,
+            accept_options=flags("-c:v:{n} copy"),
+            # VP9 needs "-b:v 0" alongside "-crf" to mean quality-targeted
+            # mode; "-crf" alone leaves it in constrained-quality mode instead
+            # (measured, spec-video-formats.md's "one open decision").
+            fallback_options=flags(
+                "-c:v:{n} libvpx-vp9 -crf:v:{n} 32 -b:v:{n} 0 -row-mt 1 -cpu-used 4"
+            ),
+            fallback_name="vp9",
+        ),
+        "audio": StreamRule(
+            copy_mask=WEBM_AUDIO_CODECS,
+            accept_options=flags("-c:a:{n} copy"),
+            fallback_options=flags("-c:a:{n} libopus -b:a:{n} 128k"),
+            fallback_name="opus",
+        ),
+        "subtitle": StreamRule(
+            copy_mask=TEXT_SUBTITLE_CODECS,
+            # A cheap in-kind transcode, not a literal copy: WebM only holds
+            # text subtitles as WebVTT.
+            accept_options=flags("-c:s:{n} webvtt"),
+            drop_reason="bitmap subtitles cannot be stored in WebM",
+        ),
+        # No "attachment" rule: the cheap attempt maps no attachment at all
+        # (unlike MOV, which maps one only to force a failure), so this type
+        # never appears in mapped_types and needs no FORCED_FAILURE_TYPES
+        # exemption either -- it is simply absent from both sides of the
+        # equality, the same way MP4 declares no "attachment" rule. A source
+        # that has one still succeeds the cheap attempt, and the success-side
+        # verification (jobs.verify_success) names the drop per stream because
+        # no rule matches "attachment" -- the standing note above restates it
+        # unconditionally alongside that per-stream note.
+    },
+    last_resort=Attempt(
+        label="re-encode",
+        options=flags(
+            "-map 0:v:0? -map 0:a? "
+            "-c:v libvpx-vp9 -crf 32 -b:v 0 -row-mt 1 -cpu-used 4 "
+            "-c:a libopus -b:a 128k"
+        ),
+        notes=("re-encoded to vp9/opus (lossy); subtitles and extra video streams dropped",),
+    ),
+)
+
 MP3 = Profile(
     label="MP3",
     name="mp3",
@@ -500,7 +582,7 @@ FLAC = Profile(
 #: Target name -> profile. Built from each profile's own ``name`` rather than
 #: repeating it as a literal key, so the two can never drift apart.
 PROFILES: dict[str, Profile] = {
-    profile.name: profile for profile in (MP4, WAV, MKV, MP3, FLAC, MOV)
+    profile.name: profile for profile in (MP4, WAV, MKV, MP3, FLAC, MOV, WEBM)
 }
 
 #: The curated set of suffixes discovery walks (`docs/design/source-selection.md`):

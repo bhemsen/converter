@@ -17,6 +17,7 @@ from converter.profiles import (
     PROFILES,
     SOURCE_SUFFIXES,
     WAV,
+    WEBM,
     Attempt,
     Profile,
     StreamRule,
@@ -31,7 +32,7 @@ from converter.profiles import (
 MAP_LETTERS = {"v": "video", "a": "audio", "s": "subtitle", "t": "attachment", "d": "data"}
 
 #: Every profile the registry ships. A new one joins the invariant checks here.
-SHIPPED = [MP4, WAV, MKV, MP3, FLAC, MOV]
+SHIPPED = [MP4, WAV, MKV, MP3, FLAC, MOV, WEBM]
 
 #: Stream types each profile maps only to *force* the cheap attempt to fail when
 #: the source carries one -- never to carry it on the success side. The narrowed
@@ -51,6 +52,11 @@ FORCED_FAILURE_TYPES: dict[str, frozenset[str]] = {
     MP3.name: frozenset(),
     FLAC.name: frozenset(),
     MOV.name: frozenset({"attachment"}),
+    # WebM maps no attachment at all -- unlike MOV, it does not need the "map
+    # to force a failure" trick, since it silently discards a mapped one
+    # instead of rejecting it (measured, spec-video-formats.md). The type is
+    # simply absent from mapped_types, so no exemption is needed here either.
+    WEBM.name: frozenset(),
 }
 
 #: Stream types whose `stream_limit` is enforced by the container's own muxer
@@ -72,6 +78,7 @@ MUXER_ENFORCED_LIMIT_TYPES: dict[str, frozenset[str]] = {
     MP3.name: frozenset({"audio"}),
     FLAC.name: frozenset({"audio"}),
     MOV.name: frozenset(),
+    WEBM.name: frozenset(),
 }
 
 
@@ -532,6 +539,134 @@ class TestMovProfile:
         assert rule.drop_reason == "bitmap subtitles cannot be stored in MOV"
 
 
+class TestWebmProfile:
+    """Pins the shape Acceptance fixes for `webm` (issue #29,
+    `docs/specs/spec-video-formats.md`)."""
+
+    def test_label_and_suffix(self):
+        assert WEBM.label == "WebM"
+        assert WEBM.target_suffix == ".webm"
+
+    def test_name_and_description(self):
+        assert WEBM.name == "webm"
+        assert WEBM.description
+
+    def test_no_container_options(self):
+        assert WEBM.container_options == ()
+
+    def test_cheap_attempt_selects_streams_blindly(self):
+        assert WEBM.explicit_streams is False
+
+    def test_cheap_attempt_maps_no_attachment(self):
+        """Unlike `mkv` and `mov`, `webm` never maps `0:t?`: WebM does not
+        reject a mapped attachment, it silently discards it at exit 0
+        (measured), so mapping it would buy nothing (Acceptance,
+        spec-video-formats.md)."""
+        assert WEBM.cheap_attempt.options == (
+            "-map",
+            "0:v?",
+            "-map",
+            "0:a?",
+            "-map",
+            "0:s?",
+            "-c",
+            "copy",
+            "-c:s",
+            "webvtt",
+        )
+
+    def test_cheap_attempt_is_declared_partial(self):
+        assert WEBM.partial_mapping is True
+
+    def test_cheap_attempt_carries_the_standing_note(self):
+        assert WEBM.cheap_attempt.notes == (
+            "attachments, data and timecode streams are not carried into WebM",
+        )
+
+    def test_last_resort_excludes_container_options(self):
+        assert WEBM.last_resort is not None
+        assert WEBM.last_resort.label == "re-encode"
+        assert "-movflags" not in WEBM.last_resort.options
+
+    def test_has_exactly_the_three_stream_rules(self):
+        """No `attachment` rule: the cheap attempt never maps one at all, so
+        the type is simply absent from both sides of the equality."""
+        assert set(WEBM.rules) == {"video", "audio", "subtitle"}
+
+    def test_video_and_audio_rules_carry_the_position_placeholder(self):
+        for stream_type in ("video", "audio"):
+            rule = WEBM.rules[stream_type]
+            assert "{n}" in " ".join(rule.accept_options)
+            assert rule.fallback_options is not None
+            assert "{n}" in " ".join(rule.fallback_options)
+
+    def test_video_mask_is_vp8_vp9_av1_only(self):
+        assert WEBM.rules["video"].copy_mask == {"vp8", "vp9", "av1"}
+
+    def test_audio_mask_is_opus_vorbis_only(self):
+        assert WEBM.rules["audio"].copy_mask == {"opus", "vorbis"}
+
+    def test_video_fallback_is_vp9_quality_targeted(self):
+        """VP9 needs both `-crf` and `-b:v 0` to mean quality-targeted mode;
+        `-crf` alone leaves it constrained-quality (measured, the spec's "one
+        open decision")."""
+        rule = WEBM.rules["video"]
+
+        assert rule.accept_options == ("-c:v:{n}", "copy")
+        assert rule.fallback_options == (
+            "-c:v:{n}",
+            "libvpx-vp9",
+            "-crf:v:{n}",
+            "32",
+            "-b:v:{n}",
+            "0",
+            "-row-mt",
+            "1",
+            "-cpu-used",
+            "4",
+        )
+        assert rule.fallback_name == "vp9"
+
+    def test_audio_fallback_is_opus(self):
+        rule = WEBM.rules["audio"]
+
+        assert rule.fallback_options == ("-c:a:{n}", "libopus", "-b:a:{n}", "128k")
+        assert rule.fallback_name == "opus"
+
+    def test_subtitle_rule_transcodes_to_webvtt_and_has_no_fallback(self):
+        rule = WEBM.rules["subtitle"]
+
+        assert rule.accept_options == ("-c:s:{n}", "webvtt")
+        assert rule.fallback_options is None
+        assert rule.drop_reason == "bitmap subtitles cannot be stored in WebM"
+
+    def test_declares_the_pinned_last_resort(self):
+        assert WEBM.last_resort is not None
+        assert WEBM.last_resort.options == (
+            "-map",
+            "0:v:0?",
+            "-map",
+            "0:a?",
+            "-c:v",
+            "libvpx-vp9",
+            "-crf",
+            "32",
+            "-b:v",
+            "0",
+            "-row-mt",
+            "1",
+            "-cpu-used",
+            "4",
+            "-c:a",
+            "libopus",
+            "-b:a",
+            "128k",
+        )
+        assert WEBM.last_resort.notes == (
+            "re-encoded to vp9/opus (lossy); subtitles and extra video streams dropped",
+        )
+
+
 class TestMp3Profile:
     """Pins the shape Acceptance fixes for `mp3` (issue #21,
     `docs/specs/spec-audio-formats.md`)."""
@@ -640,6 +775,7 @@ class TestRegistry:
             "mp3": MP3,
             "flac": FLAC,
             "mov": MOV,
+            "webm": WEBM,
         }
 
 
@@ -663,11 +799,18 @@ class TestResolveTarget:
     def test_accepts_mov_name_case_and_dot_variants(self, target):
         assert resolve_target(target) is MOV
 
+    @pytest.mark.parametrize("target", ["webm", "WEBM", ".webm", ".WEBM", "Webm"])
+    def test_accepts_webm_name_case_and_dot_variants(self, target):
+        assert resolve_target(target) is WEBM
+
     def test_unknown_target_raises_value_error_listing_available_targets(self):
+        """`avi` is a curated source suffix, never a registered target, so this
+        stays stable regardless of which other in-flight profile lands next."""
         with pytest.raises(
-            ValueError, match=r"webm.*available targets: flac, mkv, mov, mp3, mp4, wav"
+            ValueError,
+            match=r"avi.*available targets: flac, mkv, mov, mp3, mp4, wav, webm",
         ):
-            resolve_target("webm")
+            resolve_target("avi")
 
 
 class TestSourceSuffixes:

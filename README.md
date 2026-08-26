@@ -21,6 +21,7 @@ Target formats:
   mp3   .mp3  Audio: single stream, MP3 (libmp3lame if re-encoded)
   mp4   .mp4  Video: copies compatible streams, re-encodes the rest to h264/aac
   wav   .wav  Audio: single stream, uncompressed 16-bit PCM
+  webm  .webm  Video: copies VP8/VP9/AV1 and Opus/Vorbis, re-encodes the rest to VP9/Opus
 ```
 
 More target formats can be added — see [Contributing](#contributing).

@@ -391,3 +391,59 @@ New-Item -ItemType Directory -Force in
   out of the engine that shipped for `mp4`'s attachment case rather than
   needing new logic, keeping the PR's diff to `converter/profiles.py`,
   `README.md`, `docs/specs/spec-video-formats.md` and `tests/`.
+
+- 2026-08-26 (issue #29): Added the `webm` `Profile`, the last of this phase's
+  three. Re-measured every muxer fact against real ffmpeg 9.0 while
+  implementing; all held as written above, including that WebM enforces its
+  own codec set at the muxer level and that a mapped attachment is silently
+  discarded rather than rejected. `webm`'s cheap attempt maps no attachment at
+  all (`-map 0:v? -map 0:a? -map 0:s? -c copy -c:s webvtt`), so unlike `mov`
+  it needs neither the `FORCED_FAILURE_TYPES` nor the
+  `MUXER_ENFORCED_LIMIT_TYPES` exemption -- the type is simply absent from
+  both `mapped_types(WEBM)` and `WEBM.rules`, satisfying the equality
+  directly. `tests/test_profiles.py` adds `WEBM` to `SHIPPED` with an empty
+  entry in both exemption dicts.
+
+  The video fallback is pinned to the spec's "one open decision" Option 1
+  (`libvpx-vp9 -crf:v:{n} 32 -b:v:{n} 0 -row-mt 1 -cpu-used 4`), including
+  `-b:v:{n} 0` alongside `-crf`: the Prior decisions table above states VP9
+  needs both together to mean quality-targeted mode, `-crf` alone leaves it in
+  constrained-quality mode (measured). Issue #29's own acceptance checklist
+  abbreviated this line without `-b:v:{n} 0`; the spec is what owns the exact
+  pinned argv per this issue's brief, so the fuller, measured form here is what
+  shipped, confirmed against real ffmpeg 9.0 through the CLI (a copyable
+  vp9/opus source stream-copied, packet-identical by `-f md5`, and a
+  non-copyable h264/aac source re-encoded to vp9/opus and played back
+  correctly).
+
+  One clarification to the Prior decisions table's framing, found while
+  measuring the attachment case end-to-end: "webm declares no attachment
+  rule ... its standing note covers it" reads as if the standing note were
+  the *only* mechanism naming the loss. In fact, because `webm`'s cheap
+  attempt is `partial_mapping=True` and declares no `attachment` rule, a
+  successful cheap attempt over an attachment-bearing source also gets a real
+  per-stream note from `jobs.verify_success`'s success-side verification --
+  the exact mechanism `mp4` already relies on for its own attachment gap
+  (`test_mp4_names_the_attachment_its_selectors_cannot_reach`,
+  `tests/test_argv.py`). Confirmed against real ffmpeg 9.0: converting a
+  font-attached, h264/aac MKV to WebM through the CLI reported both
+  `"attachments, data and timecode streams are not carried into WebM"` (the
+  standing note) and `"attachment stream 2 (ttf) dropped: not supported by
+  WebM"` (the per-stream note) on the same run. This is not new behaviour
+  introduced by this profile -- `mkv` and `mov` get the identical doubling for
+  a data/timecode stream, since neither declares a `data` rule either -- so no
+  argv, mask or mechanism needed correcting, only this note to keep the prose
+  from reading as more exclusive than the shipped mechanism actually is.
+
+  A source WebM cannot hold at all (no video, audio or subtitle stream --
+  only an attachment or a data stream) proved impractical to construct with
+  ffmpeg's own muxers during the real-ffmpeg smoke test: an attachment-only
+  Matroska output ("Output file is empty, nothing was encoded") and a
+  data-only one ("Output file does not contain any stream") both failed at
+  ffmpeg's own tool boundary, before reaching this project's code at all.
+  `describe_unsupported`'s handling of that shape is unchanged, pre-existing
+  engine logic already proven generically (`TestUnsupportedDiscriminator`,
+  `tests/test_argv.py`) and now pinned for `webm` specifically too
+  (`test_a_source_webm_cannot_hold_at_all_is_unsupported`), using the same
+  attachment-only stream shape the real fixture would have produced had
+  ffmpeg been willing to write one.

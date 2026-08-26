@@ -7,7 +7,7 @@ import pytest
 
 from converter import ffmpegtool, jobs
 from converter.ffmpegtool import Stream, build_argv, cli_path
-from converter.profiles import FLAC, MKV, MOV, MP3, MP4, WAV
+from converter.profiles import FLAC, MKV, MOV, MP3, MP4, WAV, WEBM
 
 
 def options_of(argv: list[str], src: str, dst: str) -> list[str]:
@@ -763,6 +763,177 @@ class TestMovDegradationNotes:
         )
 
 
+class TestWebmRemux:
+    def test_maps_no_attachment(self):
+        """Unlike MKV and MOV, WebM never maps `0:t?`: it does not reject a
+        mapped attachment, it silently discards it at exit 0 (measured), so
+        mapping it would buy nothing (Acceptance, spec-video-formats.md)."""
+        options = jobs.first_attempt(WEBM).options
+
+        assert options == (
+            "-map",
+            "0:v?",
+            "-map",
+            "0:a?",
+            "-map",
+            "0:s?",
+            "-c",
+            "copy",
+            "-c:s",
+            "webvtt",
+        )
+
+    def test_does_not_use_bare_map_zero(self):
+        options = list(jobs.first_attempt(WEBM).options)
+        mapped = [options[i + 1] for i, flag in enumerate(options) if flag == "-map"]
+
+        assert "0" not in mapped
+        assert mapped == ["0:v?", "0:a?", "0:s?"]
+
+    def test_target_suffix(self):
+        assert WEBM.target_suffix == ".webm"
+
+
+class TestWebmRetries:
+    def test_ladder_ends_with_a_full_reencode(self):
+        attempts = jobs.retries(WEBM, [Stream(0, "video", "h264")])
+
+        assert [a.label for a in attempts] == ["selective", "re-encode"]
+
+    def test_selective_copies_compatible_streams(self):
+        streams = [Stream(0, "video", "vp9"), Stream(1, "audio", "opus")]
+
+        selective = jobs.retries(WEBM, streams)[0]
+
+        assert selective.options[:8] == (
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:v:0",
+            "copy",
+            "-c:a:0",
+            "copy",
+        )
+        assert selective.notes == ()
+
+    def test_selective_reencodes_video_webm_cannot_hold(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "audio", "opus")]
+
+        selective = jobs.retries(WEBM, streams)[0]
+
+        assert "-c:v:0" in selective.options
+        assert selective.options[selective.options.index("-c:v:0") + 1] == "libvpx-vp9"
+        assert selective.notes == ("video stream 0 (h264) re-encoded to vp9",)
+
+    def test_selective_reencodes_audio_webm_cannot_hold(self):
+        streams = [Stream(0, "video", "vp9"), Stream(1, "audio", "aac")]
+
+        selective = jobs.retries(WEBM, streams)[0]
+
+        assert "-c:a:0" in selective.options
+        assert selective.options[selective.options.index("-c:a:0") + 1] == "libopus"
+        assert selective.notes == ("audio stream 1 (aac) re-encoded to opus",)
+
+    def test_selective_transcodes_text_subtitle_to_webvtt(self):
+        streams = [Stream(0, "video", "vp9"), Stream(1, "subtitle", "subrip")]
+
+        selective = jobs.retries(WEBM, streams)[0]
+
+        assert "-c:s:0" in selective.options
+        assert selective.options[selective.options.index("-c:s:0") + 1] == "webvtt"
+        assert selective.notes == ()
+
+    def test_selective_drops_bitmap_subtitles_with_a_note(self):
+        streams = [
+            Stream(0, "video", "vp9"),
+            Stream(1, "audio", "opus"),
+            Stream(2, "subtitle", "hdmv_pgs_subtitle"),
+        ]
+
+        selective = jobs.retries(WEBM, streams)[0]
+
+        assert "0:2" not in selective.options
+        assert selective.notes == (
+            "subtitle stream 2 (hdmv_pgs_subtitle) dropped: "
+            "bitmap subtitles cannot be stored in WebM",
+        )
+
+    def test_selective_drops_an_attachment_with_no_rule(self):
+        """WebM's cheap attempt never maps an attachment, so one only ever
+        reaches the ladder if some other stream also failed the cheap
+        attempt -- but the selective rung still has to account for it, and
+        does, the same way MP4's does."""
+        streams = [Stream(0, "video", "h264"), Stream(1, "attachment", "unknown")]
+
+        selective = jobs.retries(WEBM, streams)[0]
+
+        assert "0:1" not in selective.options
+        assert selective.notes[-1] == "attachment stream 1 (unknown) dropped: not supported by WebM"
+
+    def test_reencode_states_what_it_sacrifices(self):
+        reencode = jobs.retries(WEBM, [])[-1]
+
+        assert "libvpx-vp9" in reencode.options
+        assert "libopus" in reencode.options
+        assert reencode.notes
+        assert any("lossy" in note for note in reencode.notes)
+
+
+class TestWebmDegradationNotes:
+    """Verification (spec-video-formats): one test per degradation branch this
+    profile introduces, each pinning the exact note."""
+
+    def test_video_reencode_note_is_exact(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "audio", "opus")]
+
+        selective = jobs.retries(WEBM, streams)[0]
+
+        assert selective.notes == ("video stream 0 (h264) re-encoded to vp9",)
+
+    def test_audio_reencode_note_is_exact(self):
+        streams = [Stream(0, "video", "vp9"), Stream(1, "audio", "aac")]
+
+        selective = jobs.retries(WEBM, streams)[0]
+
+        assert selective.notes == ("audio stream 1 (aac) re-encoded to opus",)
+
+    def test_bitmap_subtitle_drop_note_is_exact(self):
+        streams = [
+            Stream(0, "video", "vp9"),
+            Stream(1, "audio", "opus"),
+            Stream(2, "subtitle", "hdmv_pgs_subtitle"),
+        ]
+
+        selective = jobs.retries(WEBM, streams)[0]
+
+        assert selective.notes == (
+            "subtitle stream 2 (hdmv_pgs_subtitle) dropped: "
+            "bitmap subtitles cannot be stored in WebM",
+        )
+
+    def test_standing_note_names_attachments_data_and_timecode(self):
+        assert jobs.first_attempt(WEBM).notes == (
+            "attachments, data and timecode streams are not carried into WebM",
+        )
+
+    def test_attachment_drop_via_success_side_verification_is_exact(self):
+        """WebM never maps an attachment, so a successful cheap attempt still
+        leaves one behind; the success-side verifier (`jobs.verify_success`)
+        names it per stream, alongside the standing note above -- the same
+        mechanism MP4 already uses for its own attachment gap."""
+        notes = jobs.verify_success(WEBM, [Stream(0, "attachment", "unknown")])
+
+        assert notes == ("attachment stream 0 (unknown) dropped: not supported by WebM",)
+
+    def test_last_resort_notes_are_pinned(self):
+        reencode = jobs.retries(WEBM, [])[-1]
+
+        assert reencode.notes == (
+            "re-encoded to vp9/opus (lossy); subtitles and extra video streams dropped",
+        )
+
+
 class TestProfileArgvPinning:
     """Verification: the full argv each profile builds, pinned byte-for-byte
     (docs/specs/spec-profile-registry.md)."""
@@ -962,6 +1133,68 @@ class TestProfileArgvPinning:
             "out.mov",
         ]
 
+    def test_webm_copyable_source(self):
+        streams = [Stream(0, "video", "vp9"), Stream(1, "audio", "opus")]
+        selective = jobs.retries(WEBM, streams)[0]
+
+        argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.webm")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:v:0",
+            "copy",
+            "-c:a:0",
+            "copy",
+            "out.webm",
+        ]
+
+    def test_webm_non_copyable_source(self):
+        streams = [Stream(0, "video", "h264"), Stream(1, "audio", "aac")]
+        selective = jobs.retries(WEBM, streams)[0]
+
+        argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.webm")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:v:0",
+            "libvpx-vp9",
+            "-crf:v:0",
+            "32",
+            "-b:v:0",
+            "0",
+            "-row-mt",
+            "1",
+            "-cpu-used",
+            "4",
+            "-c:a:0",
+            "libopus",
+            "-b:a:0",
+            "128k",
+            "out.webm",
+        ]
+
     def test_wav_two_audio_source(self):
         streams = [Stream(0, "audio", "opus"), Stream(1, "audio", "opus")]
         selective = jobs.retries(WAV, streams)[0]
@@ -1137,6 +1370,19 @@ class TestUnsupportedDiscriminator:
 
         assert notes == ("attachment stream 0 (ttf) dropped: not supported by MP4",)
 
+    def test_a_source_webm_cannot_hold_at_all_is_unsupported(self):
+        """WebM declares no ``attachment`` rule either -- a source carrying
+        only an attachment (no video, audio or subtitle) is reported
+        ``unsupported`` rather than being run through the ladder at all
+        (spec-video-formats.md; a real attachment-only or data-only container
+        proved impractical to construct with ffmpeg's own muxers -- both
+        attempts failed at the ffmpeg tool boundary itself during the manual
+        smoke test, before reaching this code -- so this pins the same
+        mechanism the real fixture would exercise)."""
+        notes = jobs.describe_unsupported(WEBM, [Stream(0, "attachment", "unknown")])
+
+        assert notes == ("attachment stream 0 (unknown) dropped: not supported by WebM",)
+
     def test_an_empty_stream_list_is_not_reported_as_unsupported(self):
         """An empty probe result is the fingerprint of a corrupt or truncated
         source, not positive evidence the format holds nothing usable -- it
@@ -1155,6 +1401,7 @@ class TestSuccessSideVerification:
         assert jobs.needs_verification(WAV) is True
         assert jobs.needs_verification(MKV) is True
         assert jobs.needs_verification(MOV) is True
+        assert jobs.needs_verification(WEBM) is True
 
     def test_an_exhaustive_profile_does_not(self):
         """`False` is what keeps the probe off an exhaustive profile's happy path."""
@@ -1172,7 +1419,9 @@ class TestSuccessSideVerification:
 
         assert notes == ("audio stream 1 (opus) dropped: WAV holds 1 audio stream",)
 
-    @pytest.mark.parametrize("profile", [MP4, WAV, MKV, MOV], ids=lambda profile: profile.label)
+    @pytest.mark.parametrize(
+        "profile", [MP4, WAV, MKV, MOV, WEBM], ids=lambda profile: profile.label
+    )
     def test_no_profile_invents_a_loss_for_a_source_it_fully_maps(self, profile):
         """One stream of each type the profile declares a rule for, and never more
         than one, so nothing in this source can have been left behind.
