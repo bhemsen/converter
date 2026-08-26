@@ -7,12 +7,19 @@ It is a thin, honest wrapper around [ffmpeg](https://ffmpeg.org/): it builds the
 command line, runs a bounded number of conversions in parallel, tells you what it
 changed, and exits non-zero if anything failed.
 
-## Available conversions
+## Available target formats
 
-* `.mkv` → `.mp4` (stream copy where possible, so usually lossless and near-instant)
-* `.opus` → `.wav` (uncompressed 16-bit PCM)
+The tool is driven by a target format rather than by one sub-command per
+format pair. Run `converter --list-formats` to print exactly what your
+installed version supports; today that is:
 
-More can be added in `converter/jobs.py` — see [Contributing](#contributing).
+```
+Target formats:
+  mp4  .mp4  Video: copies compatible streams, re-encodes the rest to h264/aac
+  wav  .wav  Audio: single stream, uncompressed 16-bit PCM
+```
+
+More target formats can be added — see [Contributing](#contributing).
 
 ## Requirements
 
@@ -41,18 +48,30 @@ That gives you a `converter` command. If you would rather not install anything,
 ## Usage
 
 ```sh
-converter video INPUT_DIR OUTPUT_DIR      # .mkv -> .mp4
-converter audio INPUT_DIR OUTPUT_DIR      # .opus -> .wav
-converter mirror INPUT_ROOT OUTPUT_ROOT   # re-create a directory tree elsewhere
+converter --to FORMAT INPUT_DIR OUTPUT_DIR   # e.g. --to mp4, --to wav
+converter mirror INPUT_ROOT OUTPUT_ROOT      # re-create a directory tree elsewhere
+converter --list-formats                     # print the target formats above
 ```
 
-Run `converter` with no arguments for an interactive prompt, or
-`converter video --help` for the full option list.
+Run `converter` with no arguments for an interactive prompt that asks the same
+questions and then runs the same code, or `converter --help` for the full
+option list (`converter mirror --help` for the mirror sub-command's own).
+
+> **Coming from an older version?** The `video` and `audio` sub-commands are
+> gone; a target format replaces them:
+>
+> * `converter video IN OUT` → `converter --to mp4 IN OUT`
+> * `converter audio IN OUT` → `converter --to wav IN OUT`
+>
+> Running the old sub-command now prints this same migration note and exits
+> with status 2.
 
 ### Options
 
 | Option | Effect |
 | --- | --- |
+| `--to FORMAT` | target format to convert everything to (required); a name or a dotted suffix, e.g. `mp4` or `.mp4` — see `--list-formats` |
+| `--list-formats` | list the target formats available and exit |
 | `-r`, `--recursive` | also convert files in sub-directories, keeping the tree in the output |
 | `--mirror-to ROOT` | derive the output directory by re-rooting `INPUT_DIR` onto `ROOT`, e.g. `E:` — use instead of `OUTPUT_DIR` |
 | `-j N`, `--jobs N` | conversions to run in parallel (default: 4, capped by CPU count) |
@@ -65,34 +84,49 @@ Run `converter` with no arguments for an interactive prompt, or
 
 ```sh
 # Everything under D:\Rips, mirrored onto E: with the same folder structure
-converter video D:\Rips --mirror-to E: --recursive
+converter --to mp4 D:\Rips --mirror-to E: --recursive
 
 # Check first, convert second
-converter video D:\Rips E:\Done --recursive --dry-run
-converter video D:\Rips E:\Done --recursive
+converter --to mp4 D:\Rips E:\Done --recursive --dry-run
+converter --to mp4 D:\Rips E:\Done --recursive
 
 # Six at a time, replacing what is already there
-converter video D:\Rips E:\Done -r -j 6 --overwrite
+converter --to mp4 D:\Rips E:\Done -r -j 6 --overwrite
+
+# Rip audio out to WAV instead
+converter --to wav D:\Rips E:\Audio --recursive
 ```
 
 Existing outputs are **skipped** by default, so re-running after an interruption
 only does the remaining work. Exit status is `0` when nothing failed, `1` when at
 least one file failed, and `2` for a usage error or a missing ffmpeg.
 
-## How the video conversion works
+## How a conversion works
 
-1. **Remux first.** Video, audio and text subtitles are stream-copied into MP4
-   (`-c copy`, subtitles to `mov_text`). Nothing is re-encoded, so there is no
-   quality loss and it runs at disk speed. MKV attachments (such as fonts for ASS
-   subtitles) and data streams are dropped, because MP4 cannot hold them — and
-   because that mapping cannot carry them whatever the file turns out to hold,
-   a successful remux still spends one `ffprobe` call to name each stream it left
-   behind, rather than reporting a plain success.
-2. **If that fails, look at the file instead.** `ffprobe` reports the streams, and each
-   one is handled individually: compatible streams are still copied, incompatible
-   audio or video is re-encoded, and bitmap subtitles (PGS, VobSub) are dropped.
-3. **As a last resort, re-encode.** One video and all audio streams to
-   h264/aac.
+Every target format is a declarative profile (`converter/profiles.py`): a copy
+mask that says which codecs it may stream-copy, a fallback encoder for
+everything else, and what it cannot hold at all. The engine in
+`converter/jobs.py` turns one profile into the same three-step ladder for
+every format:
+
+1. **Cheap attempt first.** For MP4 that is a remux: video, audio and text
+   subtitles are stream-copied (`-c copy`, subtitles to `mov_text`). Nothing is
+   re-encoded, so there is no quality loss and it runs at disk speed. For WAV
+   it is a decode of the first audio stream straight to PCM — WAV cannot hold
+   anything else as-is. Either way, because the mapping can, by construction,
+   leave source streams unmapped (MKV attachments and data streams for MP4, a
+   second audio stream for WAV), a successful cheap attempt still spends one
+   `ffprobe` call to name each stream it left behind, rather than reporting a
+   plain success.
+2. **If the cheap attempt fails, look at the file instead.** `ffprobe` reports
+   the streams, and each one is handled individually against the profile's
+   copy mask: compatible streams are still copied, incompatible ones are
+   re-encoded with the profile's fallback encoder, and streams the target
+   cannot hold at all (bitmap subtitles into MP4, a second audio stream into
+   WAV) are dropped.
+3. **As a last resort, re-encode.** MP4 declares one: one video and all audio
+   streams re-encoded to h264/aac. WAV has nothing left to fall back to beyond
+   step 2, so its ladder ends there.
 
 Anything sacrificed along the way is printed, for example:
 
@@ -107,7 +141,7 @@ note    Show.S01E02.mkv: subtitle stream 2 (hdmv_pgs_subtitle) dropped: bitmap s
   put Vorbis or VP9 into an MP4 container, so step 1 succeeds and nothing is
   re-encoded — but many players and TVs will not touch those streams. If a
   converted file refuses to play, that is the likely reason.
-* **WAV holds one audio stream.** For `.opus` files with several audio streams,
+* **WAV holds one audio stream.** For a source with several audio streams,
   the first one is converted and the rest are dropped.
 * **Windows path length.** Mirroring a deep source tree onto a sub-directory can
   push paths past Windows' 260-character limit; the error message says so when it
@@ -134,20 +168,21 @@ CI runs lint, format check and tests on Linux and Windows across Python
 
 | File | Purpose |
 | --- | --- |
-| `converter/cli.py` | argument parsing, sub-commands, interactive prompt |
-| `converter/jobs.py` | the conversion recipes and their fallback ladders |
+| `converter/cli.py` | argument parsing, target-format selection, the interactive prompt |
+| `converter/profiles.py` | one declarative profile per target format: copy mask, fallback encoder, container flags |
+| `converter/jobs.py` | the generic conversion engine that turns a profile into a fallback ladder |
 | `converter/batch.py` | bounded parallel execution, progress, result aggregation |
 | `converter/paths.py` | input discovery and output-path construction |
 | `converter/ffmpegtool.py` | building and running ffmpeg/ffprobe commands |
 
-To add a conversion, add a `Job` in `converter/jobs.py` and register it in
-`JOBS`. Everything else — discovery, parallelism, progress, error handling — is
-shared.
+To add a target format, add a profile entry to `converter/profiles.py` and its
+test. Everything else — discovery, parallelism, progress, error handling — is
+shared, and stays untouched: `cli.py`, `batch.py` and `paths.py` see no diff.
 
 ## Contributing
 
-Feel free to clone or fork this project and add whatever file-type conversion or
-feature you need. Just open a branch and create a pull request against `develop`,
+Feel free to clone or fork this project and add whatever target format or
+feature you need. Just open a branch and create a pull request against `main`,
 and assign it to me.
 
 ### Commit messages
