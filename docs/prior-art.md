@@ -164,3 +164,84 @@ evidenced, not assumed — see the image-conversion concern.
     tool, not the format. Document this as a non-goal rather than treating it as a
     bug. HEIC and SVG stay out of scope for the same class of reason: they need
     libheif or a rasteriser, not an ffmpeg muxer.
+
+## Cover art and stream disposition (Phase 6)
+
+### beetbox/beets — the `convert` plugin
+
+- Path: `beetsplug/convert.py`, documented in `docs/plugins/convert.rst`
+- License: MIT
+- Verdict: reference-only — adopt the stance, not the mechanism
+- Date: 2026-08-26
+- Notes:
+  - ADOPT: artwork is a **first-class, default-on concern** of a conversion
+    pipeline, not an incidental stream. beets ships `embed: yes` as the default
+    for transcoded items, plus a separate `copy_album_art` for the album-level
+    case. The lesson for this project is the stance: a converter that touches
+    music has to *decide* about artwork explicitly. Phases 3 and 5 both hit the
+    consequence of not deciding — a picture stream that is silently dropped, or
+    silently truncated to one frame.
+  - AVOID: the mechanism and the surface. beets embeds through a tag library
+    (`mediafile`), which here would be a second runtime dependency and is ruled
+    out by `docs/vision.md`. Its `album_art_maxwidth` downscaling is an asset
+    tuning surface, an explicit non-goal. This project can only do it through
+    ffmpeg's own disposition, or not at all.
+
+### ffprobe's `stream_disposition` (measured, not searched)
+
+- Path: `ffprobe -show_entries stream=...:stream_disposition=attached_pic`
+- License: LGPL-2.1-or-later / GPL-2.0-or-later
+- Verdict: reuse — this is the whole mechanism
+- Date: 2026-08-26
+- Notes:
+  - ADOPT: one probe query returns the disposition alongside the fields
+    `probe_streams` already asks for. Measured on ffmpeg 9.0: an MP3 with cover
+    art yields `0,mp3,audio,0` and `1,png,video,1`; a plain h264 file yields
+    `0,h264,video,0`. So the cost is one extra `-show_entries` clause, one field
+    on `Stream`, and one branch in the engine — materially cheaper than the
+    "engine change" framing `docs/specs/spec-audio-formats.md` recorded when the
+    idea was first deferred.
+  - AVOID: inferring artwork from the codec name. `mjpeg` and `png` are the codecs
+    of both a cover picture and a real video stream, which is exactly why `m4a`
+    hard-fails on one and silently truncates the other (measured in phase 3).
+    Disposition is the only honest discriminator.
+
+### bhemsen/converter (this codebase)
+
+- Path: `converter/ffmpegtool.py` (`Stream`, `probe_streams`), `converter/jobs.py`
+- License: MIT
+- Verdict: reuse — the gap is named, the shape is known
+- Date: 2026-08-26
+- Notes:
+  - ADOPT: the deferral is already documented with its cost, in
+    `docs/specs/spec-audio-formats.md`'s "Two roadmap candidates this phase
+    deliberately does not take". This phase cashes it in rather than rediscovering
+    it.
+  - AVOID: re-opening the phase-3 gate decision. Audio profiles currently drop
+    every video stream and say so in a standing note; once disposition exists, the
+    note narrows rather than disappears — a real video stream under `--to mp3` is
+    still dropped, and still has to be named.
+
+## Generation-loss advisories (Phase 7)
+
+### Curated codec data, reused from Phase 1's concern
+
+- Path: `docs/prior-art.md#containercodec-capability-modelling-phase-1`
+- License: n/a — a method, not a source
+- Verdict: reuse the method
+- Date: 2026-08-26
+- Notes:
+  - ADOPT: a lossy-codec set is the same kind of artifact as a copy mask —
+    curated by hand, because `ffmpeg -codecs` reports what a build contains and
+    never a judgement about it. The Phase 1 concern already argues this and the
+    argument transfers unchanged.
+  - AVOID: deriving lossiness from ffmpeg. There is no flag that answers it, and
+    guessing from the codec name would misfile the awkward cases (`alac` and
+    `flac` are lossless, `wmalossless` and `truehd` are too).
+  - **Not researched.** The sparring deliberately chose research mode `none` for
+    this idea, on the grounds that the method is already settled by the concern
+    above. What was therefore *not* checked is whether any comparable converter
+    warns about generation loss at all, and whether a maintained lossy-codec list
+    exists to adopt instead of curating one. That gap is this entry's known
+    weakness; the phase's `/loopkit:plan` cycle may close it before committing to
+    a hand-curated set.
