@@ -190,6 +190,95 @@ WAV = Profile(
     },
 )
 
+MP3 = Profile(
+    label="MP3",
+    name="mp3",
+    description="Audio: single stream, MP3 (libmp3lame if re-encoded)",
+    target_suffix=".mp3",
+    container_options=(),
+    # Blind by type, not by index: the mp3 muxer -- not this mapping --
+    # enforces "at most one audio stream" (measured against ffmpeg 9.0,
+    # docs/specs/spec-audio-formats.md), so a second stream fails the cheap
+    # attempt outright rather than needing an index-based selector to keep it
+    # out; that is what lets stream_limit=1 coexist with a blind "-map 0:a?"
+    # below, the muxer-enforced exemption docs/design/degradation-ladder.md
+    # names, rather than WAV's index-named one.
+    cheap_attempt=Attempt(
+        label="remux",
+        options=flags("-map 0:a? -c:a copy"),
+        # partial_mapping's success-side verification (docs/design/degradation-
+        # ladder.md) already names a dropped stream precisely when the ladder
+        # actually drops one; this line is the standing note the audio-formats
+        # spec's gate chose to keep alongside it -- always true, so it costs
+        # nothing to state even for the many files that had nothing to lose.
+        notes=("non-audio streams, including cover art, are not carried into MP3",),
+    ),
+    explicit_streams=False,
+    # "-map 0:a?" selects no video, subtitle or attachment stream, so any of
+    # those a source carries is left behind without ffmpeg ever complaining.
+    partial_mapping=True,
+    rules={
+        "audio": StreamRule(
+            copy_mask=frozenset({"mp3"}),
+            # stream_limit=1 means at most one output audio stream ever exists,
+            # so the position placeholder StreamRule's docstring describes is
+            # left out -- there is only ever "{n} == 0" to substitute.
+            accept_options=flags("-c:a copy"),
+            fallback_options=flags("-c:a libmp3lame -q:a 2"),
+            fallback_name="mp3",
+            stream_limit=1,
+        ),
+    },
+    last_resort=Attempt(
+        label="re-encode",
+        options=flags("-map 0:a:0 -c:a libmp3lame -q:a 2"),
+        # Rescues the one case the selective rung cannot: a mask hit whose
+        # -c:a copy the mp3 muxer refuses regardless. Explicit-index, so unlike
+        # the selective rung it cannot name a per-stream drop itself -- this is
+        # the only place that information about it exists.
+        notes=(
+            "non-audio streams, and any audio stream beyond the first, are not carried into MP3",
+        ),
+    ),
+)
+
+FLAC = Profile(
+    label="FLAC",
+    name="flac",
+    description="Audio: single stream, lossless FLAC",
+    target_suffix=".flac",
+    container_options=(),
+    # Same blind-by-type shape and the same reason as MP3's above: the flac
+    # muxer enforces "at most one audio stream" itself.
+    cheap_attempt=Attempt(
+        label="remux",
+        options=flags("-map 0:a? -c:a copy"),
+        notes=("non-audio streams, including cover art, are not carried into FLAC",),
+    ),
+    explicit_streams=False,
+    partial_mapping=True,
+    rules={
+        "audio": StreamRule(
+            copy_mask=frozenset({"flac"}),
+            accept_options=flags("-c:a copy"),
+            fallback_options=flags("-c:a flac"),
+            # No fallback_name: encoding into a container's own lossless codec
+            # gives up nothing, the same rule WAV's PCM fallback carries.
+            stream_limit=1,
+        ),
+    },
+    last_resort=Attempt(
+        label="re-encode",
+        options=flags("-map 0:a:0 -c:a flac"),
+        # Unlike MP3's, this note names no codec loss -- flac is lossless --
+        # only the streams -map 0:a:0 cannot reach, the same information MP3's
+        # last-resort note carries for the same structural reason.
+        notes=(
+            "non-audio streams, and any audio stream beyond the first, are not carried into FLAC",
+        ),
+    ),
+)
+
 #: Phase 5 (`docs/specs/spec-image-formats.md`): the image2 muxer -- the one
 #: behind PNG, JPEG, TIFF and BMP -- accepts *any* video codec under
 #: ``-c copy``, so a stream copy would ship a mislabelled file (measured:
@@ -207,6 +296,13 @@ WAV = Profile(
 #: the same failure for the same reason, which is what ``stream_limit=1``
 #: (muxer-enforced, not mapping-enforced -- the cheap attempt still maps
 #: ``0:v?`` blindly) is for.
+#:
+#: The ``last_resort``'s explicit ``-map 0:v:0`` selects only the first video
+#: stream and nothing else, the same shape MP3's and FLAC's index-named
+#: last-resort above uses -- so, like theirs, it cannot name a per-stream drop
+#: itself and carries a standing note for whatever it structurally cannot
+#: reach (docs/design/degradation-ladder.md: "Every rung carries its own
+#: notes").
 PNG = Profile(
     label="PNG",
     name="png",
@@ -230,7 +326,10 @@ PNG = Profile(
     last_resort=Attempt(
         label="single-frame",
         options=flags("-map 0:v:0 -frames:v 1 -c:v png"),
-        notes=("only the first frame was kept; PNG cannot hold more than one image",),
+        notes=(
+            "only the first frame was kept; PNG cannot hold more than one image",
+            "non-video streams, and any video stream beyond the first, are not carried into PNG",
+        ),
     ),
 )
 
@@ -263,7 +362,15 @@ JPG = Profile(
     last_resort=Attempt(
         label="single-frame",
         options=flags("-map 0:v:0 -frames:v 1 -c:v mjpeg -q:v 2"),
-        notes=("only the first frame was kept; JPEG cannot hold more than one image",),
+        # Carries the cheap attempt's own transparency note too: this rung
+        # re-encodes just as the cheap attempt does, and the cheap attempt's
+        # standing note only actually prints for a source that never reaches
+        # here.
+        notes=(
+            "only the first frame was kept; JPEG cannot hold more than one image",
+            "transparency is not carried by JPEG; the image was re-encoded",
+            "non-video streams, and any video stream beyond the first, are not carried into JPEG",
+        ),
     ),
 )
 
@@ -288,7 +395,10 @@ TIFF = Profile(
     last_resort=Attempt(
         label="single-frame",
         options=flags("-map 0:v:0 -frames:v 1 -c:v tiff"),
-        notes=("only the first frame was kept; TIFF cannot hold more than one image",),
+        notes=(
+            "only the first frame was kept; TIFF cannot hold more than one image",
+            "non-video streams, and any video stream beyond the first, are not carried into TIFF",
+        ),
     ),
 )
 
@@ -313,14 +423,17 @@ BMP = Profile(
     last_resort=Attempt(
         label="single-frame",
         options=flags("-map 0:v:0 -frames:v 1 -c:v bmp"),
-        notes=("only the first frame was kept; BMP cannot hold more than one image",),
+        notes=(
+            "only the first frame was kept; BMP cannot hold more than one image",
+            "non-video streams, and any video stream beyond the first, are not carried into BMP",
+        ),
     ),
 )
 
 #: Target name -> profile. Built from each profile's own ``name`` rather than
 #: repeating it as a literal key, so the two can never drift apart.
 PROFILES: dict[str, Profile] = {
-    profile.name: profile for profile in (MP4, WAV, PNG, JPG, TIFF, BMP)
+    profile.name: profile for profile in (MP4, WAV, MP3, FLAC, PNG, JPG, TIFF, BMP)
 }
 
 #: The curated set of suffixes discovery walks (`docs/design/source-selection.md`):

@@ -10,7 +10,9 @@ import pytest
 from converter import profiles
 from converter.profiles import (
     BMP,
+    FLAC,
     JPG,
+    MP3,
     MP4,
     PNG,
     PROFILES,
@@ -31,7 +33,7 @@ from converter.profiles import (
 MAP_LETTERS = {"v": "video", "a": "audio", "s": "subtitle", "t": "attachment", "d": "data"}
 
 #: Every profile the registry ships. A new one joins the invariant checks here.
-SHIPPED = [MP4, WAV, PNG, JPG, TIFF, BMP]
+SHIPPED = [MP4, WAV, MP3, FLAC, PNG, JPG, TIFF, BMP]
 
 #: A stand-in for the not-yet-shipped `mov` profile (`docs/specs/spec-video-formats.md`),
 #: shaped only enough to prove the degradation-ladder invariant's narrowed form:
@@ -61,35 +63,6 @@ MOV_SHAPED = Profile(
     },
 )
 
-#: A stand-in for a not-yet-shipped phase-3 profile shaped like `mp3`/`flac`
-#: (`docs/specs/spec-audio-formats.md`): its cheap attempt maps audio *blindly*
-#: (`-map 0:a?`), yet the rule still carries `stream_limit=1`, because the mp3
-#: and flac muxers themselves reject a second audio stream outright (measured
-#: against ffmpeg 9.0 during that spec's planning) -- a source that would trip
-#: the limit never reaches the success side at all; it fails the cheap attempt
-#: and lands on the failure side, where the declared limit drives the
-#: selective rung's own note instead. Proves the muxer-enforced `stream_limit`
-#: exemption (issue #40) the way `MOV_SHAPED` proves the force-failure one.
-MP3_SHAPED = Profile(
-    label="MP3 (shaped)",
-    name="mp3-shaped",
-    description="Stand-in for the invariant test, not a shipped profile",
-    target_suffix=".mp3",
-    container_options=(),
-    cheap_attempt=Attempt(label="remux", options=flags("-map 0:a? -c:a copy")),
-    explicit_streams=False,
-    partial_mapping=True,
-    rules={
-        "audio": StreamRule(
-            copy_mask=frozenset({"mp3"}),
-            accept_options=flags("-c:a copy"),
-            fallback_options=flags("-c:a libmp3lame -q:a 2"),
-            fallback_name="mp3",
-            stream_limit=1,
-        ),
-    },
-)
-
 #: Stream types each profile maps only to *force* the cheap attempt to fail when
 #: the source carries one -- never to carry it on the success side. The narrowed
 #: invariant (`docs/design/degradation-ladder.md`) exempts these from needing a
@@ -97,22 +70,32 @@ MP3_SHAPED = Profile(
 FORCED_FAILURE_TYPES: dict[str, frozenset[str]] = {
     MP4.name: frozenset(),
     WAV.name: frozenset(),
+    MP3.name: frozenset(),
+    FLAC.name: frozenset(),
     PNG.name: frozenset(),
     JPG.name: frozenset(),
     TIFF.name: frozenset(),
     BMP.name: frozenset(),
     MOV_SHAPED.name: frozenset({"attachment"}),
-    MP3_SHAPED.name: frozenset(),
 }
 
 #: Stream types whose `stream_limit` is enforced by the container's own muxer
 #: rather than by the cheap attempt's own selectors -- the mirror of
 #: `FORCED_FAILURE_TYPES` for `stream_limit` instead of rule existence. A type
 #: listed here is mapped *blindly* and still carries a limit, because a source
-#: that would exceed it makes the cheap attempt itself fail (issue #40).
+#: that would exceed it makes the cheap attempt itself fail. `mp3` and `flac`
+#: are the profiles issue #40's narrowing was written for -- both map audio
+#: blindly (`-map 0:a?`) yet declare `stream_limit=1`, because their own
+#: muxers reject a second audio stream outright (measured against ffmpeg 9.0,
+#: `docs/specs/spec-audio-formats.md`): a source that would trip the limit
+#: never reaches the success side at all; it fails the cheap attempt and lands
+#: on the failure side, where the declared limit drives the selective rung's
+#: own note instead.
 MUXER_ENFORCED_LIMIT_TYPES: dict[str, frozenset[str]] = {
     MP4.name: frozenset(),
     WAV.name: frozenset(),
+    MP3.name: frozenset({"audio"}),
+    FLAC.name: frozenset({"audio"}),
     # image2's muxer refuses to write more than one frame -- or more than one
     # video stream -- to one output file, so a source that would trip the
     # limit never reaches the success side: it fails the cheap attempt outright
@@ -122,7 +105,6 @@ MUXER_ENFORCED_LIMIT_TYPES: dict[str, frozenset[str]] = {
     TIFF.name: frozenset({"video"}),
     BMP.name: frozenset({"video"}),
     MOV_SHAPED.name: frozenset(),
-    MP3_SHAPED.name: frozenset({"audio"}),
 }
 
 
@@ -180,10 +162,13 @@ def named_index_counts(profile: Profile) -> dict[str, int]:
     return counts
 
 
-#: `SHIPPED` plus the two stand-ins, so the invariant is checked against
-#: profiles that actually exercise both exemptions -- otherwise the narrowed
-#: reading and a stricter one would agree on every case tested.
-INVARIANT_CASES = [*SHIPPED, MOV_SHAPED, MP3_SHAPED]
+#: `SHIPPED` plus the one remaining stand-in, so the invariant is checked
+#: against profiles that actually exercise both exemptions -- otherwise the
+#: narrowed reading and a stricter one would agree on every case tested. The
+#: muxer-enforced `stream_limit` exemption no longer needs a stand-in of its
+#: own: `MP3` and `FLAC` now prove it directly (`docs/specs/spec-audio-formats.md`),
+#: which is what retired the `MP3_SHAPED` fixture this list used to carry.
+INVARIANT_CASES = [*SHIPPED, MOV_SHAPED]
 
 
 @pytest.mark.parametrize("profile", INVARIANT_CASES, ids=lambda profile: profile.label)
@@ -408,6 +393,105 @@ class TestWavProfile:
         assert WAV.rules["audio"].stream_limit == 1
 
 
+class TestMp3Profile:
+    """Pins the shape Acceptance fixes for `mp3` (issue #21,
+    `docs/specs/spec-audio-formats.md`)."""
+
+    def test_label_and_suffix(self):
+        assert MP3.label == "MP3"
+        assert MP3.target_suffix == ".mp3"
+
+    def test_name_and_description(self):
+        assert MP3.name == "mp3"
+        assert MP3.description
+
+    def test_no_container_options(self):
+        assert MP3.container_options == ()
+
+    def test_cheap_attempt_maps_audio_blindly(self):
+        assert MP3.explicit_streams is False
+        assert MP3.cheap_attempt.options == ("-map", "0:a?", "-c:a", "copy")
+
+    def test_cheap_attempt_carries_the_standing_non_audio_note(self):
+        assert MP3.cheap_attempt.notes == (
+            "non-audio streams, including cover art, are not carried into MP3",
+        )
+
+    def test_cheap_attempt_is_declared_partial(self):
+        assert MP3.partial_mapping is True
+
+    def test_declares_only_an_audio_rule(self):
+        assert set(MP3.rules) == {"audio"}
+
+    def test_audio_rule_mask_and_fallback(self):
+        rule = MP3.rules["audio"]
+
+        assert rule.copy_mask == frozenset({"mp3"})
+        assert rule.accept_options == ("-c:a", "copy")
+        assert rule.fallback_options == ("-c:a", "libmp3lame", "-q:a", "2")
+        assert rule.fallback_name == "mp3"
+
+    def test_audio_rule_stream_limit_is_one(self):
+        """The mp3 muxer, not this mapping, enforces it -- the muxer-enforced
+        `stream_limit` exemption `docs/design/degradation-ladder.md` names."""
+        assert MP3.rules["audio"].stream_limit == 1
+
+    def test_declares_the_pinned_last_resort(self):
+        assert MP3.last_resort is not None
+        assert MP3.last_resort.options == ("-map", "0:a:0", "-c:a", "libmp3lame", "-q:a", "2")
+
+
+class TestFlacProfile:
+    """Pins the shape Acceptance fixes for `flac` (issue #21,
+    `docs/specs/spec-audio-formats.md`)."""
+
+    def test_label_and_suffix(self):
+        assert FLAC.label == "FLAC"
+        assert FLAC.target_suffix == ".flac"
+
+    def test_name_and_description(self):
+        assert FLAC.name == "flac"
+        assert FLAC.description
+
+    def test_no_container_options(self):
+        assert FLAC.container_options == ()
+
+    def test_cheap_attempt_maps_audio_blindly(self):
+        assert FLAC.explicit_streams is False
+        assert FLAC.cheap_attempt.options == ("-map", "0:a?", "-c:a", "copy")
+
+    def test_cheap_attempt_carries_the_standing_non_audio_note(self):
+        assert FLAC.cheap_attempt.notes == (
+            "non-audio streams, including cover art, are not carried into FLAC",
+        )
+
+    def test_cheap_attempt_is_declared_partial(self):
+        assert FLAC.partial_mapping is True
+
+    def test_declares_only_an_audio_rule(self):
+        assert set(FLAC.rules) == {"audio"}
+
+    def test_audio_rule_mask_and_fallback(self):
+        rule = FLAC.rules["audio"]
+
+        assert rule.copy_mask == frozenset({"flac"})
+        assert rule.accept_options == ("-c:a", "copy")
+        assert rule.fallback_options == ("-c:a", "flac")
+
+    def test_audio_rule_fallback_carries_no_re_encode_note(self):
+        """Encoding into a container's own lossless codec gives up nothing,
+        the same rule WAV's PCM fallback carries."""
+        assert FLAC.rules["audio"].fallback_name is None
+
+    def test_audio_rule_stream_limit_is_one(self):
+        """The flac muxer, not this mapping, enforces it, same as mp3's."""
+        assert FLAC.rules["audio"].stream_limit == 1
+
+    def test_declares_the_pinned_last_resort(self):
+        assert FLAC.last_resort is not None
+        assert FLAC.last_resort.options == ("-map", "0:a:0", "-c:a", "flac")
+
+
 #: One tuple per image2 profile this phase adds: the profile itself, the codec
 #: name its own encoder produces (so a copy-mask hit can be constructed), and
 #: whether its lossless re-encode carries a note (Verification,
@@ -482,8 +566,19 @@ class TestImage2Profiles:
         assert profile.last_resort is not None
         assert profile.last_resort.options[:4] == ("-map", "0:v:0", "-frames:v", "1")
         assert "{n}" not in " ".join(profile.last_resort.options)
-        assert len(profile.last_resort.notes) == 1
-        assert "first frame" in profile.last_resort.notes[0]
+        assert any("first frame" in note for note in profile.last_resort.notes)
+
+    def test_last_resort_also_names_what_the_explicit_index_cannot_reach(
+        self, profile, own_codec, has_reencode_name
+    ):
+        """`-map 0:v:0` is explicit-index, so unlike the selective rung it
+        cannot name a per-stream drop itself -- the same reason MP3's and
+        FLAC's index-named last resort carries a standing note for whatever it
+        structurally drops (`docs/design/degradation-ladder.md`: "Every rung
+        carries its own notes"). Without this, an audio-bearing video into
+        `--to png`/`--to jpg`/`--to tiff`/`--to bmp` would lose its audio track
+        with nothing saying so."""
+        assert any("non-video streams" in note for note in profile.last_resort.notes)
 
 
 class TestPngProfile:
@@ -529,6 +624,17 @@ class TestJpgProfile:
         +15.5% size, PSNR 53.5 dB) -- a real loss on the selective rung."""
         assert JPG.rules["video"].fallback_name == "mjpeg"
 
+    def test_last_resort_repeats_the_transparency_note(self):
+        """The cheap attempt's standing note only actually prints for a source
+        that never reaches the last resort -- a video with alpha into `--to
+        jpg` lands here instead, so the loss has to be named again on the rung
+        that actually wins for it (review finding on issue #34: a video's
+        transparency was otherwise dropped in complete silence)."""
+        assert JPG.last_resort is not None
+        assert "transparency is not carried by JPEG; the image was re-encoded" in (
+            JPG.last_resort.notes
+        )
+
 
 class TestTiffProfile:
     def test_label_and_suffix(self):
@@ -567,6 +673,8 @@ class TestRegistry:
         assert PROFILES == {
             "mp4": MP4,
             "wav": WAV,
+            "mp3": MP3,
+            "flac": FLAC,
             "png": PNG,
             "jpg": JPG,
             "tiff": TIFF,
@@ -582,6 +690,10 @@ class TestResolveTarget:
     def test_resolves_wav_too(self):
         assert resolve_target("wav") is WAV
 
+    def test_resolves_mp3_and_flac_too(self):
+        assert resolve_target("mp3") is MP3
+        assert resolve_target("flac") is FLAC
+
     @pytest.mark.parametrize(
         ("target", "profile"), [("png", PNG), ("jpg", JPG), ("tiff", TIFF), ("bmp", BMP)]
     )
@@ -590,7 +702,8 @@ class TestResolveTarget:
 
     def test_unknown_target_raises_value_error_listing_available_targets(self):
         with pytest.raises(
-            ValueError, match=r"mkv.*available targets: bmp, jpg, mp4, png, tiff, wav"
+            ValueError,
+            match=r"mkv.*available targets: bmp, flac, jpg, mp3, mp4, png, tiff, wav",
         ):
             resolve_target("mkv")
 

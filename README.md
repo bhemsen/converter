@@ -16,7 +16,9 @@ installed version supports; today that is:
 ```
 Target formats:
   bmp   .bmp  Image: force-encoded to BMP, lossless
+  flac  .flac  Audio: single stream, lossless FLAC
   jpg   .jpg  Image: force-encoded to JPEG; transparency is not carried
+  mp3   .mp3  Audio: single stream, MP3 (libmp3lame if re-encoded)
   mp4   .mp4  Video: copies compatible streams, re-encodes the rest to h264/aac
   png   .png  Image: force-encoded to PNG, lossless
   tiff  .tiff  Image: force-encoded to TIFF, lossless
@@ -145,8 +147,14 @@ note    Show.S01E02.mkv: subtitle stream 2 (hdmv_pgs_subtitle) dropped: bitmap s
   put Vorbis or VP9 into an MP4 container, so step 1 succeeds and nothing is
   re-encoded — but many players and TVs will not touch those streams. If a
   converted file refuses to play, that is the likely reason.
-* **WAV holds one audio stream.** For a source with several audio streams,
-  the first one is converted and the rest are dropped.
+* **WAV, MP3 and FLAC each hold one audio stream.** For a source with several
+  audio streams, the first one is converted and the rest are dropped. For MP3
+  and FLAC that limit is the container's own muxer, not a choice this tool
+  makes.
+* **MP3 and FLAC never carry video.** Any non-audio stream — including
+  embedded cover art — is left out. A straight copy says so even when the
+  source had nothing to lose; when the audio itself has to be re-encoded, the
+  dropped stream is still named, just without the extra line.
 * **Windows path length.** Mirroring a deep source tree onto a sub-directory can
   push paths past Windows' 260-character limit; the error message says so when it
   happens. Either pick a shorter output root or
