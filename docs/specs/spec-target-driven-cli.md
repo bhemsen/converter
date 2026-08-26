@@ -475,3 +475,11 @@ reusing the fixtures the phase-1 gate synthesises:
   profile entry to `converter/profiles.py`" (`docs/architecture.md`'s "Where
   new code goes"), and the layout table gains the `converter/profiles.py` row
   that table was missing.
+- 2026-08-26 (#16, review round 1): The "Coming from an older version?" note
+  overclaimed that the old sub-commands print "this same migration note" --
+  the actual `_legacy_message` in `converter/cli.py` is deliberately
+  format-agnostic (its own docstring explains why: naming a format there would
+  defeat the module's own format-name-literal check that
+  `tests/test_cli.py::test_the_legacy_message_names_no_format` pins). Reworded
+  to say the old sub-command "prints a pointer to `--to` and `--list-formats`"
+  instead of claiming it repeats the README's own `mp4`/`wav` examples.

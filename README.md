@@ -63,8 +63,8 @@ option list (`converter mirror --help` for the mirror sub-command's own).
 > * `converter video IN OUT` → `converter --to mp4 IN OUT`
 > * `converter audio IN OUT` → `converter --to wav IN OUT`
 >
-> Running the old sub-command now prints this same migration note and exits
-> with status 2.
+> Running the old sub-command now prints a pointer to `--to` and
+> `--list-formats`, and exits with status 2.
 
 ### Options
 
