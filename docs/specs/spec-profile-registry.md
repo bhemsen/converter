@@ -216,14 +216,18 @@ not create the directory itself:
 ```text
 New-Item -ItemType Directory -Force in
 & $FF -f lavfi -i testsrc=size=320x240:rate=10:duration=2 -f lavfi -i sine=duration=2 -c:v libx264 -c:a aac in/clip.mkv
-& $FF -f lavfi -i testsrc=size=320x240:rate=10:duration=2 -c:v ffv1 in/lossless.mkv
+& $FF -f lavfi -i testsrc=size=320x240:rate=10:duration=2 -c:v vp8 in/lossless.mkv
 & $FF -f lavfi -i testsrc=size=320x240:rate=10:duration=2 -c:v libx264 -attach C:\Windows\Fonts\arial.ttf -metadata:s:t mimetype=application/x-truetype-font in/attached.mkv
 & $FF -f lavfi -i sine=duration=2 -c:a libopus in/tone.opus
 & $FF -f lavfi -i sine=frequency=440:duration=2 -f lavfi -i sine=frequency=880:duration=2 -map 0:a -map 1:a -c:a libopus in/two-tone.opus
 ```
 
-`lossless.mkv` is the ladder-forcing case: MP4 cannot hold `ffv1`, so the remux
-fails and the selective rung has to re-encode the video. `attached.mkv` and
+`lossless.mkv` is the ladder-forcing case: MP4's video copy mask
+(`MP4_VIDEO_CODECS` in `converter/profiles.py`) does not include `vp8`, and the
+MP4 muxer itself rejects it (confirmed on this machine's ffmpeg 9.0: `Could not
+find tag for codec vp8 in stream #0, codec not currently supported in
+container`), so the remux fails and the selective rung has to re-encode the
+video. `attached.mkv` and
 `two-tone.opus` exist to make deltas 1 and 2 observable — the other fixtures
 never reach those branches. The WAV job only accepts `.opus` sources, which is
 why both audio fixtures use that suffix.
@@ -232,7 +236,7 @@ why both audio fixtures use that suffix.
       reports `converted`, `0 failed`, exit 0.
 - [ ] `converter audio in out` converts `tone.opus` to a playable `.wav`.
 - [ ] `lossless.mkv` still converts, and prints a note naming the stream index,
-      `ffv1`, and the re-encode to h264.
+      `vp8`, and the re-encode to h264.
 - [ ] A second run of each over the same output tree reports `0 converted`,
       `N skipped`, `0 failed`, exit 0.
 - [ ] Delta 1: `attached.mkv` converts and its attachment note names the font
@@ -328,3 +332,34 @@ why both audio fixtures use that suffix.
   no-rewrite rule on the safety net and added new tests next to them
   (`TestMp4DegradationNotes` in `tests/test_argv.py`) asserting exact equality
   instead. No engine or profile code changed — this issue is test-only.
+- 2026-08-26 (issue #19): the milestone-QA `lossless.mkv` fixture is rebuilt with
+  `-c:v vp8` instead of `-c:v ffv1`. On this machine's ffmpeg (9.0, gyan.dev
+  build) `ffv1` muxes into MP4 without error, so the fixture no longer forced
+  the ladder (found at the phase-1 QA gate; issue #6's own decision-log entry
+  above already shows the remux exiting 0 for `ffv1`, but issue #6 read that as
+  "unchanged from `main`, not a regression" rather than as a fixture defect).
+  `vp8` was chosen over `theora`, `wmv2` and `dnxhd` (all four confirmed to fail
+  the MP4 remux, empirically, not by reasoning about the spec) because it needs
+  no special resolution or pixel format to encode and is already the non-copyable
+  video codec the argv-pinning tests use (Verification: "vp8 + pcm_s16le"), so
+  the QA fixture and the unit tests now name the same example. Verified end to
+  end through the real CLI, not just ffmpeg directly: `converter video` on a
+  `vp8`-in-MKV source converts, exits 0, and prints
+  `video stream 0 (vp8) re-encoded to h264`; `ffprobe` on the resulting `.mp4`
+  reports the video stream's `codec_name` as `h264`, confirming a genuine
+  re-encode rather than a silent remux.
+- 2026-08-26 (issue #19): the MP4 video copy mask (`MP4_VIDEO_CODECS`) is left
+  unchanged — it does not grow to include codecs a given ffmpeg build happens to
+  be willing to mux into MP4 (`ffv1` on this build). `docs/prior-art.md`'s
+  FFmpeg-CLI entry already settles this for the whole mask: "deriving
+  container-to-codec compatibility from the CLI" is an explicit AVOID, because
+  the CLI reports what a build can technically write, never what is legal for a
+  standard MP4 player to read — "the mask must be curated, exactly as
+  `MP4_VIDEO_CODECS` is today." The Verification section's own QA criterion
+  ("converts `clip.mkv` to a **playable** `.mp4`") reinforces the same intent: an
+  `ffv1`-in-MP4 file that only ffmpeg itself can decode back out would satisfy
+  "ffmpeg exits 0" while failing "playable." Widening the mask to whatever one
+  installed binary is willing to mux would also make the copy mask
+  machine-dependent, which contradicts the mask being declarative data
+  (`docs/architecture.md`). Not a design fork requiring escalation: the prior-art
+  AVOID note and the playability criterion already answer it.
