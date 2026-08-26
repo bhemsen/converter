@@ -488,3 +488,27 @@ New-Item -ItemType Directory -Force art
   `stream_limit` exemption directly, so `SHIPPED` and `INVARIANT_CASES` carry
   them instead of a shape-alike fixture describing a profile that no longer
   needs standing in for.
+- 2026-08-26 (#22): `m4a`, `ogg` and `opus` landed exactly as the fixed table
+  pins them: cheap attempts read `-map 0:a? -c:a copy` for `m4a` and
+  `-map 0:a? -c copy` for `ogg` and `opus`, matching the per-profile table
+  rather than the issue's own "all three: `-c copy`" paraphrase, which the
+  spec's own fixed table (the authority per this issue's "Read first") only
+  gives to `ogg` and `opus`. None declares a `stream_limit` -- their muxers
+  hold several audio streams, so `MUXER_ENFORCED_LIMIT_TYPES` gets no new
+  entries and the equality invariant is proven the ordinary way for all
+  three. `opus`'s `accept_options` is the bare `flags("-c:a copy")` the Prior
+  decisions row pins, with no `"{n}"` placeholder despite no `stream_limit`;
+  `m4a` and `ogg` follow the same bare shape for consistency with it and with
+  `mp3`/`flac`'s own accept_options, relying on ffmpeg's positional per-type
+  stream-option matching (each matched stream's codec option is appended in
+  the same order its `-map` is, which is what makes the unindexed form
+  correct for more than one output stream of the same type). Measured
+  against ffmpeg 9.0 through the CLI with `--ffmpeg`/`--ffprobe`: an
+  already-aac `.aac` copies straight into `m4a` and an already-vorbis `.ogg`
+  copies straight into `ogg`; a non-mask codec (`mp3`) re-encodes into all
+  three with the exact re-encode note; and `--to opus` on an already-vorbis
+  `.ogg` reproduces the accepted mislabel from the "opus copies" decision --
+  the cheap attempt's blind `-c copy` succeeds, and `ffprobe` on the result
+  confirms the stream inside `tone-vorbis.opus` is still `vorbis`, not
+  `opus`. A second run over the same tree reported `0 converted, 4 skipped`,
+  exit 0, for all three targets.

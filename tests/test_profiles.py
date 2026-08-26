@@ -10,8 +10,11 @@ import pytest
 from converter import profiles
 from converter.profiles import (
     FLAC,
+    M4A,
     MP3,
     MP4,
+    OGG,
+    OPUS,
     PROFILES,
     SOURCE_SUFFIXES,
     WAV,
@@ -29,7 +32,7 @@ from converter.profiles import (
 MAP_LETTERS = {"v": "video", "a": "audio", "s": "subtitle", "t": "attachment", "d": "data"}
 
 #: Every profile the registry ships. A new one joins the invariant checks here.
-SHIPPED = [MP4, WAV, MP3, FLAC]
+SHIPPED = [MP4, WAV, MP3, FLAC, M4A, OGG, OPUS]
 
 #: A stand-in for the not-yet-shipped `mov` profile (`docs/specs/spec-video-formats.md`),
 #: shaped only enough to prove the degradation-ladder invariant's narrowed form:
@@ -68,6 +71,9 @@ FORCED_FAILURE_TYPES: dict[str, frozenset[str]] = {
     WAV.name: frozenset(),
     MP3.name: frozenset(),
     FLAC.name: frozenset(),
+    M4A.name: frozenset(),
+    OGG.name: frozenset(),
+    OPUS.name: frozenset(),
     MOV_SHAPED.name: frozenset({"attachment"}),
 }
 
@@ -88,6 +94,12 @@ MUXER_ENFORCED_LIMIT_TYPES: dict[str, frozenset[str]] = {
     WAV.name: frozenset(),
     MP3.name: frozenset({"audio"}),
     FLAC.name: frozenset({"audio"}),
+    # No entry: m4a, ogg and opus declare no stream_limit at all -- their
+    # muxers hold several audio streams, so there is nothing for a muxer to
+    # enforce here.
+    M4A.name: frozenset(),
+    OGG.name: frozenset(),
+    OPUS.name: frozenset(),
     MOV_SHAPED.name: frozenset(),
 }
 
@@ -476,9 +488,166 @@ class TestFlacProfile:
         assert FLAC.last_resort.options == ("-map", "0:a:0", "-c:a", "flac")
 
 
+class TestM4aProfile:
+    """Pins the shape Acceptance fixes for `m4a` (issue #22,
+    `docs/specs/spec-audio-formats.md`)."""
+
+    def test_label_and_suffix(self):
+        assert M4A.label == "M4A"
+        assert M4A.target_suffix == ".m4a"
+
+    def test_name_and_description(self):
+        assert M4A.name == "m4a"
+        assert M4A.description
+
+    def test_no_container_options(self):
+        assert M4A.container_options == ()
+
+    def test_cheap_attempt_maps_audio_blindly(self):
+        assert M4A.explicit_streams is False
+        assert M4A.cheap_attempt.options == ("-map", "0:a?", "-c:a", "copy")
+
+    def test_cheap_attempt_carries_the_standing_non_audio_note(self):
+        assert M4A.cheap_attempt.notes == (
+            "non-audio streams, including cover art, are not carried into M4A",
+        )
+
+    def test_cheap_attempt_is_declared_partial(self):
+        assert M4A.partial_mapping is True
+
+    def test_declares_only_an_audio_rule(self):
+        assert set(M4A.rules) == {"audio"}
+
+    def test_audio_rule_mask_and_fallback(self):
+        """The mask is `{aac, alac}`, not `MP4_AUDIO_CODECS`: `.m4a` selects
+        the narrower `ipod` muxer, which rejects mp3, opus and flac stream
+        copies (docs/specs/spec-audio-formats.md)."""
+        rule = M4A.rules["audio"]
+
+        assert rule.copy_mask == frozenset({"aac", "alac"})
+        assert rule.accept_options == ("-c:a", "copy")
+        assert rule.fallback_options == ("-c:a", "aac", "-b:a", "192k")
+        assert rule.fallback_name == "aac"
+
+    def test_audio_rule_declares_no_stream_limit(self):
+        """The ipod muxer holds several audio streams, so every one the
+        source has is carried rather than one kept and the rest dropped."""
+        assert M4A.rules["audio"].stream_limit is None
+
+    def test_declares_the_pinned_last_resort(self):
+        assert M4A.last_resort is not None
+        assert M4A.last_resort.options == ("-map", "0:a:0", "-c:a", "aac", "-b:a", "192k")
+
+
+class TestOggProfile:
+    """Pins the shape Acceptance fixes for `ogg` (issue #22,
+    `docs/specs/spec-audio-formats.md`)."""
+
+    def test_label_and_suffix(self):
+        assert OGG.label == "OGG"
+        assert OGG.target_suffix == ".ogg"
+
+    def test_name_and_description(self):
+        assert OGG.name == "ogg"
+        assert OGG.description
+
+    def test_no_container_options(self):
+        assert OGG.container_options == ()
+
+    def test_cheap_attempt_maps_audio_blindly(self):
+        """ "-c copy", not "-c:a copy": the spec pins this exact spelling
+        (docs/specs/spec-audio-formats.md's fixed-profiles table)."""
+        assert OGG.explicit_streams is False
+        assert OGG.cheap_attempt.options == ("-map", "0:a?", "-c", "copy")
+
+    def test_cheap_attempt_carries_the_standing_non_audio_note(self):
+        assert OGG.cheap_attempt.notes == (
+            "non-audio streams, including cover art, are not carried into OGG",
+        )
+
+    def test_cheap_attempt_is_declared_partial(self):
+        assert OGG.partial_mapping is True
+
+    def test_declares_only_an_audio_rule(self):
+        assert set(OGG.rules) == {"audio"}
+
+    def test_audio_rule_mask_and_fallback(self):
+        rule = OGG.rules["audio"]
+
+        assert rule.copy_mask == frozenset({"vorbis", "opus", "flac"})
+        assert rule.accept_options == ("-c:a", "copy")
+        assert rule.fallback_options == ("-c:a", "libvorbis", "-q:a", "5")
+        assert rule.fallback_name == "vorbis"
+
+    def test_audio_rule_declares_no_stream_limit(self):
+        assert OGG.rules["audio"].stream_limit is None
+
+    def test_declares_the_pinned_last_resort(self):
+        assert OGG.last_resort is not None
+        assert OGG.last_resort.options == ("-map", "0:a:0", "-c:a", "libvorbis", "-q:a", "5")
+
+
+class TestOpusProfile:
+    """Pins the shape Acceptance fixes for `opus` (issue #22,
+    `docs/specs/spec-audio-formats.md`)."""
+
+    def test_label_and_suffix(self):
+        assert OPUS.label == "OPUS"
+        assert OPUS.target_suffix == ".opus"
+
+    def test_name_and_description(self):
+        assert OPUS.name == "opus"
+        assert OPUS.description
+
+    def test_no_container_options(self):
+        assert OPUS.container_options == ()
+
+    def test_cheap_attempt_maps_audio_blindly(self):
+        """ "-c copy", like ogg's: the muxer, not the mask, decides the happy
+        path (Prior decisions, spec-audio-formats.md)."""
+        assert OPUS.explicit_streams is False
+        assert OPUS.cheap_attempt.options == ("-map", "0:a?", "-c", "copy")
+
+    def test_cheap_attempt_carries_the_standing_non_audio_note(self):
+        assert OPUS.cheap_attempt.notes == (
+            "non-audio streams, including cover art, are not carried into OPUS",
+        )
+
+    def test_cheap_attempt_is_declared_partial(self):
+        assert OPUS.partial_mapping is True
+
+    def test_declares_only_an_audio_rule(self):
+        assert set(OPUS.rules) == {"audio"}
+
+    def test_audio_rule_mask_and_fallback(self):
+        rule = OPUS.rules["audio"]
+
+        assert rule.copy_mask == frozenset({"opus"})
+        assert rule.accept_options == ("-c:a", "copy")
+        assert rule.fallback_options == ("-c:a", "libopus", "-b:a", "128k")
+        assert rule.fallback_name == "opus"
+
+    def test_audio_rule_declares_no_stream_limit(self):
+        """The opus muxer holds several audio streams, by copy and by
+        encode (docs/specs/spec-audio-formats.md)."""
+        assert OPUS.rules["audio"].stream_limit is None
+
+    def test_declares_the_pinned_last_resort(self):
+        assert OPUS.last_resort is not None
+        assert OPUS.last_resort.options == ("-map", "0:a:0", "-c:a", "libopus", "-b:a", "128k")
+
+
 class TestRegistry:
     def test_keys_are_each_profile_s_own_name(self):
-        assert PROFILES == {"mp4": MP4, "wav": WAV, "mp3": MP3, "flac": FLAC}
+        assert PROFILES == {
+            "mp4": MP4,
+            "wav": WAV,
+            "mp3": MP3,
+            "flac": FLAC,
+            "m4a": M4A,
+            "ogg": OGG,
+            "opus": OPUS,
+        }
 
 
 class TestResolveTarget:
@@ -493,8 +662,16 @@ class TestResolveTarget:
         assert resolve_target("mp3") is MP3
         assert resolve_target("flac") is FLAC
 
+    def test_resolves_m4a_ogg_and_opus_too(self):
+        assert resolve_target("m4a") is M4A
+        assert resolve_target("ogg") is OGG
+        assert resolve_target("opus") is OPUS
+
     def test_unknown_target_raises_value_error_listing_available_targets(self):
-        with pytest.raises(ValueError, match=r"mkv.*available targets: flac, mp3, mp4, wav"):
+        with pytest.raises(
+            ValueError,
+            match=r"mkv.*available targets: flac, m4a, mp3, mp4, ogg, opus, wav",
+        ):
             resolve_target("mkv")
 
 
