@@ -19,14 +19,11 @@ from converter.profiles import (
     MOV,
     MP3,
     MP4,
-    MP4_AUDIO_CODECS,
-    MP4_VIDEO_CODECS,
     OGG,
     OPUS,
     PNG,
     PROFILES,
     SOURCE_SUFFIXES,
-    TEXT_SUBTITLE_CODECS,
     TIFF,
     WAV,
     WEBM,
@@ -395,7 +392,12 @@ class TestMp4Profile:
         `TestWavProfile.test_profile_is_byte_for_byte_unchanged_since_phase_2`
         guards `wav` against phase 3's siblings, so a change to any field --
         including one nobody wrote a dedicated assertion for -- fails here
-        rather than shipping silently.
+        rather than shipping silently. The three copy masks are spelled out
+        literally rather than imported (`WAV`'s snapshot precedent), because
+        importing `MP4_VIDEO_CODECS` et al. and comparing them against
+        themselves would make this assertion `X == X` for those three
+        fields -- passing even if a codec were added to or removed from the
+        real constant.
         """
         expected = Profile(
             label="MP4",
@@ -422,7 +424,9 @@ class TestMp4Profile:
             partial_mapping=True,
             rules={
                 "video": StreamRule(
-                    copy_mask=MP4_VIDEO_CODECS,
+                    copy_mask=frozenset(
+                        {"h264", "hevc", "av1", "vp9", "mpeg4", "mpeg2video", "mjpeg"}
+                    ),
                     accept_options=("-c:v:{n}", "copy"),
                     fallback_options=("-c:v:{n}", "libx264", "-crf:v:{n}", "18"),
                     fallback_name="h264",
@@ -430,7 +434,7 @@ class TestMp4Profile:
                     drop_reason=None,
                 ),
                 "audio": StreamRule(
-                    copy_mask=MP4_AUDIO_CODECS,
+                    copy_mask=frozenset({"aac", "mp3", "ac3", "eac3", "alac", "opus", "flac"}),
                     accept_options=("-c:a:{n}", "copy"),
                     fallback_options=("-c:a:{n}", "aac", "-b:a:{n}", "192k"),
                     fallback_name="aac",
@@ -438,7 +442,9 @@ class TestMp4Profile:
                     drop_reason=None,
                 ),
                 "subtitle": StreamRule(
-                    copy_mask=TEXT_SUBTITLE_CODECS,
+                    copy_mask=frozenset(
+                        {"subrip", "srt", "ass", "ssa", "mov_text", "webvtt", "text"}
+                    ),
                     accept_options=("-c:s:{n}", "mov_text"),
                     fallback_options=None,
                     fallback_name=None,
@@ -1559,26 +1565,37 @@ class TestRegistryStructuralInvariants:
         stream of that type, not one per stream in map order (measured against
         ffmpeg 9.0, `M4A`'s and `OPUS`'s audio-rule comments in
         `converter/profiles.py`). That silently re-encodes an already-accepted
-        stream with no note, so a rule that can produce more than one output
-        stream of its type -- `stream_limit is None` -- must carry the `{n}`
-        placeholder `jobs._substitute_position` substitutes per stream
-        position. A
-        rule capped at one stream (`stream_limit == 1`, e.g. `WAV`'s or the
-        image profiles') is exempt: only one index is ever substituted, so the
-        bare form cannot collide.
+        stream with no note, so a rule not capped at one output stream of its
+        type -- `stream_limit == 1`, e.g. `WAV`'s or the image profiles', where
+        only one index is ever substituted and the bare form cannot collide --
+        must carry the `{n}` placeholder `jobs._substitute_position`
+        substitutes per stream position.
+
+        `accept_options` is asserted non-empty rather than skipped when falsy:
+        an empty `accept_options` on an uncapped rule would emit a map with no
+        codec option at all, producing an undeclared re-encode -- exactly what
+        `OPUS`'s own audio-rule comment (`converter/profiles.py`) says was
+        measured and is why `opus`'s cheap attempt does not use `WAV`'s empty
+        form. `fallback_options` stays conditional: it is genuinely optional
+        (`StreamRule.fallback_options: tuple[str, ...] | None`), unlike
+        `accept_options`.
         """
         for rule in profile.rules.values():
-            if rule.stream_limit is not None:
+            if rule.stream_limit == 1:
                 continue
-            if rule.accept_options:
-                assert "{n}" in " ".join(rule.accept_options), (
-                    f"{profile.label}: accept_options {rule.accept_options!r} has no "
-                    "stream_limit but no {n} placeholder"
-                )
+            assert rule.accept_options, (
+                f"{profile.label}: accept_options is empty on a rule with no "
+                "stream_limit==1 cap -- this would emit a map with no codec option, "
+                "producing an undeclared re-encode"
+            )
+            assert "{n}" in " ".join(rule.accept_options), (
+                f"{profile.label}: accept_options {rule.accept_options!r} has no "
+                "stream_limit==1 cap but no {n} placeholder"
+            )
             if rule.fallback_options:
                 assert "{n}" in " ".join(rule.fallback_options), (
                     f"{profile.label}: fallback_options {rule.fallback_options!r} has no "
-                    "stream_limit but no {n} placeholder"
+                    "stream_limit==1 cap but no {n} placeholder"
                 )
 
     def test_a_declared_last_resort_always_carries_a_note(self, profile):
@@ -1602,29 +1619,24 @@ class TestRegistryStructuralInvariants:
 
 
 class TestRegistryTargetCoherence:
-    """Target/suffix/name coherence across the whole registry (issue #30).
+    """Target-suffix coherence across the whole registry (issue #30).
 
     `TestRegistryStructuralInvariants` above already pins that every target
     suffix is a curated source suffix; this class pins the direction that
-    check cannot: that no two profiles claim the *same* suffix or the *same*
-    registry name, which `resolve_target` silently resolves to whichever
-    profile happened to be inserted into ``PROFILES`` last, per ordinary dict
-    behaviour.
+    check cannot: that no two profiles claim the *same* suffix. A duplicate
+    registry *name* is not this class's concern -- `PROFILES` is built as
+    ``{profile.name: profile for profile in (...)}``, so a name collision
+    would silently drop one profile from the dict entirely rather than leave
+    both reachable for a test parametrized over ``PROFILES.values()`` to
+    compare; `TestRegistry.test_keys_are_each_profile_s_own_name`'s full
+    dict-literal equality is what would actually notice a missing profile.
     """
 
     def test_no_two_profiles_share_a_target_suffix(self):
         suffixes = [profile.target_suffix for profile in PROFILES.values()]
+        duplicates = {suffix for suffix in suffixes if suffixes.count(suffix) > 1}
 
-        assert len(suffixes) == len(set(suffixes))
-
-    def test_every_profile_is_reachable_by_its_own_name(self):
-        """`PROFILES` is built from each profile's own `name`
-        (`converter/profiles.py`'s comment on the dict comprehension), but
-        that only guarantees the *key* matches -- not that `resolve_target`,
-        which lower-cases and strips a leading dot before the lookup, still
-        finds the same object back."""
-        for profile in PROFILES.values():
-            assert resolve_target(profile.name) is profile
+        assert not duplicates, f"target_suffix collision(s) in the registry: {sorted(duplicates)}"
 
 
 class TestResolveTarget:

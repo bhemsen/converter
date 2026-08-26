@@ -454,32 +454,62 @@ New-Item -ItemType Directory -Force in
   each of the three profiles' `last_resort is not None`, so those two
   acceptance bullets needed no new test -- re-implementing them would have
   been a second copy of an existing guard rail, the cost the parent task
-  explicitly warned against. Two bullets did need new work: `mp4` had no
-  whole-`Profile` snapshot test the way `wav` got in phase 3
-  (`test_profile_is_byte_for_byte_unchanged_since_phase_2`), even though three
-  siblings were landing in the same registry around it, so
-  `test_profile_is_byte_for_byte_unchanged_since_before_this_phase` closes
-  that gap the same way; and the README's format list already carried `mkv`,
-  `mov` and `webm` (added when their own issues landed), so that bullet was
-  already satisfied and needed no edit.
+  explicitly warned against. The "`mp4`'s argv and notes are byte-for-byte
+  unchanged" bullet was also already satisfied, by `tests/test_argv.py`'s
+  `TestProfileArgvPinning.test_mp4_copyable_source` /
+  `test_mp4_non_copyable_source` and `TestMp4DegradationNotes` -- all landed
+  in phase 2 (issue #11, `2455d3d`), well before this phase's three siblings.
+  What this PR adds instead, `TestMp4Profile.test_profile_is_byte_for_byte_unchanged_since_before_this_phase`,
+  is a different and additional thing: a snapshot of the whole declared
+  `Profile` object, the way `wav` got in phase 3
+  (`test_profile_is_byte_for_byte_unchanged_since_phase_2`) as its own
+  siblings landed -- not a substitute for the argv/notes pins, a companion to
+  them, covering fields (like each rule's `copy_mask`) that no argv-level test
+  exercises. And the README's format list already carried `mkv`, `mov` and
+  `webm` (added when their own issues landed), so that bullet was already
+  satisfied too and needed no edit.
 
-  Beyond the acceptance list, three genuinely cross-profile rails were added
-  to `TestRegistryStructuralInvariants`/a new `TestRegistryTargetCoherence`
-  class, targeting bug classes the per-profile tests structurally cannot catch
-  because each only ever looks at its own profile: (1) every `StreamRule`
-  whose `stream_limit` is `None` must carry ffmpeg's `{n}` position
-  placeholder in its codec options -- generalising issue #22's real bug
-  (an unindexed `-c:a copy` silently re-encoding an already-accepted stream,
+  Beyond the acceptance list, two genuinely cross-profile rails were added to
+  `TestRegistryStructuralInvariants`, targeting bug classes the per-profile
+  tests structurally cannot catch because each only ever looks at its own
+  profile: (1) every `StreamRule` not capped at one output stream of its type
+  (`stream_limit == 1`) must carry ffmpeg's `{n}` position placeholder in its
+  codec options, and `accept_options` itself must be non-empty rather than
+  merely skipped when falsy -- generalising issue #22's real bug (an
+  unindexed `-c:a copy` silently re-encoding an already-accepted stream,
   because ffmpeg's own unindexed codec options are not positional) to the
-  whole registry rather than the one profile that motivated it; (2) every
+  whole registry rather than the one profile that motivated it; and (2) every
   declared `last_resort` must carry at least one note -- generalising issue
   #34's real bug (the image `last_resort` dropping a stream type with no note
   at all, a direct violation of the constitution's "never report success for
-  a conversion that silently dropped something") the same way; and (3) no two
-  profiles in `PROFILES` may share a `target_suffix`. Mutation-tested outside
-  the repo against copies of `m4a`, `mkv` and `mov`/`mkv` respectively (a
-  stripped placeholder, an emptied `last_resort.notes`, a collided suffix) to
-  confirm each rail actually fails before trusting it to pass on the real,
-  unmutated registry. None of the three found a live bug in a shipped
-  profile -- every shipped profile already satisfies all three -- so this
-  closes a hole in the contract's test coverage, not a live defect.
+  a conversion that silently dropped something") the same way. A third rail,
+  in a new `TestRegistryTargetCoherence` class, asserts no two profiles in
+  `PROFILES` share a `target_suffix`. Mutation-tested outside the repo against
+  copies of `m4a`, `mkv` and `mov` respectively (a stripped placeholder, an
+  emptied `last_resort.notes`, a suffix collided with `mkv`'s) to confirm each
+  rail actually fails before trusting it to pass on the real, unmutated
+  registry. None of the three found a live bug in a shipped profile -- every
+  shipped profile already satisfies all three -- so this closes a hole in the
+  contract's test coverage, not a live defect.
+
+  Review (fresh Agent, this PR) measured that the first draft had two rails
+  that could not do what they claimed: the `mp4` snapshot imported
+  `MP4_VIDEO_CODECS`/`MP4_AUDIO_CODECS`/`TEXT_SUBTITLE_CODECS` and compared
+  them against themselves, so it passed even with a codec deleted from the
+  real constant (`X == X`) -- fixed by spelling the three masks out literally,
+  `wav`'s own precedent. A fourth rail this draft had also added,
+  `test_every_profile_is_reachable_by_its_own_name`, could not catch the
+  duplicate-name collision its class docstring claimed either: `PROFILES` is
+  built as `{profile.name: profile for profile in (...)}`, so a name
+  collision drops the losing profile out of the dict before a test
+  parametrized over `PROFILES.values()` ever sees it -- caught instead by
+  `TestRegistry.test_keys_are_each_profile_s_own_name`'s existing dict-literal
+  equality. Rather than keep a near-tautological rail duplicating that
+  coverage, it was removed and the class docstring corrected to claim only
+  the suffix check it actually performs. The placeholder rail's exemption was
+  also tightened from `stream_limit is not None` to `stream_limit == 1` (the
+  reasoning its own docstring already gave), and its `accept_options` guard
+  changed from skipping an empty tuple to asserting it is non-empty -- an
+  empty `accept_options` on an uncapped rule is exactly the shape `OPUS`'s own
+  audio-rule comment (`converter/profiles.py`) warns would emit a map with no
+  codec option, an undeclared re-encode.
