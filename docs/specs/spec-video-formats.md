@@ -223,8 +223,19 @@ New-Item -ItemType Directory -Force in
 - [ ] `--to mov in out` over `attached.mkv` *fails the cheap attempt*, reaches the
       ladder, and names the dropped attachment. The one place a drop is reported
       per stream rather than by a standing note.
-- [ ] `--to webm in out` over `attached.mkv` succeeds and prints WebM's standing
-      note, since nothing failed and there was no ladder to name it.
+- [ ] `--to webm in out` over `attached.mkv` drops the attachment -- but not via
+      the standing note alone. `attached.mkv` carries the same h264 video as
+      `h264.mkv`, which is itself outside WebM's copy mask, so the cheap
+      attempt already fails on the *video* and the run reaches the ladder
+      regardless of the attachment (measured directly: `-map 0:v? -map 0:a?
+      -map 0:s? -c copy -c:s webvtt` into `.webm` exits non-zero with "Only
+      VP8 or VP9 or AV1 video ... are supported for WebM"). The ladder
+      re-encodes video and audio and names the attachment drop with its own
+      per-stream note, on top of re-encode notes for video and audio -- this
+      fixture set has no source that is already VP9/Opus **and** carries an
+      attachment, so the standing-note-only path (cheap attempt succeeds,
+      nothing else to name) is not actually exercised here. See the Decision
+      log.
 - [ ] `--to webm in out` over `h264.mkv` re-encodes video and audio, names both,
       and produces a file that plays in a browser.
 - [ ] `--to webm in out` over `vp9.webm` stream-copies: near-instant, and the
@@ -235,6 +246,11 @@ New-Item -ItemType Directory -Force in
 - [ ] A second run over any converted tree reports `0 converted`, exit 0.
 - [ ] Time the `--to webm` run over a 30-second source and record it, so the
       gate's fallback choice can be checked against a real number on real content.
+      Measured on *This machine*: a 30 s, 320x240, 10 fps `libx264`+`aac`
+      source (the ladder's `libvpx-vp9` fallback, since h264 is outside WebM's
+      copy mask) took ~2 s end to end -- comfortably tolerable, though this is
+      a tiny, low-motion synthetic clip and says nothing about a real
+      full-resolution source.
 
 ## Risks and mitigations
 
@@ -447,3 +463,36 @@ New-Item -ItemType Directory -Force in
   (`test_a_source_webm_cannot_hold_at_all_is_unsupported`), using the same
   attachment-only stream shape the real fixture would have produced had
   ffmpeg been willing to write one.
+- 2026-08-26 (#56): The four Verification fixtures (`h264.mkv`, `vp9.webm`,
+  `lossless.mkv`, `attached.mkv`) already carry distinct stems, so this spec
+  did not share phase 3's collision defect -- confirmed by running the block
+  as written; no fixture rename was needed here. Ran the whole block against
+  real ffmpeg 9.0 with `--ffmpeg`/`--ffprobe`: all four targets converted the
+  four-source `in/` tree at exit 0; `mkv` kept `attached.mkv`'s font
+  attachment (`ffprobe`: stream 2, `codec_type=attachment`); `mov` and `mp4`
+  dropped it with a named note and no other stream touched; `vp9.webm` ->
+  `webm` stream-copied the video packet-identically (`-f md5` matched);
+  `vp9.webm` -> `mov` re-encoded rather than failing; a second run over a
+  converted tree reported `0 converted`, exit 0; timed a 30 s, 320x240,
+  10 fps source through `--to webm`: ~2 s end to end.
+
+  One checklist claim needed correcting. "`--to webm` over `attached.mkv`
+  succeeds and prints WebM's standing note, since nothing failed and there
+  was no ladder to name it" assumes the cheap attempt succeeds for this
+  fixture. It does not: `attached.mkv` carries the same h264 video as
+  `h264.mkv`, which is outside `WEBM_VIDEO_CODECS`, and WebM's muxer rejects
+  an h264 stream copy outright -- measured directly, `-map 0:v? -map 0:a?
+  -map 0:s? -c copy -c:s webvtt` into `.webm` exits non-zero with "Only VP8
+  or VP9 or AV1 video ... are supported for WebM". The run reaches the
+  ladder regardless of the attachment, which re-encodes video and audio and
+  names the attachment drop with its own per-stream note -- not the standing
+  note, which (per `batch._attempt_conversion`) only ships with the *cheap*
+  attempt's result. This also appears to contradict the issue #29 entry
+  above, which states a run over "a font-attached, h264/aac MKV" printed
+  *both* the standing note and the per-stream note together -- a combination
+  that, by the same code path, requires the cheap attempt to succeed, and the
+  same entry's own preceding paragraph already calls an h264/aac source
+  "non-copyable" for WebM. Left uncorrected per this issue's scope (Decision
+  log entries are append-only outside one's own), but recorded here since the
+  Verification item is what actually gates the milestone and now matches
+  what this run observed rather than the older claim.
