@@ -61,10 +61,13 @@ The fix is not to sort it out afterwards but never to map it: ffmpeg has a
 - `converter/profiles.py`: an `attached_pic` rule on `mp3`, `m4a` and `flac`,
   their cheap attempts gaining `-map 0:disp:attached_pic?`, and the removal of
   the five cheap-attempt standing notes.
-- `tests/test_profiles.py`: `MAP_LETTERS` / `mapped_types` learn the disposition
-  selector, so the mapped-types-equals-rules invariant keeps holding.
-- **`docs/design/stream-decision.md` and `docs/architecture.md` Key flow 2**,
-  amended in this PR — the foundation impact `docs/roadmap.md` recorded for this
+- `tests/test_profiles.py`: `MAP_LETTERS` and `mapped_types` learn the disposition
+  selector and classify it as **blind**, and `named_index_counts` skips it -- three
+  shipped invariants, of which one currently fails against the new shape.
+- `docs/constitution.md` and `README.md`: the ffmpeg version floor, per the gate's
+  decision, and `docs/roadmap.md`'s "constitution -- none" verdict corrected.
+- **`docs/design/stream-decision.md`, `docs/design/degradation-ladder.md` and
+  `docs/architecture.md` Key flow 2**, amended in this PR — the foundation impact `docs/roadmap.md` recorded for this
   phase, which `docs/workflow.md` binds to be authored here.
 - The tests for all of it.
 
@@ -121,6 +124,9 @@ Both foundation edits are authored in this PR, not deferred:
   lookup.
 - `docs/architecture.md` Key flow 2 gains the same clause, since it restates the
   per-stream match in prose.
+- `docs/design/degradation-ladder.md` gains the third selector kind -- a blind
+  selector over a disposition -- because its `stream_limit` reasoning is built on
+  a two-way blind-versus-index-named split that no longer covers every case.
 
 ## Human prerequisites
 
@@ -142,22 +148,60 @@ this one is rebuilt from what survived plus what the review found.
 | **Artwork survives a mapped copy** into `mp3`, `m4a` and `flac` with disposition intact, for **png and mjpeg** — the two artwork codecs that matter | The carry-through works once the mapping is precise |
 | One ffprobe query returns the disposition alongside the existing fields, but under `-of json` it is **nested**: `{"index":1,"codec_name":"png","codec_type":"video","disposition":{"attached_pic":1}}` | No second probe, but the parser change is a nested lookup plus a default for a stream reporting no `disposition` object — not "one clause" |
 | `ogg`, `opus` and `wav` reject a picture outright even with an accepted audio codec (`Unsupported codec id in stream 1`; `wav muxer does not support any stream of type video`) | Those three gain no rule and no mapping, and stay unchanged |
-| `tests/test_profiles.py` binds `set(profile.rules)` to `mapped_types(profile)`, whose `MAP_LETTERS` covers `v/a/s/t/d` only | The invariant is not an obstacle here — it is the reason the design works. See the rules-key decision |
+| **The disposition specifier arrived in ffmpeg 7.1** ("stream specifiers in fftools can now match by stream disposition", `Changelog` under `version 7.1:`, absent from every earlier heading). Ubuntu 24.04 LTS ships 6.1.1 and Debian 12 ships 5.1.9 -- both below it | A new runtime floor the project does not currently state anywhere. `README.md` tells Linux users `sudo apt install ffmpeg`, which lands under the floor on both |
+| **Below 7.1 the `?` does not save the invocation.** An unknown disposition specifier makes ffmpeg refuse the option and abort: `Invalid disposition specifier` / `Failed to set value ... for option 'map'` / `Error opening output files`, exit 127 | The cheap attempt fails for *every* file on the three targets, not just artwork-bearing ones. It degrades rather than breaks -- the selective rung maps by index and needs no specifier -- at one failed ffmpeg process plus one probe per file |
+| **One `-map 0:disp:attached_pic?` carries *every* picture, not one.** Measured on a two-picture source into all three targets: `1,png,video,1` and `2,mjpeg,video,1` both arrive | The selector is **blind**, not index-named. Declaring `stream_limit=1` on the rule would make `verify_success` report the second picture as dropped while ffmpeg carried it |
+| A source with **no** artwork exits 0 on all three targets under the same cheap attempt, carrying audio only | The trailing `?` is load-bearing and works; the majority case is unaffected |
+| `tests/test_profiles.py` binds `set(profile.rules)` to `mapped_types(profile)` **and** binds a stream limit to `named_index_counts`, which reads `0:disp:attached_pic?` as index-named | Two of the three invariants hold as-is; the third fails and must be taught the new selector kind. See the rules-key decision |
 
 ### Decisions
 
 | Decision | Rationale | Date |
 |---|---|---|
-| The cheap attempt of `mp3`, `m4a` and `flac` gains **`-map 0:disp:attached_pic?`**, never `-map 0:v?` | Measured: it maps pictures and nothing else, on all three targets, including the h264 cases that break a blind map. The `?` keeps a source without artwork exiting 0 | 2026-08-26 |
+| The cheap attempt of `mp3`, `m4a` and `flac` becomes exactly `flags("-map 0:a? -map 0:disp:attached_pic? -c copy")` -- **`-c:a copy` becomes `-c copy`**, which is a second argv change beyond adding the map | Measured: the specifier maps pictures and nothing else on all three targets, including the h264 cases that break a blind map, and the `?` keeps a source without artwork exiting 0. But with `-c:a copy` retained, no codec option covers the picture, so ffmpeg re-encodes it with the muxer's default video encoder -- h264 for ipod, which ipod then rejects, failing every artwork-bearing `--to m4a` at rung 1. `mp3` and `flac` exit 0 and silently re-encode the picture. With `-c copy` all three copy it | 2026-08-26 |
 | `Stream` gains one boolean field, `attached_pic`, not a general disposition set | Only this disposition has a decision resting on it. The field is needed even though ffmpeg does the mapping: the success-side verifier must not report a *carried* picture as dropped, and the selective rung maps by index and so has no specifier to lean on | 2026-08-26 |
-| An attached picture resolves to an **`"attached_pic"` key in `profile.rules`**, falling back to `stream.codec_type` when the profile declares none | It lines up with the mapping rather than fighting it: the cheap attempt now maps attached pictures as their own thing, so a rule for them is exactly what the mapped-types-equals-rules invariant demands. `MAP_LETTERS` / `mapped_types` learn `disp:attached_pic -> "attached_pic"`, which is a one-entry extension, not an exemption | 2026-08-26 |
+| An attached picture resolves to an **`"attached_pic"` key in `profile.rules`**, falling back to `stream.codec_type` when the profile declares none | It lines up with the mapping rather than fighting it: the cheap attempt now maps attached pictures as their own thing, so a rule for them is exactly what the mapped-types-equals-rules invariant demands. Two of the three shipped invariants then hold unchanged. The third does not: `named_index_counts` reads `0:disp:attached_pic?` as index-named and would demand `stream_limit=1` -- and measured, one such map carries *every* picture, so that limit would make `verify_success` report a carried picture as dropped. `named_index_counts` must skip the `disp:` form and `mapped_types` must classify it as **blind** | 2026-08-26 |
+| The `attached_pic` rule declares **no** `stream_limit` | Measured: a two-picture source arrives whole on all three targets. A limit of 1 would be a false statement about ffmpeg's behaviour and would produce a drop note for a stream that was carried -- the mirror this spec's Constraints forbid | 2026-08-26 |
+| `docs/design/degradation-ladder.md`'s blind-versus-index-named dichotomy gains a **third selector kind**: a blind selector over a disposition. Authored in this PR | That file's whole `stream_limit` reasoning is built on the two-way split, so leaving it out would make the shipped invariant and the design contract disagree | 2026-08-26 |
+| The engine needs **no change for counting**: `_decide_stream` already writes `counts[stream.codec_type]`, and a picture's `codec_type` is `video` | Verified against the real engine: a two-picture m4a selective rung emits `-c:v:0 copy -c:v:1 copy` and both pictures arrive with `attached_pic=1`. The do-nothing option is also the correct one | 2026-08-26 |
 | A profile with **no** `attached_pic` rule keeps today's behaviour exactly: the picture falls through to the `video` lookup, finds no rule, and is dropped with the existing note | This phase must not change a target nobody asked it to change. `ogg`, `opus` and `wav` are the guard | 2026-08-26 |
 | The `attached_pic` rule copies unconditionally — accept-anything mask, `accept_options=flags("-c:v copy")` for `mp3` and `flac`, `flags("-c:v:{n} copy")` for `m4a` | The decision is the disposition, not the codec, so enumerating codec names would repeat the phase-4 mistake the attachment rule corrected. The `{n}` split follows the existing per-profile convention: `mp3` and `flac` are stream-limited to one, `m4a` is not | 2026-08-26 |
 | The engine counts a carried picture under **`"video"`**, not `"attached_pic"` | ffmpeg counts an attached picture as a video output stream, so `{n}` must stay in step with ffmpeg's own numbering. Irrelevant for the three audio targets, which declare no `video` rule, and a latent bug for any later profile with both | 2026-08-26 |
 | `describe_unsupported` stays keyed on `codec_type` deliberately, and is pinned by a test | Its question is "does this source carry any stream type the profile could use", which a disposition does not change. Measured: a standalone `.png` reports `attached_pic=0`, so it stays a genuine `unsupported` | 2026-08-26 |
 | **The cheap-attempt standing notes are removed from the five audio profiles that carry one** — `mp3`, `flac`, `m4a`, `ogg`, `opus`. `wav` carries none | Measured: the verifier already names every stream those notes describe, per stream and accurately, so the blanket line is duplication. For `mp3`, `m4a` and `flac` it also becomes false the moment artwork is carried. `ogg` and `opus` gain no artwork, so their removal rests on the duplication argument alone | 2026-08-26 |
 | `last_resort` notes are **retained** on every profile | That rung maps `-map 0:a:0` explicitly and is never verified (`docs/design/degradation-ladder.md`: only the cheap attempt's notes are added to), so its note is the only place that information exists. Removing it would lose a statement | 2026-08-26 |
-| Genuinely open decisions: **none**. The first draft's open decision — which targets map video, given a per-target hazard — was dissolved by the disposition specifier rather than resolved | Recorded so the gate is a deliberate "the measurement removed the question", not an omission | 2026-08-26 |
+| The first draft's open decision -- which targets map video, given a per-target hazard -- was **dissolved** by the disposition specifier rather than resolved | Recorded so the gate is not asked a question the measurement removed | 2026-08-26 |
+| OPEN -- what happens below ffmpeg 7.1 | resolved at the spec-acceptance gate; see the note below | -- |
+
+### The one open decision, in full
+
+The disposition specifier arrived in **ffmpeg 7.1**. The project states no ffmpeg
+floor today -- `docs/constitution.md`'s tech-stack row names the CLI without a
+version, and `README.md` says only "keep ffmpeg reasonably current" while telling
+Linux users `sudo apt install ffmpeg`, which lands on 6.1.1 under Ubuntu 24.04 LTS
+and 5.1.9 under Debian 12.
+
+Measured, below the floor the trailing `?` does not help: ffmpeg refuses the
+option and aborts the invocation. So on such a build the cheap attempt of `mp3`,
+`m4a` and `flac` fails for **every** file. It degrades rather than breaks -- the
+selective rung maps by index, needs no specifier, and carries the artwork just the
+same -- but at one failed ffmpeg process plus one ffprobe per file, and every
+conversion then reports through the failure-side path.
+
+Whichever the gate picks, `docs/constitution.md` and `README.md` gain the floor
+and join this PR's Scope, and `docs/roadmap.md`'s recorded verdict for this phase
+("constitution -- none") becomes false and is corrected here.
+
+1. **Supported with degradation.** Record `ffmpeg >= 7.1` as the floor *for the
+   fast path*, and state the cost below it plainly. Nothing breaks anywhere, and
+   a user on Debian 12 still gets their artwork -- just one wasted process per
+   file on three of the seventeen targets.
+2. **Refused up front.** `resolve_tools` already fails fast for a missing binary
+   and `ffmpegtool.version()` already exists, so a floor could be enforced at
+   startup with an actionable message. But it would refuse *every* target,
+   including the fourteen that never use the specifier, on the LTS distribution
+   most Linux users are running. That is a large blast radius for a feature three
+   targets use.
 
 ## Tracking
 
@@ -191,8 +235,12 @@ Machine checks:
 - [ ] A test that no audio profile carries a **`cheap_attempt`** standing note,
       and a test per removed note that the verifier still names the same loss per
       stream. `last_resort.notes` are asserted unchanged.
-- [ ] The `mapped_types` invariant in `tests/test_profiles.py` holds for all 17
-      profiles with the disposition selector recognised.
+- [ ] All three `tests/test_profiles.py` invariants hold for all 17 profiles with
+      the disposition selector recognised -- including the stream-limit one, which
+      fails against the new shape until `named_index_counts` skips the `disp:`
+      form.
+- [ ] A test that a **two-picture** source is carried whole and reported as no
+      loss -- the case that decides the rule declares no `stream_limit`.
 
 Human milestone-QA gate. `$FF` is the absolute ffmpeg path from *This machine*.
 Every fixture has a **distinct stem**, so a single `--to <fmt> in out` run does
@@ -230,7 +278,7 @@ New-Item -ItemType Directory -Force in
 
 | Risk | Mitigation |
 |---|---|
-| The disposition specifier is unavailable on an older ffmpeg than this machine's 9.0, and the cheap attempt fails for everyone on it | The review is asked to establish the version floor. If it is above what the project can assume, the fallback is to carry artwork only on the selective rung, which needs no specifier — a smaller win, not a broken one |
+| A user below ffmpeg 7.1 pays a failed process plus a probe per file on three targets | Established: the floor is 7.1, the failure is a full abort rather than a skipped map, and the degradation is automatic rather than a fallback anyone implements. The gate decides whether that is supported or refused, and the floor is recorded in the constitution and the README either way |
 | A real video is passed through or truncated into an audio target | The specifier maps only pictures, pinned per target by argv tests and by a QA check on both an h264 and an mjpeg video source |
 | Removing the standing notes loses a statement | A test per removed note asserts the verifier still names that loss per stream; `last_resort` notes are explicitly retained and asserted unchanged |
 | The `-show_entries` clause or the nested JSON read breaks and the field silently reads false | Both pinned: the argv verbatim, and the parse against a payload with and without a `disposition` object |
@@ -253,3 +301,17 @@ New-Item -ItemType Directory -Force in
 - 2026-08-26: The override of `docs/prior-art.md`'s and `docs/roadmap.md`'s
   "the note narrows rather than disappears" is named in Prior art, with the
   evidence neither had: the verifier makes every statement those notes make.
+- 2026-08-26: Review round 2 established the version floor this spec could not
+  settle from one machine: the disposition specifier arrived in ffmpeg 7.1, and
+  the LTS distributions most Linux users run ship below it. Promoted to the
+  phase's one open decision, since it adds a runtime requirement the project has
+  never stated and makes `docs/roadmap.md`'s "constitution — none" verdict false.
+- 2026-08-26: Review round 2 also measured that one `-map 0:disp:attached_pic?`
+  carries every picture, not one — so the rule declares no `stream_limit`, and
+  `degradation-ladder.md`'s two-way selector split gains a third kind. Taking the
+  failing invariant at face value and declaring `stream_limit=1` would have
+  produced a drop note for a stream ffmpeg carried.
+- 2026-08-26: And that adding only the map, keeping `-c:a copy`, breaks `m4a`
+  outright: with no codec option covering the picture ffmpeg re-encodes it to the
+  ipod muxer's default h264, which ipod then rejects. The cheap attempts are
+  pinned in full rather than described as "gaining a map".

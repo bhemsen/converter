@@ -125,6 +125,17 @@ flowchart TD
   number of that type's streams, the same false accept the equality above
   exists to rule out.
 
+  A **third selector kind** joins the blind/index-named split: a *blind selector
+  over a disposition*, `-map 0:disp:attached_pic?`. It reads like an index-named
+  selector because it carries a colon-separated qualifier, but it behaves like a
+  blind one — measured, a single such map carries **every** attached picture a
+  source holds, not one. So it takes the blind branch of both rules above: the
+  type it maps (`attached_pic`) needs a rule, and that rule declares **no**
+  `stream_limit`. Declaring one would have `_structural_drop` report a picture
+  the mapping demonstrably carried — the false *reject* that mirrors the false
+  accept. `tests/test_profiles.py` classifies it by that behaviour, not by the
+  shape of the string.
+
   The two shipped profiles satisfy the equality by construction — MP4's
   selectors match its three rules exactly and it declares no limit, WAV names
   one audio index and limits audio to 1 — and `tests/test_profiles.py` checks
