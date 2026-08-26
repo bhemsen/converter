@@ -81,8 +81,11 @@ evidenced, not assumed — see the image-conversion concern.
 - Notes:
   - ADOPT: trial-and-fallback. Attempt the cheap stream copy first; only on a
     non-zero exit spend an ffprobe round-trip and degrade deliberately
-    (`mp4_remux` to `_mp4_selective` to `mp4_reencode`). ffprobe never runs on the
-    happy path. Combined with HandBrake's copy mask this gets both: the mask
+    (`mp4_remux` to `_mp4_selective` to `mp4_reencode`). ffprobe never runs on
+    the happy path of an *exhaustive* cheap attempt — issue #18 narrowed this
+    to admit one probe on the success of a mapping that is partial by
+    construction, which is what keeps the loss accounting honest.
+    Combined with HandBrake's copy mask this gets both: the mask
     PREDICTS a doomed attempt, trial-and-fallback remains the safety net for what
     the mask gets wrong.
   - AVOID: writing the ladder per format pair. `mp4_retries` and `wav_retries` are

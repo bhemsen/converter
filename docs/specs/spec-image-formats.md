@@ -70,7 +70,14 @@ Everything below follows from that table.
 
 - A target format is data, not code.
 - One input file, one output file.
-- `ffprobe` never runs on the happy path.
+- `ffprobe` never runs on the happy path of a cheap attempt whose mapping is
+  *exhaustive*. A profile whose cheap attempt is partial by construction
+  declares `partial_mapping=True` and is probed once on its success, so what
+  that mapping could not carry is named (`docs/constitution.md`, narrowed by
+  issue #18). Every cheap attempt below maps by type, so every profile in
+  this phase is partial and must declare it -- together with a rule for each
+  stream type it maps, per the invariant in
+  `docs/design/degradation-ladder.md`.
 - Never report success for a conversion that silently dropped something.
 - `{n}` is substituted **only** in `StreamRule` templates. `cheap_attempt` and
   `last_resort` are emitted verbatim, so a `{n}` in either reaches ffmpeg

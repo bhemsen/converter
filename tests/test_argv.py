@@ -451,6 +451,17 @@ class TestSuccessSideVerification:
 
         assert notes == ("audio stream 1 (opus) dropped: WAV holds 1 audio stream",)
 
+    @pytest.mark.parametrize("profile", [MP4, WAV], ids=lambda profile: profile.label)
+    def test_no_profile_invents_a_loss_for_a_source_it_fully_maps(self, profile):
+        """One stream of each type the profile declares a rule for, and never more
+        than one, so nothing in this source can have been left behind."""
+        verify = make_verifier(profile)
+        assert verify is not None
+
+        streams = [Stream(i, kind, "whatever") for i, kind in enumerate(profile.rules)]
+
+        assert verify(streams) == ()
+
     def test_a_codec_outside_the_copy_mask_produces_no_note(self):
         """Codec-level verdicts are out of scope here: the attempt exited 0, so
         the stream was carried over whatever the copy mask says."""

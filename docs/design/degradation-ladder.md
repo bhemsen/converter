@@ -59,6 +59,24 @@ flowchart TD
   container already holding as many of that type as it can — never a codec-level
   one: ffmpeg exited 0, so whatever the attempt did with a codec worked, and
   naming a re-encode that never ran would trade one dishonest report for another.
+- **What a partial profile owes in exchange.** Reading the declared rules instead
+  of the option list is sound only while the rules and the mapping agree, so a
+  profile that sets `partial_mapping` must satisfy both halves of this. A new
+  profile that cannot is the bug — not the verification.
+  1. **A rule for every stream type its cheap attempt maps.** Otherwise the
+     verification announces a drop that never happened. A profile that carries
+     attachments with `-map 0:t?` has to declare an `attachment` rule, or every
+     font it faithfully copied is reported as lost.
+  2. **No `stream_limit` on a type its cheap attempt selects blindly.** A blind
+     `-map 0:a?` maps *every* audio stream, so a limit the mapping does not
+     enforce would have the verification report surplus streams the output does
+     contain. A limit belongs to a type the cheap attempt names by index (WAV's
+     `-map 0:a:0`) or does not map at all.
+
+  The two shipped profiles satisfy both by construction — MP4's selectors match
+  its three rules exactly and it declares no limit, WAV names one audio index and
+  limits audio to 1 — and `tests/test_profiles.py` checks the pair per profile
+  rather than leaving it to review.
 - **Cheapest first.** Rung 1 is whatever the profile declares as its cheap attempt:
   a *blind* stream copy for a container that can hold the source codecs
   (`-map 0:v? -map 0:a? ...`), or a *stream-explicit* selection where it cannot

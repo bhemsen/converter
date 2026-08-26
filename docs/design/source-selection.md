@@ -122,6 +122,10 @@ flowchart TD
   evidence the vision promises. A `.txt`, or a file inside the output tree, is not,
   because counting everything a directory happens to hold means nothing.
 - **Selection cannot tell whether a source can *produce* the target.** Whether a
-  video-only file has audio to put in a WAV is only knowable from a probe, and a
-  probe on the happy path is forbidden. That question belongs to the ladder, not
-  here — see `degradation-ladder.md` and the spec that owns the outcome it ends in.
+  video-only file has audio to put in a WAV is only knowable from a probe, and
+  selection has no probe to spend: the one the ladder may now spend on a
+  partial cheap attempt's success (`degradation-ladder.md`, narrowed by issue
+  #18) happens after an attempt has already run, which is far too late to
+  decide whether the file was a candidate. That question belongs to the
+  ladder, not here — see `degradation-ladder.md` and the spec that owns the
+  outcome it ends in.

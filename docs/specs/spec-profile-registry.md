@@ -387,12 +387,20 @@ why both audio fixtures use that suffix.
   absolute would have forced the two fixture-specific acceptance items
   (`attached.mkv` naming the `ttf` attachment, `two-tone.opus` naming the second
   audio stream and its codec) to be relaxed, trading away the loss-accounting USP
-  in `docs/vision.md` to protect a probe on a minority of runs. All four
-  restatements of the old rule moved together — `docs/constitution.md`
+  in `docs/vision.md` to protect a probe on a minority of runs. The four
+  restatements the escalation named moved together — `docs/constitution.md`
   (Architecture principles), `docs/architecture.md` (Key flows §1),
   `docs/design.md` (Cost markers), `docs/design/degradation-ladder.md` (the
-  diagram gains a success-side probe node) — plus this spec's Constraints and the
-  `probe_streams` docstring, which restated it a fifth time in code.
+  diagram gains a success-side probe node) — and review found seven more that a
+  grep disproved the completeness of, all amended in the same PR: this spec's
+  Constraints, `converter/ffmpegtool.probe_streams`'s docstring,
+  `docs/design/source-selection.md`, `docs/prior-art.md`'s ADOPT note, the
+  Constraints bullet of each of the three merged coverage specs
+  (`spec-audio-formats.md`, `spec-video-formats.md`, `spec-image-formats.md`),
+  and `spec-target-driven-cli.md`'s mixed-tree decision. The phase-3 cover-art
+  decision, whose premise this narrowing invalidates outright, carries a
+  supersession note rather than a re-decision — that choice is phase 3's to
+  re-take at its own gate.
 - 2026-08-26 (issue #18): "partial by construction" is a **declared field on the
   profile** (`Profile.partial_mapping`), with no default, rather than inferred.
   Inferring it would mean parsing the cheap attempt's option list for `?`

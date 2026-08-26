@@ -236,16 +236,23 @@ class TestPartialCheapAttemptVerification:
     that path is the one that used to report `converted` with no note at all.
     """
 
-    def test_a_dropped_attachment_is_named_on_a_successful_remux(self, tmp_path, fake_ffmpeg):
+    def test_a_dropped_attachment_is_named_on_a_successful_remux(
+        self, tmp_path, fake_ffmpeg, monkeypatch
+    ):
         task = make_task(tmp_path)
         task.dst.parent.mkdir(parents=True)
-        fake_ffmpeg.streams = [Stream(0, "video", "h264"), Stream(1, "attachment", "ttf")]
+        probes = spy_on_probe(
+            monkeypatch, [Stream(0, "video", "h264"), Stream(1, "attachment", "ttf")]
+        )
 
         result = convert_one(MKV_TO_MP4, task, TOOLS, overwrite=False)
 
         assert result.outcome is Outcome.CONVERTED
         assert result.attempt == "remux"
         assert len(fake_ffmpeg.calls) == 1
+        # The other half of "at most one probe per file": the success side pays
+        # for exactly one, never one per rung and never a second on the way out.
+        assert probes == [task.src]
         assert result.notes == ("attachment stream 1 (ttf) dropped: not supported by MP4",)
 
     def test_a_dropped_surplus_audio_stream_is_named_on_a_successful_pcm_run(

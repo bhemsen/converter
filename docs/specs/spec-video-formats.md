@@ -64,7 +64,16 @@ orchestrators (`docs/workflow.md`).
   it turns a remuxable file into a failure. Measured: `-map 0 -c copy` of a
   timecode-bearing MOV into MKV exits 127 with "Only audio, video, and subtitles
   are supported for Matroska". Every cheap attempt selects by type.
-- `ffprobe` never runs on the happy path.
+- `ffprobe` never runs on the happy path of a cheap attempt whose mapping is
+  *exhaustive*. A profile whose cheap attempt is partial by construction
+  declares `partial_mapping=True` and is probed once on its success, so what
+  that mapping could not carry is named (`docs/constitution.md`, narrowed by
+  issue #18). Every cheap attempt in the table below selects by type or by
+  index, so every profile in this phase is partial and must declare it --
+  together with a rule for each stream type it maps, per the invariant in
+  `docs/design/degradation-ladder.md`. `mkv`'s `-map 0:t?` is the case to
+  watch: it carries attachments, so the profile owes an `attachment` rule or
+  the fonts it keeps get reported as dropped.
 - Never report success for a conversion that silently dropped something.
 - The test suite keeps passing with no ffmpeg installed.
 
