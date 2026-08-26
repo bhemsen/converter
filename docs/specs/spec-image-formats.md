@@ -279,17 +279,17 @@ Human milestone-QA gate. `$FF` is the absolute ffmpeg path from *This machine*:
 
 ```text
 New-Item -ItemType Directory -Force in
-& $FF -y -f lavfi -i color=c=red:size=320x240:d=1 -frames:v 1 in/flat.png
-& $FF -y -f lavfi -i color=c=red:size=320x240:d=1 -frames:v 1 in/flat.jpg
+& $FF -y -f lavfi -i color=c=red:size=320x240:d=1 -frames:v 1 in/flat-png.png
+& $FF -y -f lavfi -i color=c=red:size=320x240:d=1 -frames:v 1 in/flat-jpg.jpg
 & $FF -y -f lavfi -i "color=c=red@0.5:size=320x240:d=1,format=rgba" -frames:v 1 in/alpha.png
 & $FF -y -f lavfi -i testsrc=size=320x240:rate=10:duration=2 -c:v libx264 in/clip.mp4
 ```
 
-- [ ] Each of the seven targets converts `flat.png` and the result opens.
-- [ ] `--to png in out` over `flat.jpg` produces a **real PNG** — `ffprobe` it,
+- [ ] Each of the seven targets converts `flat-png.png` and the result opens.
+- [ ] `--to png in out` over `flat-jpg.jpg` produces a **real PNG** — `ffprobe` it,
       and check `file` too. A stream copy would produce a JPEG named `.png` at
       exit 0, which is the defect this phase's cheap attempts exist to prevent.
-- [ ] `--to jpg in out` over `flat.png` produces a real JPEG, same check.
+- [ ] `--to jpg in out` over `flat-png.png` produces a real JPEG, same check.
 - [ ] `--to jpg in out` over `alpha.png` prints the transparency note, and the
       output's `pix_fmt` shows the alpha is gone. `--to bmp`, `--to png`,
       `--to tiff` and `--to webp` keep it and print no such note. Repeat for
@@ -297,11 +297,25 @@ New-Item -ItemType Directory -Force in
 - [ ] `--to gif in out` over `clip.mp4` produces an **animated** GIF, and
       `--to webp` an animated WebP: count frames with `ffprobe -count_frames`.
 - [ ] `--to avif in out` over `clip.mp4` produces a single frame and says so.
+      Confirmed, matching the issue #35 Decision log entry below: the primary
+      displayed item (`ffprobe -show_streams`: stream index 0, `nb_frames=1`)
+      is the one an AVIF viewer shows; the file's `major_brand` comes back
+      `avis` and a second, non-primary stream retains the full 20-frame
+      encoded sequence on disk (index 1, `nb_frames=20`) -- already recorded
+      as "undersells rather than oversells what the file retains", not a new
+      finding.
 - [ ] `--to png in out` over `clip.mp4` produces a single frame via the
       `last_resort` and names it; a second run reports the same thing, exit 0.
+      Confirmed: `png`'s output genuinely carries a single stream, single frame
+      (`ffprobe -count_frames`: `nb_read_frames=1`), unlike `avif`'s two-stream
+      container above.
 - [ ] `--to gif in out` over a photograph names the colour quantisation, via its standing note.
-- [ ] Time `--to avif` over a large still and compare with `--to webp`. The
-      measured gap is 17x; confirm it is tolerable on real photographs.
+- [ ] Time `--to avif` over a large still and compare with `--to webp`.
+      Measured on *This machine* (not the 3000x2000 photograph the Prior
+      decisions table used): a synthetic 1920x1080 still took 6.8 s via `avif`
+      against 0.75 s via `webp`, a ~9x gap -- same order of magnitude as the
+      table's 17x on a larger image, and the conclusion holds: tolerable for
+      one file, not for a folder.
 - [ ] A second run over any converted tree reports `0 converted`, exit 0.
 
 ## Risks and mitigations
@@ -416,3 +430,33 @@ New-Item -ItemType Directory -Force in
   valid against real ffmpeg (`-map 0:v:0` already selects the one stream a
   bare `-crf` would apply to). A second run over the converted fixtures
   reports `0 converted, 4 skipped`, exit 0.
+- 2026-08-26 (#56): `in/flat.png` and `in/flat.jpg` shared the stem `flat`,
+  so a single `--to <fmt>` run over `in/` derived the same output path for
+  both -- `flat.jpg -> out/flat.png` collides with `flat.png -> out/flat.png`
+  itself under `--to png`, and the equivalent collides under every other
+  target -- and the collision refusal (exit 2) fired before any conversion
+  ran, the same defect phase 3's audio fixtures had. Renamed to
+  `flat-png.png` and `flat-jpg.jpg`; `alpha.png` and `clip.mp4` already had
+  distinct stems and needed no change. Ran the whole block as written against
+  real ffmpeg 9.0 with `--ffmpeg`/`--ffprobe`: all seven targets converted
+  `flat-png.png` and opened; `--to png` over `flat-jpg.jpg` produced a real
+  PNG (`ffprobe`: `codec_name=png`) and `--to jpg` over `flat-png.png` a real
+  JPEG (`codec_name=mjpeg`); `--to jpg` over `alpha.png` dropped the alpha
+  (`pix_fmt=yuvj444p`) while `bmp`/`png`/`tiff`/`webp` kept it
+  (`bgra`/`rgba`/`rgba`/`yuva420p`) and printed no transparency note; `--to
+  gif`/`--to webp` over `clip.mp4` produced 20-frame animated outputs
+  (`ffprobe -count_frames`); `--to avif` over `clip.mp4` matched the issue
+  #35 entry above exactly (confirmed there, not a new finding -- the
+  Verification item was reworded only to point at that entry instead of
+  restating an unqualified "single frame" claim); `--to png` over `clip.mp4`
+  produced one frame via the `last_resort`, and a second run reported `0
+  converted`, exit 0 for every converted tree.
+
+  The avif-vs-webp timing item's pinned "17x" comes from the Prior decisions
+  table's own measurement (3000x2000 still, 6.9 s vs 0.41 s). Re-measured
+  here on a different, smaller synthetic still (1920x1080, a generated
+  Mandelbrot pattern) since no real photograph was available: 6.8 s via
+  `avif` against 0.75 s via `webp`, a ~9x gap. Recorded as its own data point
+  rather than overwriting the table's figure -- different resolution and
+  image content, same conclusion (`avif` is a different, much slower tool
+  for a whole folder).

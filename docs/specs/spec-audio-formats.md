@@ -369,17 +369,17 @@ machine*; PowerShell, one command per line:
 
 ```text
 New-Item -ItemType Directory -Force in
-& $FF -y -f lavfi -i sine=duration=3 -c:a libmp3lame in/tone.mp3
-& $FF -y -f lavfi -i sine=duration=3 -c:a aac        in/tone.m4a
-& $FF -y -f lavfi -i sine=duration=3 -c:a flac       in/tone.flac
-& $FF -y -f lavfi -i sine=duration=3 -c:a libopus    in/tone.opus
-& $FF -y -f lavfi -i sine=duration=3 -c:a libvorbis  in/tone.ogg
-& $FF -y -f lavfi -i sine=duration=3 -c:a pcm_s16le  in/tone.wav
+& $FF -y -f lavfi -i sine=duration=3 -c:a libmp3lame in/tone-mp3.mp3
+& $FF -y -f lavfi -i sine=duration=3 -c:a aac        in/tone-m4a.m4a
+& $FF -y -f lavfi -i sine=duration=3 -c:a flac       in/tone-flac.flac
+& $FF -y -f lavfi -i sine=duration=3 -c:a libopus    in/tone-opus.opus
+& $FF -y -f lavfi -i sine=duration=3 -c:a libvorbis  in/tone-ogg.ogg
+& $FF -y -f lavfi -i sine=duration=3 -c:a pcm_s16le  in/tone-wav.wav
 & $FF -y -f lavfi -i testsrc=size=320x240:rate=10:duration=3 -f lavfi -i sine=duration=3 -c:v libx264 -c:a aac in/clip.mp4
 New-Item -ItemType Directory -Force art
 & $FF -y -f lavfi -i color=c=red:size=200x200:d=1 -frames:v 1 art/cover.png
-& $FF -y -i in/tone.mp3 -i art/cover.png -map 0:a -map 1:v -c copy -disposition:v:0 attached_pic art/art.mp3
-& $FF -y -i in/tone.ogg -i art/cover.png -map 0:a -map 1:v -c copy -disposition:v:0 attached_pic art/artv.mkv
+& $FF -y -i in/tone-mp3.mp3 -i art/cover.png -map 0:a -map 1:v -c copy -disposition:v:0 attached_pic art/art.mp3
+& $FF -y -i in/tone-ogg.ogg -i art/cover.png -map 0:a -map 1:v -c copy -disposition:v:0 attached_pic art/artv.mkv
 ```
 
 - [ ] Each of the six targets converts a real source and the result plays.
@@ -387,13 +387,13 @@ New-Item -ItemType Directory -Force art
       `clip.mp4` — names every re-encode it performed, and exits 0. The artwork
       fixtures live in `art/` so this count stays put; they have their own items
       below.
-- [ ] A stream copy really is a copy: `--to mp3` from `tone.mp3` finishes
+- [ ] A stream copy really is a copy: `--to mp3` from `tone-mp3.mp3` finishes
       near-instantly and the audio stream is packet-identical --
-      `& $FF -i out/tone.mp3 -map 0:a -c copy -f md5 -` matches the same command
+      `& $FF -i out/tone-mp3.mp3 -map 0:a -c copy -f md5 -` matches the same command
       on the source. Compare the stream, not the file: a remux re-pages the
       container. Aimed at `mp3` rather than `opus`, since whether `opus` copies at
       all is one of the gate decisions.
-- [ ] `--to flac in out` over `tone.wav` produces a playable FLAC via the
+- [ ] `--to flac in out` over `tone-wav.wav` produces a playable FLAC via the
       **selective** rung, not a failure -- the same rung the machine check names,
       verified against the real engine.
 - [ ] A second run over any converted tree reports `0 converted`, exit 0.
@@ -401,12 +401,19 @@ New-Item -ItemType Directory -Force art
       stream is gone, and that the run says what the gate's first decision says
       it says.
 - [ ] `artv.mkv` (vorbis audio plus artwork — the fixture block builds it) under
-      `--to ogg`: same check. This is the case that exposes `ogg`'s silent loss;
-      pointing `art.mp3` at `--to ogg` proves nothing about cover art, because the
-      ogg muxer rejects the *mp3 audio* first and the picture is never mapped.
-- [ ] Only if the gate has `opus` encode: `artv.mkv` under `--to opus` fails the
-      cheap attempt, reaches the ladder, and names the picture stream and its
-      codec — the one target where the loss is reported properly.
+      `--to ogg`: same check. Pointing `art.mp3` at `--to ogg` instead would
+      prove nothing about cover art, because `mp3` is outside `ogg`'s copy mask
+      and the audio itself is re-encoded, which is a different code path than
+      the one artwork loss needs exercised.
+- [ ] `artv.mkv` under `--to opus`: same check again. Both this and the `ogg`
+      item above take the **cheap-attempt** path -- verified against the real
+      engine, the vorbis audio copies as-is into both containers (`ffprobe` the
+      output: still `vorbis`, never re-encoded to `opus`) -- and because both
+      profiles declare `partial_mapping`, the success-side verifier still names
+      the dropped picture stream and its codec on top of the cheap attempt's own
+      standing note. `opus` is not a special case that the ladder alone
+      reaches: `ogg` names the loss exactly the same way. See the Decision log
+      for why an earlier version of this item called `ogg`'s loss silent.
 - [ ] `--to mp3` on `clip.mp4` rips the audio and names the dropped video stream.
 
 ## Risks and mitigations
@@ -545,3 +552,32 @@ New-Item -ItemType Directory -Force art
   Re-measured against ffmpeg 9.0: a genuinely mixed aac+mp3 source through
   `--to m4a` now produces two aac streams, with only the mp3 one named in the
   re-encode note.
+- 2026-08-26 (#56): The Verification fixtures all shared the stem `tone` --
+  `tone.mp3`, `tone.m4a`, `tone.flac`, `tone.opus`, `tone.ogg`, `tone.wav` --
+  so a single `--to <fmt>` run over `in/` derived the same output path for up
+  to six of the seven sources and the collision refusal (`paths.find_collisions`,
+  exit 2) fired before any conversion ran. Renamed to `tone-mp3.mp3`,
+  `tone-m4a.m4a`, `tone-flac.flac`, `tone-opus.opus`, `tone-ogg.ogg`,
+  `tone-wav.wav`. Ran the whole block as written against real ffmpeg 9.0 with
+  `--ffmpeg`/`--ffprobe`: all six targets converted the seven-source `in/`
+  tree at exit 0 with exactly the notes named above; the `tone-mp3.mp3` ->
+  `mp3` stream copy was packet-identical (`-f md5` matched); `tone-wav.wav` ->
+  `flac` reached the selective rung (`ffprobe`: `codec_name=flac`); a second
+  run over each converted tree reported `0 converted`, exit 0; `art.mp3`
+  under `--to mp3` and `artv.mkv` under `--to ogg` both lost the picture
+  stream, confirmed by `ffprobe`; `--to mp3` on `clip.mp4` named the dropped
+  video stream.
+
+  One checklist claim did not hold: "`ogg`'s silent loss" versus opus being
+  "the one target where the loss is reported properly". Both `OGG` and
+  `OPUS` (`converter/profiles.py`) declare `partial_mapping=True` and carry
+  an identical-shaped standing note, so both report a cover-art drop the same
+  way. Measured directly: `artv.mkv` (vorbis audio, cover art) under both
+  `--to ogg` and `--to opus` takes the **cheap-attempt** path -- `ffprobe` on
+  each output still shows `vorbis`, never re-encoded to `opus` -- and each
+  run printed both the standing note ("non-audio streams, including cover
+  art, are not carried into OGG/OPUS") and a per-stream note ("video stream 1
+  (png) dropped: not supported by OGG/OPUS") from the success-side verifier.
+  Neither target is silent, and neither needs the ladder to name the loss.
+  The Verification item was corrected to describe what the engine actually
+  does instead of a speculative asymmetry between the two targets.
