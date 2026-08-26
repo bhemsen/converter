@@ -408,6 +408,88 @@ MOV = Profile(
     ),
 )
 
+#: Codecs a WebM container accepts as a stream copy for video, measured against
+#: ffmpeg 9.0. WebM enforces its own codec set at the muxer level ("Only VP8 or
+#: VP9 or AV1 video and Vorbis or Opus audio and WebVTT subtitles are supported
+#: for WebM"), so a copy outside this mask does not silently degrade -- it fails
+#: the cheap attempt outright and the ladder re-encodes.
+WEBM_VIDEO_CODECS = frozenset({"vp8", "vp9", "av1"})
+#: Codecs a WebM container accepts as a stream copy for audio, measured the
+#: same way.
+WEBM_AUDIO_CODECS = frozenset({"opus", "vorbis"})
+
+WEBM = Profile(
+    label="WebM",
+    name="webm",
+    description="Video: copies VP8/VP9/AV1 and Opus/Vorbis, re-encodes the rest to VP9/Opus",
+    target_suffix=".webm",
+    # Measured: WebM's muxer enforces its own codec set and has no faststart
+    # equivalent worth declaring, so this stays empty like MKV's.
+    container_options=(),
+    # Unlike MKV and MOV, deliberately does NOT map "0:t?": WebM does not reject
+    # a mapped attachment, it silently discards it at exit 0 (measured), so
+    # mapping it would buy nothing -- the "map to force a failure" trick MOV
+    # uses does not work here. A source with an attachment still loses it, but
+    # only the standing note below can say so, since nothing ever fails on one.
+    # Still not "-map 0": that would also select data and timecode streams,
+    # which no "v/a/s" map -- WebM's included -- carries at all (measured).
+    cheap_attempt=Attempt(
+        label="remux",
+        options=flags("-map 0:v? -map 0:a? -map 0:s? -c copy -c:s webvtt"),
+        notes=("attachments, data and timecode streams are not carried into WebM",),
+    ),
+    explicit_streams=False,
+    # The blind "?" selectors carry every video, audio and subtitle stream
+    # WebM's muxer can hold, but never an attachment, data or timecode stream --
+    # exactly the standing note's claim, verified once per successful cheap
+    # attempt rather than assumed.
+    partial_mapping=True,
+    rules={
+        "video": StreamRule(
+            copy_mask=WEBM_VIDEO_CODECS,
+            accept_options=flags("-c:v:{n} copy"),
+            # VP9 needs "-b:v 0" alongside "-crf" to mean quality-targeted
+            # mode; "-crf" alone leaves it in constrained-quality mode instead
+            # (measured, spec-video-formats.md's "one open decision").
+            fallback_options=flags(
+                "-c:v:{n} libvpx-vp9 -crf:v:{n} 32 -b:v:{n} 0 -row-mt 1 -cpu-used 4"
+            ),
+            fallback_name="vp9",
+        ),
+        "audio": StreamRule(
+            copy_mask=WEBM_AUDIO_CODECS,
+            accept_options=flags("-c:a:{n} copy"),
+            fallback_options=flags("-c:a:{n} libopus -b:a:{n} 128k"),
+            fallback_name="opus",
+        ),
+        "subtitle": StreamRule(
+            copy_mask=TEXT_SUBTITLE_CODECS,
+            # A cheap in-kind transcode, not a literal copy: WebM only holds
+            # text subtitles as WebVTT.
+            accept_options=flags("-c:s:{n} webvtt"),
+            drop_reason="bitmap subtitles cannot be stored in WebM",
+        ),
+        # No "attachment" rule: the cheap attempt maps no attachment at all
+        # (unlike MOV, which maps one only to force a failure), so this type
+        # never appears in mapped_types and needs no FORCED_FAILURE_TYPES
+        # exemption either -- it is simply absent from both sides of the
+        # equality, the same way MP4 declares no "attachment" rule. A source
+        # that has one still succeeds the cheap attempt, and the success-side
+        # verification (jobs.verify_success) names the drop per stream because
+        # no rule matches "attachment" -- the standing note above restates it
+        # unconditionally alongside that per-stream note.
+    },
+    last_resort=Attempt(
+        label="re-encode",
+        options=flags(
+            "-map 0:v:0? -map 0:a? "
+            "-c:v libvpx-vp9 -crf 32 -b:v 0 -row-mt 1 -cpu-used 4 "
+            "-c:a libopus -b:a 128k"
+        ),
+        notes=("re-encoded to vp9/opus (lossy); subtitles and extra video streams dropped",),
+    ),
+)
+
 MP3 = Profile(
     label="MP3",
     name="mp3",
@@ -782,11 +864,174 @@ BMP = Profile(
     ),
 )
 
+#: Phase 5 (`docs/specs/spec-image-formats.md`): the animated-capable trio.
+#: ``gif`` and ``webp`` write every frame of a multi-frame source -- an
+#: animation, not a still -- so unlike the image2 four above, neither carries a
+#: frame limit anywhere. ``avif``'s muxer silently keeps only one frame no
+#: matter what is asked of it (measured: dropping ``-still-picture 1`` still
+#: yields one frame), so its reduction can only ever be *named*, never avoided,
+#: which is why it carries a standing note instead of a `last_resort` shaped
+#: around extraction.
+#:
+#: ``webp``'s muxer self-polices (a non-matching codec copy exits 127, "webp
+#: muxer supports only codec webp"), so it keeps a bare ``-c copy`` cheap
+#: attempt safely -- it loses neither alpha nor frames, so no standing note's
+#: reachability depends on which rung wins. ``gif`` and ``avif`` are different:
+#: their drafted copy-based cheap attempt only ever won for a source already in
+#: that format, the one input with nothing to lose, so both force their encoder
+#: instead -- the cheap attempt then always wins and both standing notes always
+#: print. Measured, this costs `gif` only CPU (a GIF source re-encodes through
+#: `-c:v gif` pixel-identically) and costs `avif` a real generation loss plus
+#: several seconds per already-AVIF file, accepted so its transparency and
+#: frame losses are named rather than left silent.
+#:
+#: All three still declare `stream_limit=1`: none of these muxers holds more
+#: than one video *stream* (a second one -- cover art beside an animation --
+#: fails the cheap attempt outright), which is orthogonal to how many *frames*
+#: the one stream it does hold may carry.
+GIF = Profile(
+    label="GIF",
+    name="gif",
+    description="Image: force-encoded to GIF, animated; a photograph is reduced to 256 colours",
+    target_suffix=".gif",
+    container_options=(),
+    cheap_attempt=Attempt(
+        label="force-encode",
+        options=flags("-map 0:v? -c:v gif"),
+        # Standing notes, not fallback-branch ones: this cheap attempt always
+        # wins (it forces the encoder unconditionally), so it is the only rung
+        # whose notes are ever actually reported for the overwhelming majority
+        # of inputs -- the same shape JPG's cheap-attempt note is.
+        notes=(
+            "transparency is not carried by GIF",
+            "colours are reduced to GIF's 256-colour palette",
+        ),
+    ),
+    explicit_streams=False,
+    partial_mapping=True,
+    rules={
+        "video": StreamRule(
+            copy_mask=frozenset({"gif"}),
+            accept_options=flags("-c:v copy"),
+            fallback_options=flags("-c:v gif"),
+            # Declared, unlike PNG/TIFF/BMP: GIF is a 256-colour palette format,
+            # not a lossless one, so the selective rung's re-encode branch must
+            # name the quantisation the same way JPG's "mjpeg" does.
+            fallback_name="gif",
+            stream_limit=1,
+        ),
+    },
+    last_resort=Attempt(
+        label="re-encode",
+        options=flags("-map 0:v:0 -c:v gif"),
+        notes=(
+            # Repeats the cheap attempt's own standing notes: this rung is only
+            # reached when that attempt failed, so its notes never printed --
+            # the same reasoning JPG's last_resort carries its transparency
+            # note for.
+            "transparency is not carried by GIF",
+            "the image was re-quantised to GIF's 256-colour palette",
+            "non-video streams, and any video stream beyond the first, are not carried into GIF",
+        ),
+    ),
+)
+
+#: WebP's muxer self-polices and loses neither alpha nor frames (measured), so
+#: it is the one target in this trio that keeps a bare copy-based cheap
+#: attempt -- see the block comment above GIF for the full reasoning.
+WEBP = Profile(
+    label="WEBP",
+    name="webp",
+    description="Image: copies compatible streams, animated; falls back to WebP re-encode",
+    target_suffix=".webp",
+    container_options=(),
+    cheap_attempt=Attempt(label="remux", options=flags("-map 0:v? -c copy")),
+    explicit_streams=False,
+    partial_mapping=True,
+    rules={
+        "video": StreamRule(
+            copy_mask=frozenset({"webp"}),
+            accept_options=flags("-c:v copy"),
+            fallback_options=flags("-c:v libwebp -quality:v 80"),
+            # Declared: the fallback is a real, lossy re-encode (quality 80),
+            # unlike PNG/TIFF/BMP's lossless one, so it must be named.
+            fallback_name="webp",
+            stream_limit=1,
+        ),
+    },
+    last_resort=Attempt(
+        label="re-encode",
+        options=flags("-map 0:v:0 -c:v libwebp -quality:v 80"),
+        notes=(
+            "the image was re-encoded to WebP (lossy)",
+            "non-video streams, and any video stream beyond the first, are not carried into WEBP",
+        ),
+    ),
+)
+
+AVIF = Profile(
+    label="AVIF",
+    name="avif",
+    description="Image: force-encoded to AVIF; a multi-frame source is reduced to a single frame",
+    target_suffix=".avif",
+    container_options=(),
+    cheap_attempt=Attempt(
+        label="force-encode",
+        options=flags("-map 0:v? -c:v libaom-av1 -crf:v 30 -still-picture 1"),
+        # Standing notes: the cheap attempt always wins (forced encoder), so
+        # this is the only place AVIF's one silent loss this phase cannot
+        # avoid -- the muxer keeps one frame no matter what is asked of it --
+        # is ever actually named.
+        notes=(
+            "transparency is not carried by AVIF",
+            "a multi-frame source is reduced to a single frame",
+        ),
+    ),
+    explicit_streams=False,
+    partial_mapping=True,
+    rules={
+        "video": StreamRule(
+            copy_mask=frozenset({"av1"}),
+            accept_options=flags("-c:v copy"),
+            fallback_options=flags("-c:v libaom-av1 -crf:v 30 -still-picture 1"),
+            fallback_name="av1",
+            stream_limit=1,
+        ),
+    },
+    last_resort=Attempt(
+        label="re-encode",
+        options=flags("-map 0:v:0 -c:v libaom-av1 -crf 30 -still-picture 1"),
+        notes=(
+            "transparency is not carried by AVIF",
+            "a multi-frame source is reduced to a single frame",
+            "non-video streams, and any video stream beyond the first, are not carried into AVIF",
+        ),
+    ),
+)
+
 #: Target name -> profile. Built from each profile's own ``name`` rather than
 #: repeating it as a literal key, so the two can never drift apart.
 PROFILES: dict[str, Profile] = {
     profile.name: profile
-    for profile in (MP4, WAV, MKV, MOV, MP3, FLAC, M4A, OGG, OPUS, PNG, JPG, TIFF, BMP)
+    for profile in (
+        MP4,
+        WAV,
+        MKV,
+        MOV,
+        MP3,
+        FLAC,
+        WEBM,
+        M4A,
+        OGG,
+        OPUS,
+        PNG,
+        JPG,
+        TIFF,
+        BMP,
+        GIF,
+        WEBP,
+        AVIF,
+    )
 }
 
 #: The curated set of suffixes discovery walks (`docs/design/source-selection.md`):

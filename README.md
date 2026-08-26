@@ -15,8 +15,10 @@ installed version supports; today that is:
 
 ```
 Target formats:
+  avif  .avif  Image: force-encoded to AVIF; a multi-frame source is reduced to a single frame
   bmp   .bmp  Image: force-encoded to BMP, lossless
   flac  .flac  Audio: single stream, lossless FLAC
+  gif   .gif  Image: force-encoded to GIF, animated; a photograph is reduced to 256 colours
   jpg   .jpg  Image: force-encoded to JPEG; transparency is not carried
   m4a   .m4a  Audio: every stream the source has; most players use only the first
   mkv   .mkv  Video: copies almost every codec as-is, keeps font attachments
@@ -28,6 +30,8 @@ Target formats:
   png   .png  Image: force-encoded to PNG, lossless
   tiff  .tiff  Image: force-encoded to TIFF, lossless
   wav   .wav  Audio: single stream, uncompressed 16-bit PCM
+  webm  .webm  Video: copies VP8/VP9/AV1 and Opus/Vorbis, re-encodes the rest to VP9/Opus
+  webp  .webp  Image: copies compatible streams, animated; falls back to WebP re-encode
 ```
 
 `m4a`, `ogg` and `opus` carry every audio stream the source has — nothing is
