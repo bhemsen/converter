@@ -190,6 +190,224 @@ WAV = Profile(
     },
 )
 
+
+class _AcceptAnyCodec(frozenset):
+    """A copy mask that is empty by every ordinary measure yet accepts anything.
+
+    ``len()`` is 0 and iterating it yields nothing -- the "empty-meaning" shape
+    ``docs/specs/spec-video-formats.md`` asks for -- but membership testing
+    always succeeds, so :func:`converter.jobs._decide_stream`'s
+    ``stream.codec_name in rule.copy_mask`` check reads it as "always accept"
+    without the engine (a leaf-adjacent module MKV's profile must not import
+    anyway) needing to know it. Enumerating font codec names instead would be
+    wrong by construction: ffprobe derives an attachment's codec name from its
+    MIME type, and a modern font's MIME type (``font/ttf``, ``font/otf``) reads
+    back as ``unknown`` -- measured against ffmpeg 9.0.
+    """
+
+    def __contains__(self, item: object) -> bool:
+        return True
+
+
+#: Codecs Matroska accepts as a stream copy for video, measured against ffmpeg
+#: 9.0 -- includes vp9 and av1 from a WebM source, unlike MP4's narrower mask.
+MKV_VIDEO_CODECS = frozenset(
+    {
+        "h264",
+        "hevc",
+        "av1",
+        "vp8",
+        "vp9",
+        "mpeg4",
+        "mpeg2video",
+        "theora",
+        "prores",
+        "ffv1",
+        "mjpeg",
+    }
+)
+#: Codecs Matroska accepts as a stream copy for audio, measured the same way.
+MKV_AUDIO_CODECS = frozenset(
+    {
+        "aac",
+        "mp3",
+        "ac3",
+        "eac3",
+        "dts",
+        "truehd",
+        "flac",
+        "opus",
+        "vorbis",
+        "alac",
+        "pcm_s16le",
+    }
+)
+#: Subtitle codecs Matroska accepts as a literal copy -- text *and* bitmap,
+#: unlike MP4's text-only mask. ``mov_text`` is deliberately absent: Matroska
+#: rejects a mov_text stream copy outright (measured: exit 127, "Subtitle codec
+#: mov_text ... is not supported"), so a mov_text source falls through to the
+#: ``srt`` fallback below instead of being listed here as copyable.
+MKV_SUBTITLE_CODECS = frozenset(
+    {
+        "subrip",
+        "ass",
+        "ssa",
+        "webvtt",
+        "text",
+        "hdmv_pgs_subtitle",
+        "dvd_subtitle",
+        "dvb_subtitle",
+    }
+)
+
+MKV = Profile(
+    label="MKV",
+    name="mkv",
+    description="Video: copies almost every codec as-is, keeps font attachments",
+    target_suffix=".mkv",
+    # Measured: +faststart is MP4/MOV furniture that MKV's own muxer ignores,
+    # so declaring it here would be noise, not a real container option.
+    container_options=(),
+    # Matroska is the one target in this phase that rarely re-encodes, so its
+    # cheap attempt maps every stream type its muxer can hold -- video, audio,
+    # subtitle, *and* attachment ("-map 0:t?"), which no earlier profile has
+    # needed. Still not "-map 0": that would also select data and timecode
+    # streams, which no "v/a/s/t" map -- MKV's included -- carries at all
+    # (measured), so the standing note below says so instead of ffmpeg silently
+    # dropping them off a bare "-map 0".
+    cheap_attempt=Attempt(
+        label="remux",
+        options=flags("-map 0:v? -map 0:a? -map 0:s? -map 0:t? -c copy"),
+        notes=("data and timecode streams are not carried into MKV",),
+    ),
+    explicit_streams=False,
+    # The blind "?" selectors carry every video, audio, subtitle and attachment
+    # stream MKV's muxer can hold, but never a data or timecode one -- exactly
+    # the standing note's claim, verified once per successful cheap attempt
+    # rather than assumed.
+    partial_mapping=True,
+    rules={
+        "video": StreamRule(
+            copy_mask=MKV_VIDEO_CODECS,
+            accept_options=flags("-c:v:{n} copy"),
+            fallback_options=flags("-c:v:{n} libx264 -crf:v:{n} 18"),
+            fallback_name="h264",
+        ),
+        "audio": StreamRule(
+            copy_mask=MKV_AUDIO_CODECS,
+            accept_options=flags("-c:a:{n} copy"),
+            fallback_options=flags("-c:a:{n} aac -b:a:{n} 192k"),
+            fallback_name="aac",
+        ),
+        "subtitle": StreamRule(
+            copy_mask=MKV_SUBTITLE_CODECS,
+            accept_options=flags("-c:s:{n} copy"),
+            fallback_options=flags("-c:s:{n} srt"),
+            fallback_name="subrip",
+        ),
+        # No fallback and no drop_reason: the accept-everything mask means the
+        # fallback branch of stream-decision.md can never be reached, the same
+        # reason WAV's empty mask carries no accept_options.
+        "attachment": StreamRule(
+            copy_mask=_AcceptAnyCodec(),
+            accept_options=flags("-c:t:{n} copy"),
+        ),
+    },
+    last_resort=Attempt(
+        label="re-encode",
+        options=flags(
+            "-map 0:v:0? -map 0:a? "
+            "-c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p "
+            "-c:a aac -b:a 192k"
+        ),
+        notes=(
+            "re-encoded to h264/aac (lossy); subtitles and extra video streams dropped",
+            "10-bit or HDR sources are reduced to 8-bit yuv420p for player compatibility",
+        ),
+    ),
+)
+
+#: Codecs a MOV container accepts as a stream copy for video, measured against
+#: ffmpeg 9.0. Narrower than MP4's mask in *two* codecs -- vp9 and av1, both
+#: rejected by MOV's muxer ("vp9 only supported in MP4", "av1 only supported
+#: in MP4 and AVIF") -- and also rejects vp8 ("VP8 muxing is currently not
+#: supported"). Adds ffv1 and theora, which MP4 does not carry either, so this
+#: is its own curated set rather than MP4_VIDEO_CODECS with an entry struck.
+MOV_VIDEO_CODECS = frozenset(
+    {"h264", "hevc", "prores", "mpeg4", "mpeg2video", "mjpeg", "ffv1", "theora"}
+)
+#: Codecs a MOV container accepts as a stream copy for audio, measured the same
+#: way -- adds dts and pcm_s16le (tags dtsc, sowt) over MP4's mask.
+MOV_AUDIO_CODECS = frozenset({"aac", "alac", "mp3", "ac3", "eac3", "dts", "pcm_s16le"})
+
+MOV = Profile(
+    label="MOV",
+    name="mov",
+    description="Video: copies compatible streams, re-encodes the rest to h264/aac; no attachments",
+    target_suffix=".mov",
+    container_options=FASTSTART,
+    # Deliberately maps "0:t?" even though MOV holds no attachment rule below:
+    # MOV's muxer rejects any mapped attachment outright ("Could not find tag
+    # for codec ttf", measured), so an attachment-bearing source fails this
+    # cheap attempt and lands on the ladder's failure side instead, where the
+    # missing rule drops it with a real per-stream note -- better than a
+    # blanket standing note for the one case MOV can make loud. Still not
+    # "-map 0": that would also select data and timecode streams, which no
+    # "v/a/s/t" map -- MOV's included -- carries at all (measured).
+    cheap_attempt=Attempt(
+        label="remux",
+        options=flags("-map 0:v? -map 0:a? -map 0:s? -map 0:t? -c copy -c:s mov_text"),
+        notes=("data and timecode streams are not carried into MOV",),
+    ),
+    explicit_streams=False,
+    # The blind "?" selectors carry every video, audio and subtitle stream
+    # MOV's muxer can hold, but never a data or timecode one, and an attachment
+    # only ever forces the cheap attempt to fail -- exactly the standing note's
+    # claim, verified once per successful cheap attempt rather than assumed.
+    partial_mapping=True,
+    rules={
+        "video": StreamRule(
+            copy_mask=MOV_VIDEO_CODECS,
+            accept_options=flags("-c:v:{n} copy"),
+            fallback_options=flags("-c:v:{n} libx264 -crf:v:{n} 18"),
+            fallback_name="h264",
+        ),
+        "audio": StreamRule(
+            copy_mask=MOV_AUDIO_CODECS,
+            accept_options=flags("-c:a:{n} copy"),
+            fallback_options=flags("-c:a:{n} aac -b:a:{n} 192k"),
+            fallback_name="aac",
+        ),
+        "subtitle": StreamRule(
+            copy_mask=TEXT_SUBTITLE_CODECS,
+            # A cheap in-kind transcode, not a literal copy: MOV only holds
+            # text subtitles as its own mov_text, same as MP4.
+            accept_options=flags("-c:s:{n} mov_text"),
+            drop_reason="bitmap subtitles cannot be stored in MOV",
+        ),
+        # No "attachment" rule: MOV's muxer rejects any mapped attachment, so
+        # mapping "0:t?" only ever forces this cheap attempt to fail when the
+        # source has one. The type never reaches the success side, so it is
+        # exempted from the partial_mapping equality (FORCED_FAILURE_TYPES,
+        # docs/design/degradation-ladder.md, issue #39) rather than needing a
+        # drop-only rule here. An attachment-bearing source falls through to
+        # the selective rung, where the missing rule drops it with a real
+        # per-stream note via _structural_drop (converter/jobs.py).
+    },
+    last_resort=Attempt(
+        label="re-encode",
+        options=flags(
+            "-map 0:v:0? -map 0:a? "
+            "-c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p "
+            "-c:a aac -b:a 192k"
+        ),
+        notes=(
+            "re-encoded to h264/aac (lossy); subtitles and extra video streams dropped",
+            "10-bit or HDR sources are reduced to 8-bit yuv420p for player compatibility",
+        ),
+    ),
+)
+
 MP3 = Profile(
     label="MP3",
     name="mp3",
@@ -416,7 +634,7 @@ OPUS = Profile(
 #: Target name -> profile. Built from each profile's own ``name`` rather than
 #: repeating it as a literal key, so the two can never drift apart.
 PROFILES: dict[str, Profile] = {
-    profile.name: profile for profile in (MP4, WAV, MP3, FLAC, M4A, OGG, OPUS)
+    profile.name: profile for profile in (MP4, WAV, MKV, MP3, FLAC, MOV, M4A, OGG, OPUS)
 }
 
 #: The curated set of suffixes discovery walks (`docs/design/source-selection.md`):

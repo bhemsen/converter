@@ -17,6 +17,8 @@ installed version supports; today that is:
 Target formats:
   flac  .flac  Audio: single stream, lossless FLAC
   m4a   .m4a  Audio: every stream the source has; most players use only the first
+  mkv   .mkv  Video: copies almost every codec as-is, keeps font attachments
+  mov   .mov  Video: copies compatible streams, re-encodes the rest to h264/aac; no attachments
   mp3   .mp3  Audio: single stream, MP3 (libmp3lame if re-encoded)
   mp4   .mp4  Video: copies compatible streams, re-encodes the rest to h264/aac
   ogg   .ogg  Audio: every stream the source has; most players use only the first

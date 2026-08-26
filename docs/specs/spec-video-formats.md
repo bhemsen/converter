@@ -137,7 +137,7 @@ table.
 | Cheap attempts, all with `explicit_streams=False`: `mkv` -> `flags("-map 0:v? -map 0:a? -map 0:s? -map 0:t? -c copy")`; `mov` -> `flags("-map 0:v? -map 0:a? -map 0:s? -map 0:t? -c copy -c:s mov_text")`; `webm` -> `flags("-map 0:v? -map 0:a? -map 0:s? -c copy -c:s webvtt")` | Each maps what its muxer can hold, measured. `mov` maps `0:t?` **deliberately**: it makes an attachment-bearing source fail into the ladder, which then names the loss per stream — better than a blanket note. `webm` does not, because it silently discards instead of failing, so mapping would buy nothing. Both `mov` and `webm` carry their in-kind subtitle transcode in the cheap attempt, so a subtitled source converts on the first attempt instead of paying a probe and a second run | 2026-08-26 |
 | Video masks: `mkv` = `{h264, hevc, av1, vp8, vp9, mpeg4, mpeg2video, theora, prores, ffv1, mjpeg}`; `webm` = `{vp8, vp9, av1}`; `mov` = `{h264, hevc, prores, mpeg4, mpeg2video, mjpeg, ffv1, theora}` — **not** `mp4`'s, which holds `vp9` and `av1` | Measured. The `mov`/`mp4` difference is two codecs, not one, and is the likeliest copy-paste mistake in the phase | 2026-08-26 |
 | Audio masks: `mkv` = `{aac, mp3, ac3, eac3, dts, truehd, flac, opus, vorbis, alac, pcm_s16le}`; `webm` = `{opus, vorbis}`; `mov` = `{aac, alac, mp3, ac3, eac3, dts, pcm_s16le}` | Measured against each muxer | 2026-08-26 |
-| Subtitle rules: `mkv` accepts text **and bitmap** subtitles as a literal copy, mask `{subrip, ass, ssa, mov_text, webvtt, text, hdmv_pgs_subtitle, dvd_subtitle, dvb_subtitle}`; `webm` transcodes text subtitles in kind to `webvtt`; `mov` to `mov_text`. `webm` and `mov` drop bitmap subtitles with a note | Matroska is the only container here that holds bitmap subtitles; the other two reuse the accept-but-transcode branch `docs/design/stream-decision.md` already models | 2026-08-26 |
+| Subtitle rules: `mkv` accepts text **and bitmap** subtitles as a literal copy, mask `{subrip, ass, ssa, webvtt, text, hdmv_pgs_subtitle, dvd_subtitle, dvb_subtitle}` — **not** `mov_text`, which Matroska rejects as a copy and which `mkv` instead re-encodes to `subrip` (`fallback_options=flags("-c:s:{n} srt")`, `fallback_name="subrip"`); `webm` transcodes text subtitles in kind to `webvtt`; `mov` to `mov_text`. `webm` and `mov` drop bitmap subtitles with a note | Matroska is the only container here that holds bitmap subtitles; the other two reuse the accept-but-transcode branch `docs/design/stream-decision.md` already models. `mov_text`'s exclusion from `mkv`'s mask is measured, not a typo: `-c:s copy` of a mov_text stream into Matroska exits 127 ("Subtitle codec mov_text ... is not supported"), while `-c:s srt` on the same input exits 0 | 2026-08-26 |
 | `mkv` declares an **attachment** rule that copies **unconditionally** — an empty-meaning "accept anything" mask, not a list of font codec names | Measured: ffprobe derives the codec name from the MIME type, so `font/ttf` reads as `unknown`. A rule enumerating `{ttf, otf}` would drop a modern font attachment with the note "attachment stream 1 (unknown) dropped: not supported by MKV" — false, and it fails `stream-decision.md`'s requirement that a note name the stream's codec | 2026-08-26 |
 | `webm` declares no attachment rule; `mov` declares none either, and relies on its cheap attempt failing instead | `webm` cannot fail on one, so its standing note covers it. `mov` fails, so the ladder's selective rung drops it with a real per-stream note | 2026-08-26 |
 | **Standing notes**, on each new profile's `cheap_attempt.notes`: `mkv` — "data and timecode streams are not carried into MKV"; `mov` — the same for MOV; `webm` — "attachments, data and timecode streams are not carried into WebM" | Measured: all three lose data/timecode at exit 0, and `webm` loses attachments the same way. `batch.py` reports only the winning attempt's notes, so a note on the cheap attempt is exactly what a successful conversion prints. This is the phase-3 gate's mechanism, applied to what this phase actually drops | 2026-08-26 |
@@ -327,3 +327,67 @@ New-Item -ItemType Directory -Force in
   repeated. No profile, engine, or CLI change -- data only, per this issue's
   scope; the three new `Profile` entries remain a separate issue in this
   milestone.
+
+- 2026-08-26 (issue #27): Added the `mkv` `Profile`. Re-measuring the muxer
+  facts against ffmpeg 9.0 while implementing found the Prior decisions'
+  subtitle-mask row wrong on one codec: it listed `mov_text` as literal-copy
+  material alongside the other eight text/bitmap codecs, but `-c:s copy` of a
+  mov_text stream into Matroska exits 127 ("Subtitle codec mov_text ... is not
+  supported"), while `-c:s srt` on the same input exits 0. Corrected in place
+  above rather than left to drift from the shipped profile: `mkv`'s subtitle
+  mask excludes `mov_text`, and the rule falls back to `-c:s:{n} srt`
+  (`fallback_name="subrip"`) for it instead. Confirmed end-to-end against real
+  ffmpeg 9.0 through the CLI: a mov_text-subtitled MP4 source fails `mkv`'s
+  cheap attempt (the blanket `-c copy` cannot copy the subtitle), reaches the
+  selective rung, and converts with the note "subtitle stream 2 (mov_text)
+  re-encoded to subrip" -- exactly the branch `TestProfileArgvPinning` cannot
+  reach, since a copyable and a non-copyable video/audio pinning pair does not
+  exercise a subtitle fallback.
+
+  The attachment rule (`_AcceptAnyCodec`, `converter/profiles.py`) is
+  implemented as a `frozenset` subclass overriding `__contains__` to always
+  return `True`, rather than as an engine change: this spec's own Risks table
+  anticipated this ("a rule keyed on `codec_type == "attachment"` works, and
+  `-c:t:0 copy` is valid ffmpeg"), and
+  both were confirmed against real ffmpeg -- a `font/ttf` attachment
+  (`codec_name` reported as `unknown`, measured) round-trips through
+  `-map 0:t? -c copy` and through the selective rung's `-c:t:0 copy` alike.
+  `jobs.py` needed no change, keeping the PR's diff to `converter/profiles.py`,
+  `README.md`, `docs/specs/spec-video-formats.md` and `tests/`.
+
+  `mkv`'s cheap attempt maps `video`, `audio`, `subtitle` and `attachment`, and
+  the profile declares exactly those four rules, so it satisfies
+  `set(profile.rules) == set(mapped_types(profile))` directly -- unlike `mov`,
+  it needs neither the `FORCED_FAILURE_TYPES` nor the
+  `MUXER_ENFORCED_LIMIT_TYPES` exemption from `docs/design/degradation-ladder.md`
+  (issues #39/#40); `tests/test_profiles.py` adds `MKV` to `SHIPPED` with an
+  empty entry in both exemption dicts, so the existing parametrized invariant
+  tests check it machine-side rather than by review.
+
+- 2026-08-26 (issue #28): Added the `mov` `Profile` -- THE motivating case for
+  the `FORCED_FAILURE_TYPES` exemption issue #39 wrote (`docs/design/
+  degradation-ladder.md`): its cheap attempt maps `attachment` via `-map 0:t?`
+  deliberately, but declares no `attachment` rule, because MOV's muxer rejects
+  any mapped attachment outright. Re-measured against real ffmpeg 9.0 while
+  implementing, every muxer fact in the Prior decisions table above held
+  exactly as written: the video mask excludes vp9, av1 *and* vp8 while
+  including ffv1 and theora; the audio mask includes dts and pcm_s16le; a
+  mov_text-transcoded subtitle round-trips on the cheap attempt itself; and an
+  attachment-bearing source fails the cheap attempt (`-map 0:t?` plus `-c
+  copy` on a font stream MOV cannot mux) and lands on the selective rung,
+  which drops it with a real per-stream note -- confirmed end-to-end through
+  the CLI against a font-attached MKV source, ffprobing the MOV output to
+  confirm the attachment stream is gone rather than checking by eye. No spec
+  correction was needed this time, unlike issue #27's `mkv` mov_text finding.
+
+  The stand-in fixture `MOV_SHAPED` (`tests/test_profiles.py`) is retired now
+  that the real `mov` profile proves the force-failure exemption directly --
+  `MOV` joins `SHIPPED` and `INVARIANT_CASES`, with
+  `FORCED_FAILURE_TYPES[MOV.name] == frozenset({"attachment"})` and an empty
+  `MUXER_ENFORCED_LIMIT_TYPES` entry -- the same retirement shape PR #53 used
+  for `MP3_SHAPED` once `MP3` and `FLAC` shipped. `jobs.py` needed no change:
+  the missing `attachment` rule already routes through `_structural_drop`'s
+  existing "no rule for this type" branch, so the per-stream drop note falls
+  out of the engine that shipped for `mp4`'s attachment case rather than
+  needing new logic, keeping the PR's diff to `converter/profiles.py`,
+  `README.md`, `docs/specs/spec-video-formats.md` and `tests/`.
