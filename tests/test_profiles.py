@@ -14,15 +14,19 @@ from converter.profiles import (
     FLAC,
     GIF,
     JPG,
+    M4A,
     MKV,
     MOV,
     MP3,
     MP4,
+    OGG,
+    OPUS,
     PNG,
     PROFILES,
     SOURCE_SUFFIXES,
     TIFF,
     WAV,
+    WEBM,
     WEBP,
     Attempt,
     Profile,
@@ -38,7 +42,25 @@ from converter.profiles import (
 MAP_LETTERS = {"v": "video", "a": "audio", "s": "subtitle", "t": "attachment", "d": "data"}
 
 #: Every profile the registry ships. A new one joins the invariant checks here.
-SHIPPED = [MP4, WAV, MKV, MOV, MP3, FLAC, PNG, JPG, TIFF, BMP, GIF, WEBP, AVIF]
+SHIPPED = [
+    MP4,
+    WAV,
+    MKV,
+    MOV,
+    MP3,
+    FLAC,
+    WEBM,
+    M4A,
+    OGG,
+    OPUS,
+    PNG,
+    JPG,
+    TIFF,
+    BMP,
+    GIF,
+    WEBP,
+    AVIF,
+]
 
 #: Stream types each profile maps only to *force* the cheap attempt to fail when
 #: the source carries one -- never to carry it on the success side. The narrowed
@@ -58,6 +80,14 @@ FORCED_FAILURE_TYPES: dict[str, frozenset[str]] = {
     MOV.name: frozenset({"attachment"}),
     MP3.name: frozenset(),
     FLAC.name: frozenset(),
+    # WebM maps no attachment at all -- unlike MOV, it does not need the "map
+    # to force a failure" trick, since it silently discards a mapped one
+    # instead of rejecting it (measured, spec-video-formats.md). The type is
+    # simply absent from mapped_types, so no exemption is needed here either.
+    WEBM.name: frozenset(),
+    M4A.name: frozenset(),
+    OGG.name: frozenset(),
+    OPUS.name: frozenset(),
     PNG.name: frozenset(),
     JPG.name: frozenset(),
     TIFF.name: frozenset(),
@@ -86,6 +116,13 @@ MUXER_ENFORCED_LIMIT_TYPES: dict[str, frozenset[str]] = {
     MOV.name: frozenset(),
     MP3.name: frozenset({"audio"}),
     FLAC.name: frozenset({"audio"}),
+    WEBM.name: frozenset(),
+    # No entry: m4a, ogg and opus declare no stream_limit at all -- their
+    # muxers hold several audio streams, so there is nothing for a muxer to
+    # enforce here.
+    M4A.name: frozenset(),
+    OGG.name: frozenset(),
+    OPUS.name: frozenset(),
     # image2's muxer refuses to write more than one frame -- or more than one
     # video stream -- to one output file, so a source that would trip the
     # limit never reaches the success side: it fails the cheap attempt outright
@@ -564,6 +601,134 @@ class TestMovProfile:
         assert rule.drop_reason == "bitmap subtitles cannot be stored in MOV"
 
 
+class TestWebmProfile:
+    """Pins the shape Acceptance fixes for `webm` (issue #29,
+    `docs/specs/spec-video-formats.md`)."""
+
+    def test_label_and_suffix(self):
+        assert WEBM.label == "WebM"
+        assert WEBM.target_suffix == ".webm"
+
+    def test_name_and_description(self):
+        assert WEBM.name == "webm"
+        assert WEBM.description
+
+    def test_no_container_options(self):
+        assert WEBM.container_options == ()
+
+    def test_cheap_attempt_selects_streams_blindly(self):
+        assert WEBM.explicit_streams is False
+
+    def test_cheap_attempt_maps_no_attachment(self):
+        """Unlike `mkv` and `mov`, `webm` never maps `0:t?`: WebM does not
+        reject a mapped attachment, it silently discards it at exit 0
+        (measured), so mapping it would buy nothing (Acceptance,
+        spec-video-formats.md)."""
+        assert WEBM.cheap_attempt.options == (
+            "-map",
+            "0:v?",
+            "-map",
+            "0:a?",
+            "-map",
+            "0:s?",
+            "-c",
+            "copy",
+            "-c:s",
+            "webvtt",
+        )
+
+    def test_cheap_attempt_is_declared_partial(self):
+        assert WEBM.partial_mapping is True
+
+    def test_cheap_attempt_carries_the_standing_note(self):
+        assert WEBM.cheap_attempt.notes == (
+            "attachments, data and timecode streams are not carried into WebM",
+        )
+
+    def test_last_resort_excludes_container_options(self):
+        assert WEBM.last_resort is not None
+        assert WEBM.last_resort.label == "re-encode"
+        assert "-movflags" not in WEBM.last_resort.options
+
+    def test_has_exactly_the_three_stream_rules(self):
+        """No `attachment` rule: the cheap attempt never maps one at all, so
+        the type is simply absent from both sides of the equality."""
+        assert set(WEBM.rules) == {"video", "audio", "subtitle"}
+
+    def test_video_and_audio_rules_carry_the_position_placeholder(self):
+        for stream_type in ("video", "audio"):
+            rule = WEBM.rules[stream_type]
+            assert "{n}" in " ".join(rule.accept_options)
+            assert rule.fallback_options is not None
+            assert "{n}" in " ".join(rule.fallback_options)
+
+    def test_video_mask_is_vp8_vp9_av1_only(self):
+        assert WEBM.rules["video"].copy_mask == {"vp8", "vp9", "av1"}
+
+    def test_audio_mask_is_opus_vorbis_only(self):
+        assert WEBM.rules["audio"].copy_mask == {"opus", "vorbis"}
+
+    def test_video_fallback_is_vp9_quality_targeted(self):
+        """VP9 needs both `-crf` and `-b:v 0` to mean quality-targeted mode;
+        `-crf` alone leaves it constrained-quality (measured, the spec's "one
+        open decision")."""
+        rule = WEBM.rules["video"]
+
+        assert rule.accept_options == ("-c:v:{n}", "copy")
+        assert rule.fallback_options == (
+            "-c:v:{n}",
+            "libvpx-vp9",
+            "-crf:v:{n}",
+            "32",
+            "-b:v:{n}",
+            "0",
+            "-row-mt",
+            "1",
+            "-cpu-used",
+            "4",
+        )
+        assert rule.fallback_name == "vp9"
+
+    def test_audio_fallback_is_opus(self):
+        rule = WEBM.rules["audio"]
+
+        assert rule.fallback_options == ("-c:a:{n}", "libopus", "-b:a:{n}", "128k")
+        assert rule.fallback_name == "opus"
+
+    def test_subtitle_rule_transcodes_to_webvtt_and_has_no_fallback(self):
+        rule = WEBM.rules["subtitle"]
+
+        assert rule.accept_options == ("-c:s:{n}", "webvtt")
+        assert rule.fallback_options is None
+        assert rule.drop_reason == "bitmap subtitles cannot be stored in WebM"
+
+    def test_declares_the_pinned_last_resort(self):
+        assert WEBM.last_resort is not None
+        assert WEBM.last_resort.options == (
+            "-map",
+            "0:v:0?",
+            "-map",
+            "0:a?",
+            "-c:v",
+            "libvpx-vp9",
+            "-crf",
+            "32",
+            "-b:v",
+            "0",
+            "-row-mt",
+            "1",
+            "-cpu-used",
+            "4",
+            "-c:a",
+            "libopus",
+            "-b:a",
+            "128k",
+        )
+        assert WEBM.last_resort.notes == (
+            "re-encoded to vp9/opus (lossy); subtitles and extra video streams dropped",
+        )
+
+
 class TestMp3Profile:
     """Pins the shape Acceptance fixes for `mp3` (issue #21,
     `docs/specs/spec-audio-formats.md`)."""
@@ -661,6 +826,180 @@ class TestFlacProfile:
     def test_declares_the_pinned_last_resort(self):
         assert FLAC.last_resort is not None
         assert FLAC.last_resort.options == ("-map", "0:a:0", "-c:a", "flac")
+
+
+class TestM4aProfile:
+    """Pins the shape Acceptance fixes for `m4a` (issue #22,
+    `docs/specs/spec-audio-formats.md`)."""
+
+    def test_label_and_suffix(self):
+        assert M4A.label == "M4A"
+        assert M4A.target_suffix == ".m4a"
+
+    def test_name_and_description(self):
+        assert M4A.name == "m4a"
+        assert M4A.description
+
+    def test_no_container_options(self):
+        assert M4A.container_options == ()
+
+    def test_cheap_attempt_maps_audio_blindly(self):
+        assert M4A.explicit_streams is False
+        assert M4A.cheap_attempt.options == ("-map", "0:a?", "-c:a", "copy")
+
+    def test_cheap_attempt_carries_the_standing_non_audio_note(self):
+        assert M4A.cheap_attempt.notes == (
+            "non-audio streams, including cover art, are not carried into M4A",
+        )
+
+    def test_cheap_attempt_is_declared_partial(self):
+        assert M4A.partial_mapping is True
+
+    def test_declares_only_an_audio_rule(self):
+        assert set(M4A.rules) == {"audio"}
+
+    def test_audio_rule_mask_and_fallback(self):
+        """The mask is `{aac, alac}`, not `MP4_AUDIO_CODECS`: `.m4a` selects
+        the narrower `ipod` muxer, which rejects mp3, opus and flac stream
+        copies (docs/specs/spec-audio-formats.md)."""
+        rule = M4A.rules["audio"]
+
+        assert rule.copy_mask == frozenset({"aac", "alac"})
+        assert rule.accept_options == ("-c:a:{n}", "copy")
+        assert rule.fallback_options == ("-c:a:{n}", "aac", "-b:a:{n}", "192k")
+        assert rule.fallback_name == "aac"
+
+    def test_audio_rule_declares_no_stream_limit(self):
+        """The ipod muxer holds several audio streams, so every one the
+        source has is carried rather than one kept and the rest dropped."""
+        assert M4A.rules["audio"].stream_limit is None
+
+    def test_audio_rule_carries_the_position_placeholder(self):
+        """No stream_limit means more than one output audio stream is
+        possible, and ffmpeg's unindexed "-c:a" is not positional -- the last
+        one given wins for every audio stream, not one per stream in map
+        order (measured against ffmpeg 9.0). The placeholder is required for
+        the same reason MP4's video/audio rules carry one."""
+        rule = M4A.rules["audio"]
+
+        assert "{n}" in " ".join(rule.accept_options)
+        assert "{n}" in " ".join(rule.fallback_options)
+
+    def test_declares_the_pinned_last_resort(self):
+        assert M4A.last_resort is not None
+        assert M4A.last_resort.options == ("-map", "0:a:0", "-c:a", "aac", "-b:a", "192k")
+
+
+class TestOggProfile:
+    """Pins the shape Acceptance fixes for `ogg` (issue #22,
+    `docs/specs/spec-audio-formats.md`)."""
+
+    def test_label_and_suffix(self):
+        assert OGG.label == "OGG"
+        assert OGG.target_suffix == ".ogg"
+
+    def test_name_and_description(self):
+        assert OGG.name == "ogg"
+        assert OGG.description
+
+    def test_no_container_options(self):
+        assert OGG.container_options == ()
+
+    def test_cheap_attempt_maps_audio_blindly(self):
+        """ "-c copy", not "-c:a copy": the spec pins this exact spelling
+        (docs/specs/spec-audio-formats.md's fixed-profiles table)."""
+        assert OGG.explicit_streams is False
+        assert OGG.cheap_attempt.options == ("-map", "0:a?", "-c", "copy")
+
+    def test_cheap_attempt_carries_the_standing_non_audio_note(self):
+        assert OGG.cheap_attempt.notes == (
+            "non-audio streams, including cover art, are not carried into OGG",
+        )
+
+    def test_cheap_attempt_is_declared_partial(self):
+        assert OGG.partial_mapping is True
+
+    def test_declares_only_an_audio_rule(self):
+        assert set(OGG.rules) == {"audio"}
+
+    def test_audio_rule_mask_and_fallback(self):
+        rule = OGG.rules["audio"]
+
+        assert rule.copy_mask == frozenset({"vorbis", "opus", "flac"})
+        assert rule.accept_options == ("-c:a:{n}", "copy")
+        assert rule.fallback_options == ("-c:a:{n}", "libvorbis", "-q:a:{n}", "5")
+        assert rule.fallback_name == "vorbis"
+
+    def test_audio_rule_declares_no_stream_limit(self):
+        assert OGG.rules["audio"].stream_limit is None
+
+    def test_audio_rule_carries_the_position_placeholder(self):
+        """See `TestM4aProfile`'s equivalent test for why."""
+        rule = OGG.rules["audio"]
+
+        assert "{n}" in " ".join(rule.accept_options)
+        assert "{n}" in " ".join(rule.fallback_options)
+
+    def test_declares_the_pinned_last_resort(self):
+        assert OGG.last_resort is not None
+        assert OGG.last_resort.options == ("-map", "0:a:0", "-c:a", "libvorbis", "-q:a", "5")
+
+
+class TestOpusProfile:
+    """Pins the shape Acceptance fixes for `opus` (issue #22,
+    `docs/specs/spec-audio-formats.md`)."""
+
+    def test_label_and_suffix(self):
+        assert OPUS.label == "OPUS"
+        assert OPUS.target_suffix == ".opus"
+
+    def test_name_and_description(self):
+        assert OPUS.name == "opus"
+        assert OPUS.description
+
+    def test_no_container_options(self):
+        assert OPUS.container_options == ()
+
+    def test_cheap_attempt_maps_audio_blindly(self):
+        """ "-c copy", like ogg's: the muxer, not the mask, decides the happy
+        path (Prior decisions, spec-audio-formats.md)."""
+        assert OPUS.explicit_streams is False
+        assert OPUS.cheap_attempt.options == ("-map", "0:a?", "-c", "copy")
+
+    def test_cheap_attempt_carries_the_standing_non_audio_note(self):
+        assert OPUS.cheap_attempt.notes == (
+            "non-audio streams, including cover art, are not carried into OPUS",
+        )
+
+    def test_cheap_attempt_is_declared_partial(self):
+        assert OPUS.partial_mapping is True
+
+    def test_declares_only_an_audio_rule(self):
+        assert set(OPUS.rules) == {"audio"}
+
+    def test_audio_rule_mask_and_fallback(self):
+        rule = OPUS.rules["audio"]
+
+        assert rule.copy_mask == frozenset({"opus"})
+        assert rule.accept_options == ("-c:a:{n}", "copy")
+        assert rule.fallback_options == ("-c:a:{n}", "libopus", "-b:a:{n}", "128k")
+        assert rule.fallback_name == "opus"
+
+    def test_audio_rule_declares_no_stream_limit(self):
+        """The opus muxer holds several audio streams, by copy and by
+        encode (docs/specs/spec-audio-formats.md)."""
+        assert OPUS.rules["audio"].stream_limit is None
+
+    def test_audio_rule_carries_the_position_placeholder(self):
+        """See `TestM4aProfile`'s equivalent test for why."""
+        rule = OPUS.rules["audio"]
+
+        assert "{n}" in " ".join(rule.accept_options)
+        assert "{n}" in " ".join(rule.fallback_options)
+
+    def test_declares_the_pinned_last_resort(self):
+        assert OPUS.last_resort is not None
+        assert OPUS.last_resort.options == ("-map", "0:a:0", "-c:a", "libopus", "-b:a", "128k")
 
 
 #: One tuple per image2 profile this phase adds: the profile itself, the codec
@@ -1037,6 +1376,10 @@ class TestRegistry:
             "mp3": MP3,
             "flac": FLAC,
             "mov": MOV,
+            "webm": WEBM,
+            "m4a": M4A,
+            "ogg": OGG,
+            "opus": OPUS,
             "png": PNG,
             "jpg": JPG,
             "tiff": TIFF,
@@ -1063,9 +1406,18 @@ class TestResolveTarget:
         assert resolve_target("mp3") is MP3
         assert resolve_target("flac") is FLAC
 
+    def test_resolves_m4a_ogg_and_opus_too(self):
+        assert resolve_target("m4a") is M4A
+        assert resolve_target("ogg") is OGG
+        assert resolve_target("opus") is OPUS
+
     @pytest.mark.parametrize("target", ["mov", "MOV", ".mov", ".MOV", "Mov"])
     def test_accepts_mov_name_case_and_dot_variants(self, target):
         assert resolve_target(target) is MOV
+
+    @pytest.mark.parametrize("target", ["webm", "WEBM", ".webm", ".WEBM", "Webm"])
+    def test_accepts_webm_name_case_and_dot_variants(self, target):
+        assert resolve_target(target) is WEBM
 
     @pytest.mark.parametrize(
         ("target", "profile"),
@@ -1083,14 +1435,16 @@ class TestResolveTarget:
         assert resolve_target(target) is profile
 
     def test_unknown_target_raises_value_error_listing_available_targets(self):
+        """`avi` is a curated source suffix, never a registered target, so this
+        stays stable regardless of which other in-flight profile lands next."""
         with pytest.raises(
             ValueError,
             match=(
-                r"webm.*available targets: avif, bmp, flac, gif, jpg, mkv, mov, "
-                r"mp3, mp4, png, tiff, wav, webp"
+                r"avi.*available targets: avif, bmp, flac, gif, jpg, m4a, mkv, mov, "
+                r"mp3, mp4, ogg, opus, png, tiff, wav, webm, webp"
             ),
         ):
-            resolve_target("webm")
+            resolve_target("avi")
 
 
 class TestSourceSuffixes:
