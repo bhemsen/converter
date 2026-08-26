@@ -14,21 +14,30 @@ A completed spec is moved to `docs/specs/archive/`.
 
 Audio and video targets convert a stream into a stream. An image target converts
 a *frame*, and every source in the curated suffix set has either one frame or
-thousands. That difference is the whole design problem here, and it is what the
-open decision below is about — not codec masks, which are the easy part.
+thousands. Worse, the seven targets do not behave alike: three different muxer
+families sit behind them, and the differences are not cosmetic.
+
+| Group | Targets | Behaviour that sets it apart |
+|---|---|---|
+| **image2, permissive** | `png`, `jpg`, `tiff`, `bmp` | The muxer accepts **any** video codec under `-c copy`, so a copy ships a mislabelled file. A multi-frame source fails hard |
+| **animated** | `gif`, `webp` | Self-policing muxers, and a video source becomes a genuine animation — every frame is written |
+| **still, self-policing** | `avif` | Self-policing, but a multi-frame source is silently reduced to **one** frame at exit 0 |
+
+Everything below follows from that table.
 
 ## Outcome
 
 - [ ] `converter --to <fmt>` works for `png`, `jpg`, `webp`, `avif`, `gif`,
       `tiff` and `bmp`.
-- [ ] `--list-formats` prints one line per registry entry — 17 targets, which is
-      `docs/vision.md`'s headline success criterion met in full.
+- [ ] `--list-formats` prints one line per registry entry, including the seven
+      image targets.
 - [ ] **The diff of every PR in this milestone touches only
       `converter/profiles.py`, `README.md` and files under `tests/`.**
-- [ ] Every new profile has a test pinning the exact argv it builds, for a
-      copyable and for a non-copyable input.
-- [ ] A multi-frame source under a single-frame target behaves as the gate
-      decides, and says so — never silently.
+- [ ] `--to png` over a folder of JPEGs produces real PNGs, and `--to jpg` over a
+      folder of PNGs produces real JPEGs. The two commonest image conversions
+      there are, and a stream copy gets both wrong.
+- [ ] A multi-frame source behaves as its target's group requires, and says so —
+      never silently.
 - [ ] Converting an image with transparency into a target that cannot hold it
       names the loss.
 
@@ -37,8 +46,8 @@ open decision below is about — not codec masks, which are the easy part.
 ### In scope
 
 - Seven new `Profile` entries with their stream rules, copy masks, fallback
-  encoders, `cheap_attempt`, `explicit_streams`, `last_resort` and standing
-  notes, plus registry entries.
+  encoders, `cheap_attempt`, `explicit_streams`, `stream_limit`, `last_resort`,
+  `container_options` and standing notes, plus registry entries.
 - Extending the curated source-suffix set with image containers: `.png`, `.jpg`,
   `.jpeg`, `.webp`, `.avif`, `.gif`, `.tif`, `.tiff`, `.bmp`, `.ppm`, `.pgm`,
   `.tga`.
@@ -48,40 +57,39 @@ open decision below is about — not codec masks, which are the easy part.
 ### Out of scope
 
 - **HEIC, SVG and camera RAW** — `docs/vision.md` names all three as non-goals:
-  they need libheif or a rasteriser, not an ffmpeg muxer, and adding one would
-  break the single-dependency promise.
-- **EXIF/ICC preservation** — an explicit non-goal. ffmpeg strips metadata by
-  default and PNG cannot carry EXIF at all (`docs/prior-art.md`).
+  they need libheif or a rasteriser, not an ffmpeg muxer.
+- **EXIF/ICC preservation** — an explicit non-goal; PNG cannot carry EXIF at all
+  (`docs/prior-art.md`).
 - Resizing, cropping, rotation, colour management, or any encoder-tuning surface
   beyond the one quality default per lossy format.
-- Extracting a frame *sequence* (`out_%04d.png`). One input file maps to one
-  output file — `paths.output_for` is built on that, and changing it would be a
-  different feature in a different phase.
+- Extracting a frame *sequence* (`out_%04d.png`). One input file, one output
+  file — `paths.output_for` is built on that.
 - **Any engine change.**
 
 ## Constraints
 
 - A target format is data, not code.
-- One input file, one output file. Every design below is bounded by that.
+- One input file, one output file.
 - `ffprobe` never runs on the happy path.
 - Never report success for a conversion that silently dropped something.
+- `{n}` is substituted **only** in `StreamRule` templates. `cheap_attempt` and
+  `last_resort` are emitted verbatim, so a `{n}` in either reaches ffmpeg
+  literally — every attempt below is written without one.
 - The test suite keeps passing with no ffmpeg installed.
 
 ## Prior art
 
 - [Image conversion through ffmpeg (Phase 5)](../prior-art.md#image-conversion-through-ffmpeg-phase-5)
-  — the concern tagged for this phase. Its ADOPT is confirmed by measurement: PNG,
-  JPEG, WebP, AVIF, TIFF, BMP and GIF all have working ffmpeg muxers, so images
-  need no second backend. Its AVOID is the reason EXIF/ICC preservation is out of
-  scope rather than a bug.
+  — the concern tagged for this phase. Its ADOPT is confirmed by measurement: all
+  seven formats have working ffmpeg muxers, so images need no second backend. Its
+  AVOID is why EXIF/ICC preservation is a non-goal rather than a bug.
 - [Container/codec capability modelling (Phase 1)](../prior-art.md#containercodec-capability-modelling-phase-1)
   — the copy-mask vocabulary, and the rule that the mask is curated by hand.
 
 ## Design
 
-No new design artifact. The ladder and the per-stream branch already cover this
-phase; what is new is *which rung does the work*, and that is a decision recorded
-below rather than a new diagram.
+No new design artifact. What is new is *which rung does the work*, and that is
+recorded as decisions rather than as a new diagram.
 
 ## Human prerequisites
 
@@ -91,54 +99,68 @@ below rather than a new diagram.
 
 ### The muxer facts these profiles rest on
 
-Measured against ffmpeg 9.0 during planning. A later reader should re-verify.
+Measured against ffmpeg 9.0 during planning and re-measured by the review, exit
+codes taken from ffmpeg itself.
 
 | Fact | Consequence |
 |---|---|
-| **A multi-frame source into a single-file image target fails hard**: `-i v.mp4 -map 0:v:0 out.png` exits 127 with "Cannot write more than one file with the same name. Are you missing the -update option or a sequence pattern?" | The single-frame targets do **not** silently produce garbage from a video. They fail into the ladder, which is where the decision below gets to name what it does |
-| **Adding `-frames:v 1` makes the same conversion succeed**, writing exactly one frame (verified with `-count_frames`) | The rung that carries `-frames:v 1` is the one that turns a video into an image |
-| **GIF is different: it is animated.** A 2-second video into `.gif` exits 0 and writes 20 frames | `gif` must **not** carry `-frames:v 1`, and it is the only image target that converts a video meaningfully |
-| **An alpha PNG into JPG exits 0 and silently drops the alpha channel** (`rgba` in, `yuvj444p` out) | A real silent loss, on the happy path, that only a standing note can cover |
-| PNG, JPG, WebP, AVIF, TIFF and BMP all encode from a PNG source at exit 0 | Every target in the vision's list has a working muxer; no second backend is needed |
-| A single-frame PNG copies into PNG with `-c copy` at exit 0 | The copy path is real for image-to-image where the codec matches |
+| **The image2 muxer accepts any video codec under `-c copy`.** `flat.jpg -map 0:v? -c copy out.png` exits 0 and writes a JPEG named `.png`; `alpha.png -> out.jpg` writes a PNG named `.jpg` | `png`, `jpg`, `tiff` and `bmp` must **force their encoder** in the cheap attempt. A copy there mislabels the file on the default path, for the two commonest image conversions there are |
+| **`webp`, `avif` and `gif` self-police**: a non-matching codec copy exits 127 ("webp muxer supports only codec webp", "gif muxer supports only codec gif", "Could not find tag for codec png") | Those three can keep `-c copy` safely; the price is one wasted spawn plus one probe per non-matching source |
+| **A multi-frame source into an image2 target fails hard** at both the cheap attempt and the selective rung: "Cannot write more than one file with the same name" | Only a rung carrying `-frames:v 1` converts a video into a `png`/`jpg`/`tiff`/`bmp` |
+| **`gif` and `webp` write every frame**: a 20-frame video becomes a 20-frame GIF and a 20-frame animated WebP, both at exit 0 on the selective rung | `webp` is an *animated* target, not a still one. Neither carries a frame limit |
+| **`avif` silently reduces a 20-frame source to one frame at exit 0** — the muxer, not the flag: dropping `-still-picture 1` still yields one frame. With an AV1-in-MP4 source the copy mask hits and this happens on the **cheap attempt** | The one silent multi-frame loss in the phase, and it needs a standing note; no rung can turn it into a failure |
+| **Alpha, measured by round-tripping `rgba` (α=127) through each fallback encoder:** kept by `png`, `tiff`, `bmp`, `webp`; **lost by `jpg`, `gif` and `avif`** — `gif` loses even a fully transparent source, `avif` because `libaom-av1` has no alpha pix_fmt | `jpg`, `gif` and `avif` need a transparency standing note. `bmp` does not — the question the earlier draft left open is closed |
+| ffprobe reports a still's `codec_name` as `png`, `mjpeg`, `webp`, `tiff`, `bmp`, `gif`, `av1` | The copy masks below are right |
+| Option syntax parses and takes effect in the `{n}` form: `-quality:v:0` for libwebp (not `-compression_level`), `-q:v:0` for mjpeg, `-crf:v:0` for libaom-av1 | The fallback templates below are valid |
+| **`libaom-av1` is 17-34x slower than the alternatives**: a 3000x2000 still takes 6.9 s at `-crf 30 -still-picture 1`, against 0.41 s for `libwebp -quality 80` and 0.20 s for `mjpeg -q:v 2` | `--to avif` over a folder of camera JPEGs is a different tool from `--to webp` over the same folder. Priced here rather than discovered |
 
 ### Decisions
 
 | Decision | Rationale | Date |
 |---|---|---|
-| Cheap attempt for every single-frame target: `flags("-map 0:v? -c copy")`, `explicit_streams=False`, **without** `-frames:v 1` | A single-image source converts on the first attempt. A multi-frame source *fails* here, which is exactly what puts it in front of the ladder instead of quietly producing one frame with no explanation — the "turn a quiet loss into a failure the ladder can name" pattern phases 3 and 4 established | 2026-08-26 |
-| `gif`'s cheap attempt is `flags("-map 0:v? -c copy")` too, but it carries no frame limit anywhere: a video converts to an animated GIF | Measured: the GIF muxer takes every frame. It is the one image target for which a video source is an ordinary conversion rather than an extraction | 2026-08-26 |
-| Every single-frame target declares no audio, subtitle or attachment rule, so those streams are dropped by the selective rung with the engine's per-stream note | An image holds one thing. Nothing here needs a new rule kind | 2026-08-26 |
-| Copy masks: `png` -> `{png}`; `jpg` -> `{mjpeg}`; `webp` -> `{webp}`; `avif` -> `{av1}`; `gif` -> `{gif}`; `tiff` -> `{tiff}`; `bmp` -> `{bmp}` | ffprobe reports a still image's `codec_name` as its image codec, so an image-to-same-image conversion is a real stream copy. Everything else re-encodes | 2026-08-26 |
-| Fallback encoders: `png` -> `png`; `jpg` -> `mjpeg -q:v:{n} 2`; `webp` -> `libwebp -quality:v:{n} 80`; `avif` -> `libaom-av1 -crf:v:{n} 30 -still-picture 1`; `gif` -> `gif`; `tiff` -> `tiff`; `bmp` -> `bmp` | One quality default per lossy format, chosen at "you would need the original beside it to tell", and pinned by the argv tests. The lossless targets need no parameter | 2026-08-26 |
-| `png`, `tiff`, `bmp` and `gif` declare `fallback_name=None` — no note for the encode itself; `jpg`, `webp` and `avif` declare theirs | The rule phase 3 established: encoding into a target's own lossless codec gives up nothing worth naming, encoding into a lossy one does | 2026-08-26 |
-| **Standing note on `jpg`**: transparency is not carried into JPEG. Measured as a silent, exit-0 loss on the happy path | The phase-3 gate's mechanism, applied to the one measured silent loss in this phase. Whether `bmp` and `gif` need the same note depends on a measurement the review is asked to make | 2026-08-26 |
-| OPEN — what a single-frame target does with a multi-frame source | resolved at the spec-acceptance gate; see the note below | — |
+| **`png`, `jpg`, `tiff`, `bmp` force their encoder in the cheap attempt**: `flags("-map 0:v? -c:v png")`, `flags("-map 0:v? -c:v mjpeg -q:v 2")`, `flags("-map 0:v? -c:v tiff")`, `flags("-map 0:v? -c:v bmp")`. `explicit_streams=False` | Measured: image2 accepts any codec on copy, so `--to png` over JPEGs would ship JPEGs named `.png`. This is phase 3's carve-out — "where the muxer is looser than the format's identity, the profile does not rely on a copy at all" — and it is the same shape as `opus`. The copy still happens on the selective rung, on a mask hit | 2026-08-26 |
+| **`gif`, `webp`, `avif` keep `flags("-map 0:v? -c copy")`**, `explicit_streams=False` | Their muxers reject a non-matching codec, so a copy cannot mislabel. The cost is one wasted ffmpeg spawn plus one ffprobe for every non-matching source — which is nearly every source, since a copy only hits when the input is already that format. Accepted deliberately: it buys a real stream copy for the same-format case, which is the one conversion where it matters | 2026-08-26 |
+| Copy masks: `png` -> `{png}`; `jpg` -> `{mjpeg}`; `webp` -> `{webp}`; `avif` -> `{av1}`; `gif` -> `{gif}`; `tiff` -> `{tiff}`; `bmp` -> `{bmp}` | Measured against ffprobe's reported codec names | 2026-08-26 |
+| Fallback encoders, as full `StreamRule` templates: `png` -> `flags("-c:v:{n} png")`; `jpg` -> `flags("-c:v:{n} mjpeg -q:v:{n} 2")`; `webp` -> `flags("-c:v:{n} libwebp -quality:v:{n} 80")`; `avif` -> `flags("-c:v:{n} libaom-av1 -crf:v:{n} 30 -still-picture 1")`; `gif` -> `flags("-c:v:{n} gif")`; `tiff` -> `flags("-c:v:{n} tiff")`; `bmp` -> `flags("-c:v:{n} bmp")` | One quality default per lossy format, pinned by the argv tests. Written in full rather than as shorthand, because the `-c:v:{n}` is not optional | 2026-08-26 |
+| `png`, `tiff`, `bmp` and `gif` declare `fallback_name=None` — no note for the encode; `jpg`, `webp` and `avif` declare theirs | The phase-3 rule: encoding into a target's own lossless codec gives up nothing worth naming | 2026-08-26 |
+| **`stream_limit=1` on every image profile's video rule** | One image, one picture. A source with two video streams — cover art beside a video, an MJPEG-plus-video AVI — would otherwise map both into one output file and fail. `mp3` and `flac` got the same treatment in phase 3 for the same reason | 2026-08-26 |
+| No image profile declares an audio, subtitle or attachment rule; `container_options` is `()` for all seven | An image holds one thing, and none of these muxers takes a container flag | 2026-08-26 |
+| **Standing notes**: `jpg`, `gif` and `avif` say transparency is not carried; `avif` additionally says a multi-frame source is reduced to a single frame | Measured. `avif`'s frame note is the only way that loss is ever reported — no rung can turn it into a failure, and it can strike on the cheap attempt with an AV1-in-MP4 source | 2026-08-26 |
+| `last_resort`: `gif` -> `flags("-map 0:v:0 -c:v gif")`; `webp` -> `flags("-map 0:v:0 -c:v libwebp -quality:v 80")`; `avif` -> `flags("-map 0:v:0 -c:v libaom-av1 -crf 30 -still-picture 1")`. The four image2 targets' `last_resort` is what the gate decides | Phase 4's rule: every profile needs one or a ladder that reaches the end lands as `failed`. Written without `{n}`, which is not substituted outside `StreamRule` templates | 2026-08-26 |
+| OPEN — how `png`, `jpg`, `tiff` and `bmp` handle a multi-frame source | resolved at the spec-acceptance gate; see the note below | — |
 
 ### The one open decision, in full
 
-Measured: `--to png` on a video fails the cheap attempt *and* the selective rung,
-because neither carries `-frames:v 1`. What happens next is the `last_resort`,
-and what that rung contains is the decision.
+**Scope: four targets, not seven.** `gif` and `webp` convert a video into an
+animation, which needs no decision. `avif` reduces it to one frame whatever
+anyone does, which is covered by its standing note. Only the image2 four —
+`png`, `jpg`, `tiff`, `bmp` — reach a rung where this is a choice.
 
-1. **Extract the first frame.** `last_resort` is
-   `flags("-map 0:v:0 -frames:v 1")` plus the profile's encoder, with a note
-   saying a single frame was taken from a multi-frame source. `--to png` over a
-   mixed folder then produces a thumbnail per video, exit 0, and a re-run is
-   idempotent. It costs three ffmpeg spawns and a probe per video, and it answers
-   a question the user did not obviously ask.
-2. **Declare no `last_resort`.** A video under `--to png` ends the ladder and is
-   reported as `failed`, exit 1. Honest — the tool does not invent an answer — but
-   it breaks `docs/vision.md`'s idempotent-re-run criterion for any mixed tree:
-   the file produces no output, so every re-run fails again, and the run never
-   reaches `0 converted, 0 failed`.
+Measured: with the encoder forced, an image source converts on the cheap attempt.
+A video source fails the cheap attempt *and* the selective rung, because neither
+carries `-frames:v 1`. Three answers:
 
-Option 2's cost is the one phase 2 already paid for elsewhere: the `unsupported`
+1. **Extract the first frame at the `last_resort`.**
+   `flags("-map 0:v:0 -frames:v 1 -c:v png")` and its siblings, with a note saying
+   a single frame was taken. The common case — an actual image — converts on the
+   first attempt with no note at all. A video costs three ffmpeg spawns plus a
+   probe, and gets a thumbnail it did not obviously ask for.
+2. **Put `-frames:v 1` in the cheap attempt**, with a standing note that only the
+   first frame is kept. One spawn instead of three for a video, and the same
+   standing-note mechanism phases 3 and 4 chose elsewhere. The cost is noise: the
+   note prints on every single conversion, including the overwhelming majority
+   that are ordinary one-frame images with nothing to lose.
+3. **Declare no `last_resort`.** A video under `--to png` is reported as `failed`,
+   exit 1. The tool invents nothing — but the file produces no output, so every
+   re-run fails again and a mixed tree never reaches `0 converted, 0 failed`,
+   which `docs/vision.md` requires.
+
+Option 3's cost is the one phase 2 already paid for elsewhere: its `unsupported`
 outcome exists precisely because a permanently-failing file poisons re-runs. It
-does not apply automatically here — `unsupported` fires when the source carries no
-stream of any type the profile has a rule for, and a video *does* match an image
-profile's video rule. Making it apply would be an engine change, which this phase
-does not take.
+does **not** apply automatically here — `unsupported` fires when the source
+carries no stream of any type the profile has a rule for, and a video does match
+an image profile's video rule. Making it apply would be a `jobs.py` change, which
+this phase does not take.
 
 ## Tracking
 
@@ -153,53 +175,75 @@ Machine checks:
 - [ ] For every PR in this milestone, `git diff main...<pr-head> --name-only`
       lists only `converter/profiles.py`, `README.md` and paths under `tests/`.
 - [ ] Per new profile, a test pinning the full argv for a copyable input and for
-      a non-copyable one — fourteen tests, seven profiles, both cases each.
-- [ ] A test that `gif` carries no frame limit while the six single-frame targets
-      reach one through the rung the gate chose.
+      a non-copyable one. `png`, `jpg`, `tiff` and `bmp` carry the same exception
+      `spec-profile-registry.md` recorded for WAV and phase 3 for `opus`: their
+      cheap attempt never copies, so the copyable case exists only on the
+      selective rung.
+- [ ] A test that `gif` and `webp` carry no frame limit anywhere, and that the
+      image2 four reach one through the rung the gate chose.
+- [ ] A test that `png`, `jpg`, `tiff` and `bmp` force `-c:v` in their cheap
+      attempt — the check that stops a copy from shipping a mislabelled file.
 - [ ] A test that no image profile declares an audio, subtitle or attachment
-      rule, so those streams are dropped with a note.
-- [ ] A test per degradation branch, including `jpg`'s standing note.
+      rule, so those streams are dropped with a note, and that every one declares
+      `stream_limit=1`.
+- [ ] A test per standing note, pinning its exact wording: transparency for
+      `jpg`, `gif`, `avif`, and the single-frame note for `avif`.
 - [ ] A test that converting into `png`, `tiff`, `bmp` or `gif` emits no note for
       the encode itself.
-- [ ] `--list-formats` prints 17 lines.
+- [ ] `--list-formats` prints one line per registry entry, including the seven
+      image names. The 17-line total is a QA-gate item for whichever of the three
+      coverage milestones closes last, not a machine check here — phases 3, 4 and
+      5 may run as parallel orchestrators, so this milestone can close while the
+      registry holds nine or twelve entries.
 
 Human milestone-QA gate. `$FF` is the absolute ffmpeg path from *This machine*:
 
 ```text
 New-Item -ItemType Directory -Force in
 & $FF -y -f lavfi -i color=c=red:size=320x240:d=1 -frames:v 1 in/flat.png
+& $FF -y -f lavfi -i color=c=red:size=320x240:d=1 -frames:v 1 in/flat.jpg
 & $FF -y -f lavfi -i "color=c=red@0.5:size=320x240:d=1,format=rgba" -frames:v 1 in/alpha.png
 & $FF -y -f lavfi -i testsrc=size=320x240:rate=10:duration=2 -c:v libx264 in/clip.mp4
 ```
 
 - [ ] Each of the seven targets converts `flat.png` and the result opens.
-- [ ] `--to jpg in out` over `alpha.png` prints the transparency note. Check the
-      output's `pix_fmt` with `ffprobe` — the loss is real and silent without it.
-- [ ] `--to gif in out` over `clip.mp4` produces an **animated** GIF: count the
-      frames with `ffprobe -count_frames`, do not judge by eye.
-- [ ] `--to png in out` over `clip.mp4` behaves as the gate decided, and a second
-      run over the same tree reports the same thing with exit 0 if the gate chose
-      option 1.
-- [ ] `--to png in out` over `flat.png` with a different output root stream-copies
-      rather than re-encoding.
+- [ ] `--to png in out` over `flat.jpg` produces a **real PNG** — `ffprobe` it,
+      and check `file` too. A stream copy would produce a JPEG named `.png` at
+      exit 0, which is the defect this phase's cheap attempts exist to prevent.
+- [ ] `--to jpg in out` over `flat.png` produces a real JPEG, same check.
+- [ ] `--to jpg in out` over `alpha.png` prints the transparency note, and the
+      output's `pix_fmt` shows the alpha is gone. Repeat for `--to gif` and
+      `--to avif`; `--to bmp`, `--to png`, `--to tiff` and `--to webp` keep it and
+      print no such note.
+- [ ] `--to gif in out` over `clip.mp4` produces an **animated** GIF, and
+      `--to webp` an animated WebP: count frames with `ffprobe -count_frames`.
+- [ ] `--to avif in out` over `clip.mp4` produces a single frame and **says so**.
+- [ ] `--to png in out` over `clip.mp4` behaves as the gate decided; a second run
+      reports the same thing with exit 0 unless the gate chose option 3.
+- [ ] Time `--to avif` over a large still and compare with `--to webp`. The
+      measured gap is 17x; confirm it is tolerable on real photographs.
 - [ ] A second run over any converted tree reports `0 converted`, exit 0.
 
 ## Risks and mitigations
 
 | Risk | Mitigation |
 |---|---|
-| `--to png` over a video-heavy tree does something surprising | It is the phase's one open decision, put to the gate with both costs measured rather than settled quietly |
-| An alpha loss goes unnamed | Measured and covered by `jpg`'s standing note; the review is asked to measure `bmp` and `gif` for the same |
-| A copy mask is wrong and an image copy ships something unopenable | The QA gate opens one output per target, and phase 3's lesson applies: on the happy path the muxer is the authority, so the mask matters most on the failure path |
-| Someone reads the missing EXIF as a bug | Named as a vision non-goal in Out of scope, with the prior-art entry that evidences it |
-| The 17-format claim is asserted rather than checked | `--list-formats` printing 17 lines is a Verification item |
+| A stream copy ships a mislabelled file | The four image2 targets force their encoder, with a Verification item and a QA check on both directions of the commonest conversion |
+| `avif` silently drops frames | Its standing note is the only reporting path, and the QA gate checks it explicitly |
+| `--to avif` over a photo library is unusably slow | Measured and priced in the muxer table; the QA gate confirms it on real photographs |
+| An alpha loss goes unnamed | Measured per target; three need the note and four do not |
+| The wasted spawn on `gif`/`webp`/`avif` is mistaken for a bug | Named in its decision row as a deliberate price for a real copy path |
+| Someone reads the missing EXIF as a bug | Named as a vision non-goal with the prior-art entry that evidences it |
 
 ## Decision log
 
-- 2026-08-26: The muxer facts were measured during planning, as in phase 4. The
-  decisive one was that a video into a single-file image target *fails* rather
-  than silently writing a frame — which is what makes the ladder, and therefore an
-  honest note, available at all.
-- 2026-08-26: `gif` is deliberately not grouped with the other six. It is the only
-  image target that is animated, and treating it as a still would silently discard
-  every frame but one.
+- 2026-08-26: The muxer facts were measured during planning, as in phase 4, and
+  the review falsified three of them. The decisive correction: image2 accepts any
+  codec on copy, so the four targets behind it must force their encoder — without
+  that, `--to png` over JPEGs and `--to jpg` over PNGs both ship mislabelled files
+  at exit 0.
+- 2026-08-26: `webp` was moved out of the single-frame group after the review
+  measured it writing a 20-frame animation. `gif` was never in it.
+- 2026-08-26: `avif`'s silent frame reduction has no failure path to hang a
+  per-stream note on, so it is the one loss in this phase that only a standing
+  note can report — including on the cheap attempt, for an AV1-in-MP4 source.
