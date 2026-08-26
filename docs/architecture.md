@@ -65,8 +65,11 @@ The internal import graph is acyclic today and must stay that way:
    takes; see the 2026-08-26 (issue #41) entries in
    `docs/specs/archive/spec-profile-registry.md`'s Decision log.
 2. **Degradation.** The attempt exits non-zero, so *now* `ffmpegtool.probe_streams`
-   describes the file. The engine matches each stream against the profile's copy
-   mask: streams the mask accepts pass through unchanged — as a literal `copy`, or
+   describes the file. Each stream is first resolved to a rule — by its
+   disposition when it is an attached picture and the profile declares a rule for
+   one, otherwise by its type — and the engine then matches it against that
+   rule's copy mask: streams the mask accepts pass through unchanged — as a
+   literal `copy`, or
    as the cheap in-kind transcode the rule declares, which is how a text subtitle
    becomes `mov_text` — streams it does not are re-encoded with the profile's
    fallback encoder, and streams are dropped when the container cannot hold that
