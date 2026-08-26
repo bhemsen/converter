@@ -383,6 +383,104 @@ class TestMp4Profile:
         assert rule.fallback_options is None
         assert rule.drop_reason == "bitmap subtitles cannot be stored in MP4"
 
+    def test_profile_is_byte_for_byte_unchanged_since_before_this_phase(self):
+        """Guard rail for issue #30: `mkv`, `mov` and `webm` land in the same
+        registry this phase, and `mp4` is the one profile every one of them
+        could plausibly bump into (it is the source every other cheap-attempt
+        docstring in `converter/profiles.py` contrasts itself against). The
+        field-by-field tests above already pin most of `mp4`'s shape; this
+        compares the *whole* frozen `Profile` at once, the same way
+        `TestWavProfile.test_profile_is_byte_for_byte_unchanged_since_phase_2`
+        guards `wav` against phase 3's siblings, so a change to any field --
+        including one nobody wrote a dedicated assertion for -- fails here
+        rather than shipping silently. The three copy masks are spelled out
+        literally rather than imported (`WAV`'s snapshot precedent), because
+        importing `MP4_VIDEO_CODECS` et al. and comparing them against
+        themselves would make this assertion `X == X` for those three
+        fields -- passing even if a codec were added to or removed from the
+        real constant.
+        """
+        expected = Profile(
+            label="MP4",
+            name="mp4",
+            description="Video: copies compatible streams, re-encodes the rest to h264/aac",
+            target_suffix=".mp4",
+            container_options=("-movflags", "+faststart"),
+            cheap_attempt=Attempt(
+                label="remux",
+                options=(
+                    "-map",
+                    "0:v?",
+                    "-map",
+                    "0:a?",
+                    "-map",
+                    "0:s?",
+                    "-c",
+                    "copy",
+                    "-c:s",
+                    "mov_text",
+                ),
+            ),
+            explicit_streams=False,
+            partial_mapping=True,
+            rules={
+                "video": StreamRule(
+                    copy_mask=frozenset(
+                        {"h264", "hevc", "av1", "vp9", "mpeg4", "mpeg2video", "mjpeg"}
+                    ),
+                    accept_options=("-c:v:{n}", "copy"),
+                    fallback_options=("-c:v:{n}", "libx264", "-crf:v:{n}", "18"),
+                    fallback_name="h264",
+                    stream_limit=None,
+                    drop_reason=None,
+                ),
+                "audio": StreamRule(
+                    copy_mask=frozenset({"aac", "mp3", "ac3", "eac3", "alac", "opus", "flac"}),
+                    accept_options=("-c:a:{n}", "copy"),
+                    fallback_options=("-c:a:{n}", "aac", "-b:a:{n}", "192k"),
+                    fallback_name="aac",
+                    stream_limit=None,
+                    drop_reason=None,
+                ),
+                "subtitle": StreamRule(
+                    copy_mask=frozenset(
+                        {"subrip", "srt", "ass", "ssa", "mov_text", "webvtt", "text"}
+                    ),
+                    accept_options=("-c:s:{n}", "mov_text"),
+                    fallback_options=None,
+                    fallback_name=None,
+                    stream_limit=None,
+                    drop_reason="bitmap subtitles cannot be stored in MP4",
+                ),
+            },
+            last_resort=Attempt(
+                label="re-encode",
+                options=(
+                    "-map",
+                    "0:v:0?",
+                    "-map",
+                    "0:a?",
+                    "-c:v",
+                    "libx264",
+                    "-crf",
+                    "18",
+                    "-preset",
+                    "medium",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
+                ),
+                notes=(
+                    "re-encoded to h264/aac (lossy); subtitles and extra video streams dropped",
+                    "10-bit or HDR sources are reduced to 8-bit yuv420p for player compatibility",
+                ),
+            ),
+        )
+        assert expected == MP4
+
 
 class TestWavProfile:
     def test_label_and_suffix(self):
@@ -1484,6 +1582,86 @@ class TestRegistryStructuralInvariants:
         `describe_unsupported`), which is not a target format, it is a no-op
         that pretends to be one."""
         assert len(profile.rules) >= 1
+
+    def test_a_rule_with_no_stream_limit_carries_the_position_placeholder(self, profile):
+        """Issue #22's real bug, generalised registry-wide: ffmpeg's unindexed
+        codec options (`-c:a copy`) are not positional -- when several are
+        given for the same stream type, the *last* one wins for every output
+        stream of that type, not one per stream in map order (measured against
+        ffmpeg 9.0, `M4A`'s and `OPUS`'s audio-rule comments in
+        `converter/profiles.py`). That silently re-encodes an already-accepted
+        stream with no note, so a rule not capped at one output stream of its
+        type -- `stream_limit == 1`, e.g. `WAV`'s or the image profiles', where
+        only one index is ever substituted and the bare form cannot collide --
+        must carry the `{n}` placeholder `jobs._substitute_position`
+        substitutes per stream position.
+
+        `accept_options` is asserted non-empty rather than skipped when falsy:
+        an empty `accept_options` on an uncapped rule would emit a map with no
+        codec option at all, producing an undeclared re-encode -- exactly what
+        `OPUS`'s own audio-rule comment (`converter/profiles.py`) says was
+        measured and is why `opus`'s cheap attempt does not use `WAV`'s empty
+        form. `fallback_options` stays conditional: it is genuinely optional
+        (`StreamRule.fallback_options: tuple[str, ...] | None`), unlike
+        `accept_options`.
+        """
+        for rule in profile.rules.values():
+            if rule.stream_limit == 1:
+                continue
+            assert rule.accept_options, (
+                f"{profile.label}: accept_options is empty on a rule with no "
+                "stream_limit==1 cap -- this would emit a map with no codec option, "
+                "producing an undeclared re-encode"
+            )
+            assert "{n}" in " ".join(rule.accept_options), (
+                f"{profile.label}: accept_options {rule.accept_options!r} has no "
+                "stream_limit==1 cap but no {n} placeholder"
+            )
+            if rule.fallback_options:
+                assert "{n}" in " ".join(rule.fallback_options), (
+                    f"{profile.label}: fallback_options {rule.fallback_options!r} has no "
+                    "stream_limit==1 cap but no {n} placeholder"
+                )
+
+    def test_a_declared_last_resort_always_carries_a_note(self, profile):
+        """Issue #34's bug class, generalised registry-wide: the image
+        `last_resort` used to drop a stream type it did not explicitly map
+        (audio, alongside `-map 0:v:0`) with no note at all -- a direct
+        violation of the constitution's "Never report success for a
+        conversion that silently dropped something." A `last_resort` exists
+        specifically because the ladder's earlier rungs failed, so by
+        construction it is always more constrained than the cheap attempt; an
+        empty `notes` tuple on one would mean a future profile shipped that
+        same silent drop again. Every shipped `last_resort` names either what
+        it re-encoded or what it structurally could not reach, so this is not
+        a hypothetical -- it is the shape every one of them already has.
+        """
+        if profile.last_resort is None:
+            return
+        assert profile.last_resort.notes, (
+            f"{profile.label}: last_resort declares no note for what it degrades or drops"
+        )
+
+
+class TestRegistryTargetCoherence:
+    """Target-suffix coherence across the whole registry (issue #30).
+
+    `TestRegistryStructuralInvariants` above already pins that every target
+    suffix is a curated source suffix; this class pins the direction that
+    check cannot: that no two profiles claim the *same* suffix. A duplicate
+    registry *name* is not this class's concern -- `PROFILES` is built as
+    ``{profile.name: profile for profile in (...)}``, so a name collision
+    would silently drop one profile from the dict entirely rather than leave
+    both reachable for a test parametrized over ``PROFILES.values()`` to
+    compare; `TestRegistry.test_keys_are_each_profile_s_own_name`'s full
+    dict-literal equality is what would actually notice a missing profile.
+    """
+
+    def test_no_two_profiles_share_a_target_suffix(self):
+        suffixes = [profile.target_suffix for profile in PROFILES.values()]
+        duplicates = {suffix for suffix in suffixes if suffixes.count(suffix) > 1}
+
+        assert not duplicates, f"target_suffix collision(s) in the registry: {sorted(duplicates)}"
 
 
 class TestResolveTarget:
