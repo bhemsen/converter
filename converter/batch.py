@@ -1,4 +1,5 @@
-"""Bounded parallel execution of a job over many files, with honest reporting.
+"""Bounded parallel execution of a target profile over many files, with honest
+reporting.
 
 Two deliberate departures from the code this replaces:
 
@@ -23,9 +24,13 @@ from pathlib import Path
 from tqdm import tqdm
 
 from converter import ffmpegtool
+
+# Aliased: run_batch's own `jobs` keyword (parallelism count) would otherwise
+# shadow the module name inside this file.
+from converter import jobs as engine
 from converter.ffmpegtool import ProbeError, Tools
-from converter.jobs import Job
 from converter.paths import ensure_directory
+from converter.profiles import Profile
 
 
 def default_jobs() -> int:
@@ -37,6 +42,11 @@ class Outcome(enum.StrEnum):
     CONVERTED = "converted"
     SKIPPED = "skipped"
     FAILED = "failed"
+    #: The source carries no stream of any type the target profile has a rule
+    #: for at all -- distinct from FAILED, which still sets the exit code
+    #: (docs/specs/spec-target-driven-cli.md). Its discriminator is decided by
+    #: the engine (converter.jobs.describe_unsupported), never here.
+    UNSUPPORTED = "unsupported"
 
 
 @dataclass(frozen=True)
@@ -66,15 +76,15 @@ def _discard_partial_output(dst: Path, *, existed: bool) -> None:
         dst.unlink(missing_ok=True)
 
 
-def _verify_cheap_attempt(job: Job, task: Task, tools: Tools) -> tuple[str, ...]:
+def _verify_cheap_attempt(profile: Profile, task: Task, tools: Tools) -> tuple[str, ...]:
     """Name whatever a structurally partial cheap attempt left behind.
 
-    The one place ffprobe runs after an attempt has *succeeded*. A job whose
-    cheap attempt maps the source exhaustively declares no verifier and never
-    gets here, so the common case keeps its probe-free happy path
+    The one place ffprobe runs after an attempt has *succeeded*. A profile
+    whose cheap attempt maps the source exhaustively needs no verification and
+    never gets here, so the common case keeps its probe-free happy path
     (``docs/design/degradation-ladder.md``).
     """
-    if job.verify_success is None:
+    if not engine.needs_verification(profile):
         return ()
     try:
         streams = ffmpegtool.probe_streams(tools, task.src)
@@ -82,10 +92,10 @@ def _verify_cheap_attempt(job: Job, task: Task, tools: Tools) -> tuple[str, ...]
         # A run whose completeness could not be established must not read as a
         # plain success either (``docs/constitution.md``).
         return (f"could not verify which source streams were kept: {exc}",)
-    return job.verify_success(streams)
+    return engine.verify_success(profile, streams)
 
 
-def _attempt_conversion(job: Job, task: Task, tools: Tools, *, overwrite: bool) -> Result:
+def _attempt_conversion(profile: Profile, task: Task, tools: Tools, *, overwrite: bool) -> Result:
     existed = task.dst.exists()
     if existed and not overwrite:
         return Result(
@@ -94,7 +104,7 @@ def _attempt_conversion(job: Job, task: Task, tools: Tools, *, overwrite: bool) 
             notes=("output already exists; pass --overwrite to replace it",),
         )
 
-    pending = [job.first_attempt()]
+    pending = [engine.first_attempt(profile)]
     errors: list[str] = []
     probed = False
 
@@ -106,7 +116,7 @@ def _attempt_conversion(job: Job, task: Task, tools: Tools, *, overwrite: bool) 
             # `probed` still being false means this was the cheap attempt: every
             # later rung was built from the stream list itself and already
             # carries accurate notes, so only this one needs verifying.
-            extra = () if probed else _verify_cheap_attempt(job, task, tools)
+            extra = () if probed else _verify_cheap_attempt(profile, task, tools)
             return Result(task, Outcome.CONVERTED, attempt.label, (*attempt.notes, *extra))
 
         errors.append(f"[{attempt.label}] {result.stderr or f'exit code {result.returncode}'}")
@@ -119,22 +129,30 @@ def _attempt_conversion(job: Job, task: Task, tools: Tools, *, overwrite: bool) 
             except ProbeError as exc:
                 errors.append(f"[probe] {exc}")
             else:
-                pending.extend(job.retries(streams))
+                # The engine's own signal, read once: a source with no stream
+                # of any type the profile has a rule for can never climb the
+                # rest of the ladder, so spending further ffmpeg attempts on it
+                # would only reconfirm a foregone conclusion.
+                unsupported = engine.describe_unsupported(profile, streams)
+                if unsupported is not None:
+                    _discard_partial_output(task.dst, existed=existed)
+                    return Result(task, Outcome.UNSUPPORTED, notes=unsupported)
+                pending.extend(engine.retries(profile, streams))
 
     _discard_partial_output(task.dst, existed=existed)
     return Result(task, Outcome.FAILED, error=" | ".join(errors))
 
 
-def convert_one(job: Job, task: Task, tools: Tools, *, overwrite: bool) -> Result:
+def convert_one(profile: Profile, task: Task, tools: Tools, *, overwrite: bool) -> Result:
     """Convert a single file, never raising: a bad file must not kill the batch."""
     try:
-        return _attempt_conversion(job, task, tools, overwrite=overwrite)
+        return _attempt_conversion(profile, task, tools, overwrite=overwrite)
     except Exception as exc:  # one broken file must not abort the whole run
         return Result(task, Outcome.FAILED, error=f"{type(exc).__name__}: {exc}")
 
 
 def _interruptible(
-    job: Job,
+    profile: Profile,
     tools: Tools,
     *,
     overwrite: bool,
@@ -159,7 +177,7 @@ def _interruptible(
             # aborts the batch for the right reason.
             raise KeyboardInterrupt
         try:
-            return convert_one(job, task, tools, overwrite=overwrite)
+            return convert_one(profile, task, tools, overwrite=overwrite)
         except KeyboardInterrupt:
             interrupted.set()
             raise
@@ -168,7 +186,7 @@ def _interruptible(
 
 
 def run_batch(
-    job: Job,
+    profile: Profile,
     tasks: Sequence[Task],
     tools: Tools,
     *,
@@ -176,7 +194,7 @@ def run_batch(
     overwrite: bool = False,
     progress: bool = True,
 ) -> list[Result]:
-    """Run *job* over *tasks* with at most *jobs* conversions in flight."""
+    """Run *tasks* through *profile* with at most *jobs* conversions in flight."""
     tasks = list(tasks)
     workers = max(1, jobs or default_jobs())
 
@@ -187,14 +205,14 @@ def run_batch(
         ensure_directory(task.dst.parent)
 
     results: list[Result] = []
-    work = _interruptible(job, tools, overwrite=overwrite, interrupted=threading.Event())
+    work = _interruptible(profile, tools, overwrite=overwrite, interrupted=threading.Event())
 
     # Not ThreadPoolExecutor's own context manager: its __exit__ shuts down with
     # wait=True and no cancellation, so after Ctrl+C every queued file would
     # still be converted before the interrupt was ever noticed.
     pool = ThreadPoolExecutor(max_workers=workers)
     try:
-        with tqdm(total=len(tasks), desc=job.name, unit="file", disable=not progress) as bar:
+        with tqdm(total=len(tasks), desc=profile.label, unit="file", disable=not progress) as bar:
             futures = [pool.submit(work, task) for task in tasks]
             try:
                 # as_completed, so the bar advances when a file is actually done
@@ -232,26 +250,35 @@ class Summary:
     converted: int = 0
     skipped: int = 0
     failed: int = 0
+    unsupported: int = 0
     failures: tuple[Result, ...] = field(default_factory=tuple)
 
     @property
     def total(self) -> int:
-        return self.converted + self.skipped + self.failed
+        return self.converted + self.skipped + self.failed + self.unsupported
 
     @property
     def exit_code(self) -> int:
+        # `unsupported` never sets the exit code (docs/specs/spec-target-driven-cli.md):
+        # a source the target cannot produce at all is reported honestly, not
+        # treated as a run failure -- that is the whole point of the outcome.
         return 1 if self.failed else 0
 
     def describe(self) -> str:
         return (
             f"{self.converted} converted, {self.skipped} skipped, "
-            f"{self.failed} failed (of {self.total})"
+            f"{self.failed} failed, {self.unsupported} unsupported (of {self.total})"
         )
 
 
 def summarise(results: Iterable[Result]) -> Summary:
     """Fold results into a Summary; the exit code is derived, never assumed."""
-    counts = {Outcome.CONVERTED: 0, Outcome.SKIPPED: 0, Outcome.FAILED: 0}
+    counts = {
+        Outcome.CONVERTED: 0,
+        Outcome.SKIPPED: 0,
+        Outcome.FAILED: 0,
+        Outcome.UNSUPPORTED: 0,
+    }
     failures: list[Result] = []
     for result in results:
         counts[result.outcome] += 1
@@ -261,5 +288,6 @@ def summarise(results: Iterable[Result]) -> Summary:
         converted=counts[Outcome.CONVERTED],
         skipped=counts[Outcome.SKIPPED],
         failed=counts[Outcome.FAILED],
+        unsupported=counts[Outcome.UNSUPPORTED],
         failures=tuple(failures),
     )

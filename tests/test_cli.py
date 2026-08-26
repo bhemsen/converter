@@ -6,7 +6,7 @@ import pytest
 
 from converter import batch, cli
 from converter.cli import build_parser, main, prompt_for_argv
-from converter.ffmpegtool import CommandResult, Tools
+from converter.ffmpegtool import CommandResult, Stream, Tools
 
 FAKE_TOOLS = Tools(ffmpeg="ffmpeg", ffprobe="ffprobe")
 
@@ -17,8 +17,8 @@ def parse(argv: list[str]):
 
 class TestParser:
     def test_video_and_audio_subcommands_exist(self):
-        assert parse(["video", "in", "out"]).job.target_suffix == ".mp4"
-        assert parse(["audio", "in", "out"]).job.target_suffix == ".wav"
+        assert parse(["video", "in", "out"]).binding.profile.target_suffix == ".mp4"
+        assert parse(["audio", "in", "out"]).binding.profile.target_suffix == ".wav"
 
     def test_output_directory_is_optional(self):
         assert parse(["video", "in"]).output_dir is None
@@ -200,6 +200,11 @@ class TestExitCodeWiring:
     def test_a_failed_conversion_exits_one(self, tmp_path, monkeypatch, capsys):
         """The old scripts always printed 'Conversion completed.' and exited 0."""
         self._prepare(tmp_path, monkeypatch, 1)
+        # A stream MP4 has a rule for, so this stays a genuine failure rather
+        # than the unsupported outcome.
+        monkeypatch.setattr(
+            batch.ffmpegtool, "probe_streams", lambda *_a: [Stream(0, "video", "h264")]
+        )
 
         code = main(["video", str(tmp_path / "in"), str(tmp_path / "out"), "-q"])
 
@@ -208,6 +213,9 @@ class TestExitCodeWiring:
 
     def test_a_failed_conversion_leaves_no_output_behind(self, tmp_path, monkeypatch):
         self._prepare(tmp_path, monkeypatch, 1)
+        monkeypatch.setattr(
+            batch.ffmpegtool, "probe_streams", lambda *_a: [Stream(0, "video", "h264")]
+        )
 
         main(["video", str(tmp_path / "in"), str(tmp_path / "out"), "-q"])
 
