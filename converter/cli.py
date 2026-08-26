@@ -413,7 +413,11 @@ def _selection(choice: str, targets: Sequence[str]) -> str | None:
     """
     if choice == str(len(targets) + 1) or choice.strip().lower() == MIRROR_COMMAND:
         return MIRROR_COMMAND
-    if choice.isdigit():
+    # isdecimal, not isdigit: the latter is true for characters int() rejects,
+    # such as a superscript digit, and the prompt runs outside main()'s exception
+    # handling -- such an answer would escape as a traceback rather than being
+    # reported as an unknown selection.
+    if choice.isdecimal():
         index = int(choice)
         return targets[index - 1] if 1 <= index <= len(targets) else None
     try:

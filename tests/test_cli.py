@@ -100,10 +100,17 @@ class TestConvertParser:
         assert args.quiet is True
 
     def test_the_epilog_leads_to_mirror_and_the_format_list(self):
-        help_text = build_parser().format_help()
+        """Asserted on the epilog itself, not on the rendered help: `--mirror-to`
+        contains the mirror token and `--list-formats` is an option on this very
+        parser, so a `format_help()` substring check would pass with no epilog at
+        all -- and the epilog is the only thing keeping the mirror *sub-command*
+        discoverable now that it is off a sub-parser list."""
+        epilog = build_parser().epilog
 
-        assert cli.MIRROR_COMMAND in help_text
-        assert cli.LIST_FORMATS_FLAG in help_text
+        assert cli.MIRROR_COMMAND in epilog
+        assert cli.LIST_FORMATS_FLAG in epilog
+        # Rendered too, so an epilog that argparse never prints cannot pass.
+        assert f"{cli.MIRROR_COMMAND} --help" in " ".join(build_parser().format_help().split())
 
 
 class TestMirrorParser:
@@ -332,6 +339,20 @@ class TestConvertCommand:
 
         assert code == 0
 
+    def test_two_real_sources_colliding_on_one_output_stop_the_run(self, tmp_path, capsys):
+        """One target now draws in many source suffixes, so a genuine collision
+        no longer needs a case-folding trick to produce: two files differing only
+        in suffix map to the same output on every platform."""
+        make_source(tmp_path / "in", "a.mkv")
+        make_source(tmp_path / "in", "a.opus")
+
+        code = main(convert_argv(str(tmp_path / "in"), str(tmp_path / "out"), "--dry-run"))
+        err = capsys.readouterr().err
+
+        assert code == 2
+        assert "a.mkv" in err
+        assert "a.opus" in err
+
     def test_a_collision_stops_the_run(self, tmp_path, capsys, monkeypatch):
         """Whether two real files can collide depends on the filesystem's case
         sensitivity, so the CLI's reaction to a collision is driven directly
@@ -557,6 +578,8 @@ class TestExitCodeWiring:
 
     def test_the_audio_target_runs_through_the_same_wiring(self, tmp_path, monkeypatch, capsys):
         make_source(tmp_path / "in", "tone.opus")
+        # _prepare adds a second source of its own, and one target now draws in
+        # every source suffix -- hence two conversions, not one.
         self._prepare(tmp_path, monkeypatch, 0)
 
         code = main(["--to", AUDIO_TARGET, str(tmp_path / "in"), str(tmp_path / "out"), "-q"])
@@ -660,6 +683,14 @@ class TestInteractivePrompt:
 
     def test_unknown_selection_is_rejected(self, monkeypatch, capsys):
         self._answers(monkeypatch, ["nonsense"])
+
+        assert prompt_for_argv() is None
+        assert "Unknown selection" in capsys.readouterr().err
+
+    def test_a_digit_like_character_int_rejects_is_not_a_crash(self, monkeypatch, capsys):
+        """A superscript digit is `isdigit()` but not `int()`-able, and the prompt
+        runs outside main()'s exception handling."""
+        self._answers(monkeypatch, ["\N{SUPERSCRIPT TWO}"])
 
         assert prompt_for_argv() is None
         assert "Unknown selection" in capsys.readouterr().err

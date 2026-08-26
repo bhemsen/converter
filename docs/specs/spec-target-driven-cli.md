@@ -443,3 +443,19 @@ reusing the fixtures the phase-1 gate synthesises:
   `output_dir`, so `_resolve_output_root` and every caller are unchanged. The
   two usage messages it raises were reworded to match the metavar the user
   actually sees.
+- 2026-08-26 (#15, review round 1): The epilog test was vacuous. It asserted the
+  mirror token and the list flag appeared in `format_help()`, which is true with
+  no epilog at all — `--mirror-to` contains the mirror token, and
+  `--list-formats` is an option on that very parser. It now asserts on
+  `parser.epilog` plus the rendered `mirror --help` phrase, so the one thing
+  keeping the mirror *sub-command* discoverable is actually pinned.
+- 2026-08-26 (#15, review round 1): The prompt used `str.isdigit()`, which is
+  true for characters `int()` rejects (a superscript digit). `prompt_for_argv`
+  runs *outside* `main()`'s exception handling, so such an answer escaped as a
+  traceback rather than as "Unknown selection". Changed to `str.isdecimal()`,
+  with a test.
+- 2026-08-26 (#15, review round 1): The only collision test monkeypatched
+  `find_collisions`, justified by a case-sensitivity argument that stopped
+  holding when one target began drawing in several source suffixes: `a.mkv` plus
+  `a.opus` under one target is a genuine collision on every platform. A real one
+  was added next to the stubbed message-formatting test.
