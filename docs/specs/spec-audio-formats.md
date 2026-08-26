@@ -453,11 +453,12 @@ New-Item -ItemType Directory -Force art
   phase-1 note assertion this phase promised to leave alone, so the hole stays,
   named, for a later phase.
 - 2026-08-26 (#20): `SOURCE_SUFFIXES` widened with exactly the Scope list --
-  the eight audio containers and the seven video containers -- plus `.mp3`,
+  the eight audio containers and the seven video containers (`.mp4` already
+  was in the set, so six of the seven are a net addition) -- plus `.mp3`,
   `.m4a`, `.flac` and `.ogg`, the four remaining audio target suffixes not yet
   in the set (`.opus` and `.wav` already were). The last part is not itself in
   the Scope prose but is a separate Acceptance item on the issue ("the six
-  audio target suffixes are all present in the set"): without it, the five
+  audio target suffixes are all present in the set"): without it, the four
   profile-adding issues later in this milestone would each have to widen
   `SOURCE_SUFFIXES` again for their own target suffix, which is exactly the
   kind of `converter/profiles.py` churn this phase's per-PR diff check is
