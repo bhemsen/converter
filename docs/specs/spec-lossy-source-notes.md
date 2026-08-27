@@ -48,8 +48,8 @@ carry it at all.
 ### In scope
 
 - `converter/profiles.py`: a module-level `LOSSY_CODECS` frozenset, beside the
-  copy masks that already live there, and whatever per-rule flag marks a target
-  as lossless for this purpose.
+  copy masks, and the lossless criterion the Decisions table pins
+  (`fallback_options is not None and fallback_name is None`) -- not a new flag.
 - `converter/jobs.py`: emitting the advisory where the gate's decision puts it --
   **appended after a rung is built, or onto the success-side notes, never inside
   the plan**. `_build_selective` short-circuits on `if profile.explicit_streams
@@ -153,7 +153,7 @@ Read off the merged registry and engine, not assumed.
 | A target counts as lossless for the advisory exactly where a rule declares **`fallback_options is not None and fallback_name is None`** -- it re-encodes, and the profile declared that re-encode not worth naming | The bare `fallback_name is None` test is overloaded: it also matches a rule with no fallback at all, which is a *drop*, and matches nine rules rather than five. Worse, phase 6 gives `mp3`, `m4a` and `flac` an `attached_pic` rule that copies with no fallback declared, so the bare test would start classifying `mp3` and `m4a` as lossless targets the moment #6 merges. The refined test selects exactly `flac`, `wav`, `png`, `tiff`, `bmp` | 2026-08-27 |
 | The rationale for reusing that flag is that it is the **profile's own declaration** that the encode needs no note -- not that the encode gives up nothing | Measured, the stronger claim is false for one of the five: `--to wav` from a 24-bit FLAC writes `pcm_s16le` at 16 bits and says nothing. So the flag records a judgement the profile made, and this phase reuses that judgement rather than adding a second marker that could disagree with it. The bit-depth truncation is a real, separate gap -- named in Out of scope, not silently inherited | 2026-08-27 |
 | **No advisory for a lossy target.** A lossy-to-lossy conversion already carries the engine's re-encode note naming both codecs | One advisory, not a commentary track. The re-encode note is the honest report there, and a second line would fire on the commonest conversion the tool performs | 2026-08-27 |
-| The advisory names the source codec and says plainly that the target cannot restore what the source had already discarded | `docs/vision.md` requires a note to name the stream and its codec. The wording is pinned by test, as every note in this project is | 2026-08-27 |
+| The advisory names the stream index and the source codec, and says plainly that the target cannot restore what the source had already discarded | `docs/vision.md` requires a note to name the stream and its codec. The wording is pinned by test, as every note in this project is | 2026-08-27 |
 | `docs/constitution.md` gains one line distinguishing a **degradation note** (what this conversion gave up) from an **advisory** (what the source had already given up), authored in this PR | The current notes convention and its test gate — "a new degradation branch ships with a test asserting the note it emits" — assume the former. Without the distinction, the advisory reads as a claim the tool destroyed something | 2026-08-27 |
 | OPEN — which of the five lossless targets carry the advisory | resolved at the spec-acceptance gate; see the note below | — |
 
@@ -193,7 +193,8 @@ of them had moved.
    engine docstring, with the new boundary written precisely enough that it does
    not become a licence for any codec claim on the success path -- plus narrowing
    the test that pins the current boundary
-   (`tests/test_argv.py::test_a_codec_outside_the_copy_mask_produces_no_note`). Also adds an advisory to `--to png` from a JPEG, which is
+   (the test in `tests/test_argv.py` that pins "a codec outside the copy mask
+   produces no note" on the success side). Also adds an advisory to `--to png` from a JPEG, which is
    correct and may be more noise than anyone wants on an image batch.
 
 ## Tracking
@@ -266,12 +267,16 @@ New-Item -ItemType Directory -Force in
 - 2026-08-27: The prior-art entry's recorded weakness is closed. The seed noted
   that research mode `none` left it unchecked whether any comparable converter
   warns at all; checked now, the principle is stated everywhere and no tool
-  surfaced that acts on it, and no maintained lossy-codec list exists to adopt.
-  Both halves resolve in favour of building it and curating the set.
+  surfaced that acts on it, so the differentiation is real. The entry's other half
+  — whether a list exists to adopt — resolved the other way; see the fourth
+  entry below.
 - 2026-08-27: `docs/roadmap.md`'s seeded verdict "architecture — yes: a
-  lossy-codec set is cross-cutting data" is wrong and is corrected here. The copy
-  masks already live as module-level frozensets in `converter/profiles.py`, so
-  the set has a home and the architecture is untouched.
+  lossy-codec set is cross-cutting data" is wrong and is corrected here.
+  Cross-cutting codec data already lives in `converter/profiles.py` as a
+  module-level frozenset: `TEXT_SUBTITLE_CODECS` is shared by `mp4`, `mov` and
+  `webm`. (Most masks are inlined per profile -- only the four container profiles
+  use module-level constants — so the shared one, not their general shape, is the
+  evidence.)
 - 2026-08-27: The collision suspected at seeding is real but narrower than it
   looked. It is not "the success path forbids codec statements" in general — the
   motivating case is a *failure*-side rung and entirely free. It is the four
@@ -290,3 +295,9 @@ New-Item -ItemType Directory -Force in
   so `fallback_name=None` does not mean "gives up nothing". The phase reuses the
   flag as the profile's own declaration and names the truncation as a separate
   gap rather than inheriting a false premise.
+- 2026-08-27: Review round 2 found the round-1 corrections had landed in new prose
+  while three older passages still asserted the opposite — the prior-art ADOPT
+  bullet, the first decision-log entry, and the roadmap's durable foundation-impact
+  row. All three now say what the measurements say. Worth noting as a failure
+  mode: correcting a claim is not finished until every restatement of it moves,
+  which is the same lesson issue #38's follow-up commit recorded.

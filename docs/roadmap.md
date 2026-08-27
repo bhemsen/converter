@@ -25,10 +25,11 @@ lives.
 
 Foundation impact, recorded at seeding and authored in that phase's `/plan` spec
 PR. What never happens here is the foundation-doc *edit*; the verdict itself is
-corrected in place when planning measures it wrong, which it has done twice:
+corrected in place when planning measures it wrong, as phases 6 and 7 both
+record -- phase 6 corrected a verdict's reason, phase 7 flipped one:
 
 - Phase 6 — Foundation impact: vision — none; constitution — **yes** (corrected at planning: the disposition selector arrived in ffmpeg 7.1, which the tech-stack row now records as the floor for the fast path); architecture — yes: Key flow 2's per-stream match gains a disposition branch, `docs/design/stream-decision.md` gains the node that distinguishes a picture from a video stream, and `docs/design/degradation-ladder.md` gains a third selector kind.
-- Phase 7 — Foundation impact: vision — none; constitution — yes: the notes convention and its test gate assume a note describes what *this* conversion gave up, and an advisory about loss the source already carried is a second kind that has to be defined; architecture — **none** (corrected at planning: the copy masks already live as module-level frozensets in `converter/profiles.py`, so a lossy-codec set beside them needs no architectural change).
+- Phase 7 — Foundation impact: vision — none; constitution — yes: the notes convention and its test gate assume a note describes what *this* conversion gave up, and an advisory about loss the source already carried is a second kind that has to be defined; architecture — **none** (corrected at planning: cross-cutting codec data already lives in `converter/profiles.py` as a module-level frozenset — `TEXT_SUBTITLE_CODECS` is shared by `mp4`, `mov` and `webm` — so a lossy-codec set beside it needs no architectural change).
 
 ## What each phase covers
 

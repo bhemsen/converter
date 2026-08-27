@@ -235,9 +235,9 @@ evidenced, not assumed — see the image-conversion concern.
 - Date: 2026-08-26
 - Notes:
   - ADOPT: a lossy-codec set is the same kind of artifact as a copy mask —
-    curated by hand, because `ffmpeg -codecs` reports what a build contains and
-    never a judgement about it. The Phase 1 concern already argues this and the
-    argument transfers unchanged.
+    curated by hand, for the reasons in AVOID below. The Phase 1 concern supplies
+    the *shape*, not the reason: its claim is about which codec a muxer legally
+    accepts, which is a different question from whether a codec is lossy.
   - AVOID: deriving lossiness from ffmpeg — but **not** for the reason first
     recorded here. ffmpeg does ship the classification (`-codecs`, column `L` for
     lossy and `S` for lossless), and it gets every awkward case right: `alac`,
