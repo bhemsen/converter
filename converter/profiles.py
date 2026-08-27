@@ -113,6 +113,12 @@ TEXT_SUBTITLE_CODECS = frozenset({"subrip", "srt", "ass", "ssa", "mov_text", "we
 #: ffmpeg can be asked what a build contains, never how *this* project judges a
 #: format's behaviour.
 #:
+#: Deliberately non-exhaustive: this project does not claim it lists every lossy
+#: codec ffmpeg can decode, only the ones checked individually and found
+#: unambiguous. A missing codec is a known, disclosable gap (the ADPCM family
+#: below is the worked example), not license to guess -- the same discipline the
+#: copy masks above already apply to what a muxer accepts.
+#:
 #: ffmpeg does ship a lossy/lossless classification (``-codecs``, columns ``L``
 #: and ``S``), and for the five codecs this issue names it is not wrong -- measured
 #: against ffmpeg 9.0: ``alac``, ``flac``, ``wmalossless``, ``truehd`` and every

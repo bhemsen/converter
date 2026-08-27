@@ -394,3 +394,12 @@ New-Item -ItemType Directory -Force in
   on `mp4`/`mov`/`webm` are live fallback-less rules today that the pair
   already discriminates correctly against, not merely a hypothetical
   construction.
+- 2026-08-27 (issue #87, self-review before round 4): added an explicit
+  non-exhaustiveness statement at the top of `LOSSY_CODECS`'s docstring,
+  stating plainly that the set does not claim to list every lossy codec
+  ffmpeg can decode, only the ones checked individually and found
+  unambiguous -- so a codec found missing later (a legacy video codec such
+  as a WMV or RealVideo variant, say) is the disclosed, by-design boundary
+  the ADPCM paragraph already demonstrates the shape of, not an
+  undiscovered instance of the round-3 reachability bug. No membership
+  change; comment only.
