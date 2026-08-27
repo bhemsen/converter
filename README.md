@@ -174,6 +174,14 @@ note    Show.S01E02.mkv: subtitle stream 2 (hdmv_pgs_subtitle) dropped: bitmap s
   embedded cover art — is left out. A straight copy says so even when the
   source had nothing to lose; when the audio itself has to be re-encoded, the
   dropped stream is still named, just without the extra line.
+* **`--to opus` can hand you a `.opus` file that is actually Vorbis.** A
+  Vorbis source (typically a `.ogg`/`.oga` file) is stream-copied into the
+  `.opus` container without transcoding — genuinely lossless, but `.opus` is a
+  codec-defined format (RFC 7845), so strict players may reject the result.
+  This is a deliberate trade: forcing a re-encode instead would cost every
+  already-Opus source a generation loss just to guard against a mislabel that
+  only a Vorbis source can trigger. Point a Vorbis source at `--to ogg`
+  instead for a lossless copy that keeps its real codec.
 * **Windows path length.** Mirroring a deep source tree onto a sub-directory can
   push paths past Windows' 260-character limit; the error message says so when it
   happens. Either pick a shorter output root or

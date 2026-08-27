@@ -614,3 +614,15 @@ New-Item -ItemType Directory -Force art
 - 2026-08-26: Close-out. The final QA gate ran against real ffmpeg 9.0 on
   Windows 11, verifying all 17 target formats end-to-end with ffprobe.
   Verdict: PASS WITH FINDINGS; the findings are filed as issues #66-#73.
+- 2026-08-27 (#68): The QA gate's finding was a docs gap, not a profile bug:
+  "The opus decision, in full" above had already accepted the Vorbis-into-
+  `.opus` mislabel as `opus`'s one deliberate trade, but `README.md` never
+  said so. Re-measured against ffmpeg 9.0 before writing anything: a
+  `libvorbis`-encoded `.ogg` through `--to opus` produced a `.opus` file
+  byte-identical to the source (6913 bytes both sides) whose stream
+  `ffprobe` still reports as `codec_name=vorbis`. Added a `README.md` bullet
+  to "Notes and limitations" stating the mislabel plainly, naming the RFC
+  7845 codec-defined-format reason strict players may reject it, and pointing
+  a Vorbis source at `--to ogg` instead. No profile, engine or test change --
+  the behaviour itself was already correct and already decided; this closes
+  the gap between that decision and what the user is told.
