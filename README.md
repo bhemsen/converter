@@ -52,6 +52,12 @@ More target formats can be added — see [Contributing](#contributing).
 Keep ffmpeg reasonably current. It is the component that parses untrusted media
 files, so it is where media-parsing security fixes land.
 
+**ffmpeg 7.1 or newer is worth having, but is not required.** Converting to
+`mp3`, `m4a` or `flac` uses a stream selector that arrived in 7.1 to carry
+embedded cover art across. On an older build — Ubuntu 24.04 ships 6.1.1, Debian
+12 ships 5.1.9 — those three conversions cost one extra ffmpeg call per file and
+then produce the same result, artwork included. Every other target is unaffected.
+
 ## Install
 
 ```sh

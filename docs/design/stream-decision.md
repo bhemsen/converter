@@ -22,6 +22,7 @@ encoder produces (`h264`, `aac`), `DROP_REASON` the reason the rule declares.
 ```mermaid
 flowchart TD
     S["stream i — type t, codec c"]
+    PIC{"is stream i an attached picture,<br/>and does the profile declare an attached_pic rule?"}
     T{"does the profile declare a rule for type t?"}
     ROOM{"is there still room for a t stream?<br/>(the rule's stream limit)"}
     MASK{"is c in the rule's copy mask?"}
@@ -32,7 +33,9 @@ flowchart TD
     D2["drop — note: t stream i (c) dropped: TARGET holds LIMIT t stream<br/>(the noun agrees in number with LIMIT)"]
     D3["drop — note: t stream i (c) dropped: DROP_REASON"]
 
-    S --> T
+    S --> PIC
+    PIC -->|"yes — use that rule"| ROOM
+    PIC -->|"no"| T
     T -->|"no"| D1
     T -->|"yes"| ROOM
     ROOM -->|"no"| D2
@@ -45,6 +48,13 @@ flowchart TD
 
 ## Rules the diagram encodes
 
+- **Disposition is checked before type.** An attached picture is a video stream
+  by `codec_type`, so a profile that can hold artwork but not video would
+  otherwise have to choose between carrying both and dropping both. The rule is
+  resolved by disposition first, falling back to the type — and a profile that
+  declares no `attached_pic` rule is unaffected, since the fallback is what it
+  already did. The engine still counts a carried picture under `video`, because
+  ffmpeg numbers it as a video output stream.
 - **Three outcomes, never a fourth.** A stream is accepted, re-encoded, or
   dropped. Every drop edge names the reason, because a silent drop is exactly
   what the vision forbids.
