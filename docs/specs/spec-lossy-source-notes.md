@@ -403,3 +403,29 @@ New-Item -ItemType Directory -Force in
   the ADPCM paragraph already demonstrates the shape of, not an
   undiscovered instance of the round-3 reachability bug. No membership
   change; comment only.
+- 2026-08-27 (issue #88): the advisory itself landed in `converter/jobs.py`,
+  scoped to `flac` alone as the gate resolved. Implementation note beyond what
+  the Prior decisions table already records: the advisory is computed by a new
+  `_lossy_source_notes` pass, called from `retries()` only after
+  `_build_selective` has already returned a non-`None` attempt, and appended
+  onto that attempt's existing `notes` tuple via `dataclasses.replace` --
+  never folded into `_build_selective`'s own `notes` list, which the
+  `if profile.explicit_streams and not notes: return None` short-circuit reads
+  to decide whether the rung exists at all. Proven by a scratch simulation
+  (not committed) that folding the advisory inside the plan does resurrect
+  `wav`'s skipped rung for an MP3 source, while the shipped implementation
+  leaves `jobs.retries(WAV, ...)` at `[]` exactly as before. The pass is gated
+  by a private `_LOSSY_SOURCE_ADVISORY_TARGETS = frozenset({"flac"})` rather
+  than the registry-wide lossless criterion `lossless_target_names` computes
+  in `tests/test_profiles.py` -- the gate's decision was `flac` only, not
+  every profile satisfying that criterion, and `converter/profiles.py` is
+  issue #77's concurrent territory for this issue, so no field was added to
+  `Profile` to carry the restriction. Tests landed in `tests/test_batch.py`
+  (`TestLossySourceAdvisory`), not `tests/test_argv.py`, per this issue's file
+  ownership; `tests/test_argv.py`'s existing pinned `flac`/`mp3`/`m4a`/`wav`
+  cases were re-run unmodified and still pass, since none of their fixture
+  streams carry a `LOSSY_CODECS` member into `flac`. The two foundation-doc
+  amendments the spec's In-scope list also names (`docs/constitution.md`,
+  `docs/design/stream-decision.md`) are issue #89's scope, not this one's --
+  confirmed against the actual issue text, which depends on #88 and owns
+  exactly those two files -- so they are left untouched here.

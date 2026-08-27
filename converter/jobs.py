@@ -19,7 +19,7 @@ from dataclasses import replace
 from typing import TypeVar
 
 from converter.ffmpegtool import Stream
-from converter.profiles import Attempt, Profile
+from converter.profiles import LOSSY_CODECS, Attempt, Profile
 
 #: What a stream is counted under -- either its full :func:`_stream_key` or its
 #: bare type. :func:`_surplus` does the same arithmetic for both.
@@ -53,6 +53,24 @@ def _reencode_note(stream: Stream, target_codec: str) -> str:
     kind = stream.codec_type or "unknown"
     codec = stream.codec_name or "unknown"
     return f"{kind} stream {stream.index} ({codec}) re-encoded to {target_codec}"
+
+
+def _lossy_source_note(stream: Stream, profile: Profile) -> str:
+    """The lossy-source advisory (spec-lossy-source-notes.md, `LOSSY_CODECS`).
+
+    Unlike :func:`_drop_note` and :func:`_reencode_note`, this reports no
+    decision *this* conversion made: the stream is carried faithfully, exactly
+    as the rung already planned. It answers a different question -- what the
+    source had already given up before this run ever started -- which is why
+    ``docs/constitution.md`` names it an advisory rather than a degradation
+    note (`docs/design/stream-decision.md`'s carve-out).
+    """
+    kind = stream.codec_type or "unknown"
+    codec = stream.codec_name or "unknown"
+    return (
+        f"{kind} stream {stream.index} ({codec}) was already lossy before this file "
+        f"reached {profile.label}; {profile.label} cannot restore what {codec} discarded"
+    )
 
 
 def _room_reason(profile: Profile, stream_type: str, limit: int) -> str:
@@ -225,6 +243,43 @@ def _build_selective(profile: Profile, streams: Sequence[Stream]) -> Attempt | N
     return Attempt("selective", (*maps, *codecs), tuple(notes))
 
 
+#: The only target this phase's advisory covers (Prior decisions,
+#: spec-lossy-source-notes.md, "Only flac carries the advisory"). The other
+#: four lossless targets (`wav`, `png`, `tiff`, `bmp`) always succeed their
+#: cheap attempt, so the only place they could carry a codec-level statement is
+#: the success-side verification -- deliberately, and unchanged, off limits to
+#: any codec claim (:func:`verify_success`, issue #18).
+_LOSSY_SOURCE_ADVISORY_TARGETS = frozenset({"flac"})
+
+
+def _lossy_source_notes(profile: Profile, streams: Sequence[Stream]) -> tuple[str, ...]:
+    """The lossy-source advisory pass, run only after the selective rung exists.
+
+    Appended by :func:`retries`, never folded into :func:`_build_selective`'s own
+    ``notes`` list: that list feeds the short-circuit
+    ``if profile.explicit_streams and not notes: return None`` that keeps the
+    rung skipped for `wav` today. An advisory added inside the plan would give
+    `wav` a non-empty ``notes`` list and resurrect a rung the ladder
+    deliberately never builds for it -- the trap this phase's issue names first.
+
+    Recomputes which streams the rung actually carries with the same structural
+    check :func:`_build_selective` uses (:func:`_structural_drop`), rather than
+    reusing that pass's own accounting, so this function can stay entirely
+    outside the plan it describes.
+    """
+    if profile.name not in _LOSSY_SOURCE_ADVISORY_TARGETS:
+        return ()
+    notes: list[str] = []
+    counts: dict[str, int] = {}
+    for stream in streams:
+        if _structural_drop(profile, stream, counts) is not None:
+            continue
+        counts[stream.codec_type] = counts.get(stream.codec_type, 0) + 1
+        if stream.codec_name in LOSSY_CODECS:
+            notes.append(_lossy_source_note(stream, profile))
+    return tuple(notes)
+
+
 def first_attempt(profile: Profile) -> Attempt:
     """Rung 1 of degradation-ladder.md: *profile*'s own cheap attempt."""
     return _with_container_options(profile.cheap_attempt, profile)
@@ -235,6 +290,9 @@ def retries(profile: Profile, streams: Sequence[Stream]) -> list[Attempt]:
     attempts: list[Attempt] = []
     selective = _build_selective(profile, streams)
     if selective is not None:
+        advisories = _lossy_source_notes(profile, streams)
+        if advisories:
+            selective = replace(selective, notes=(*selective.notes, *advisories))
         attempts.append(_with_container_options(selective, profile))
     if profile.last_resort is not None:
         attempts.append(_with_container_options(profile.last_resort, profile))
