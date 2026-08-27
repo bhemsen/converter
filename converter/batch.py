@@ -217,6 +217,31 @@ def _interruptible(
     return work
 
 
+def _stage_output_directories(tasks: Sequence[Task]) -> tuple[list[Task], list[Result]]:
+    """Create each task's output directory, containing a path-length failure to its file.
+
+    Run single-threaded in the parent before the pool starts (see run_batch's
+    docstring note on why directory creation happens up front at all). The old
+    code let ``ensure_directory`` raise straight out of this loop: an OSError
+    from one source -- typically a derived output path over Windows' MAX_PATH --
+    propagated out of ``run_batch`` and aborted every remaining file in the
+    tree, which is exactly what ``docs/constitution.md`` rules out ("one broken
+    input file must not abort the batch"). Only ``OSError`` is caught here, not
+    a bare ``Exception``: a genuine programming error in this loop must still
+    surface as a crash rather than be filed away as a failed conversion.
+    """
+    runnable: list[Task] = []
+    failures: list[Result] = []
+    for task in tasks:
+        try:
+            ensure_directory(task.dst.parent)
+        except OSError as exc:
+            failures.append(Result(task, Outcome.FAILED, error=str(exc)))
+        else:
+            runnable.append(task)
+    return runnable, failures
+
+
 def run_batch(
     profile: Profile,
     tasks: Sequence[Task],
@@ -233,8 +258,7 @@ def run_batch(
     # Created up front, single-threaded, in the parent.  The old code ran
     # "if not exists: makedirs()" inside every worker, which races: the losers
     # died with FileExistsError and their files were never converted.
-    for task in tasks:
-        ensure_directory(task.dst.parent)
+    runnable_tasks, early_failures = _stage_output_directories(tasks)
 
     results: list[Result] = []
     work = _interruptible(profile, tools, overwrite=overwrite, interrupted=threading.Event())
@@ -245,7 +269,11 @@ def run_batch(
     pool = ThreadPoolExecutor(max_workers=workers)
     try:
         with tqdm(total=len(tasks), desc=profile.label, unit="file", disable=not progress) as bar:
-            futures = [pool.submit(work, task) for task in tasks]
+            for result in early_failures:
+                results.append(result)
+                _report(result, bar)
+                bar.update(1)
+            futures = [pool.submit(work, task) for task in runnable_tasks]
             try:
                 # as_completed, so the bar advances when a file is actually done
                 # rather than in submission order.
