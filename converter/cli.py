@@ -79,7 +79,7 @@ def _add_convert_arguments(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=None,
         metavar="N",
-        help=f"conversions to run in parallel (default: {default_jobs()})",
+        help=f"conversions to run in parallel, not capped (default: {default_jobs()})",
     )
     parser.add_argument(
         "--overwrite",

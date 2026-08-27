@@ -99,7 +99,7 @@ option list (`converter mirror --help` for the mirror sub-command's own).
 | `--list-formats` | list the target formats available and exit |
 | `-r`, `--recursive` | also convert files in sub-directories, keeping the tree in the output |
 | `--mirror-to ROOT` | derive the output directory by re-rooting `INPUT_DIR` onto `ROOT`, e.g. `E:` — use instead of `OUTPUT_DIR` |
-| `-j N`, `--jobs N` | conversions to run in parallel (default: 4, capped by CPU count) |
+| `-j N`, `--jobs N` | conversions to run in parallel, not capped (default: 4, or fewer if the machine has fewer CPUs) |
 | `--overwrite` | replace existing output files instead of skipping them |
 | `--dry-run` | print what would be converted and stop |
 | `-q`, `--quiet` | hide the progress bar |
