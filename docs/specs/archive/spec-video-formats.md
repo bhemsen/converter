@@ -566,3 +566,129 @@ New-Item -ItemType Directory -Force in
 - 2026-08-26: Close-out. The final QA gate ran against real ffmpeg 9.0 on
   Windows 11, verifying all 17 target formats end-to-end with ffprobe.
   Verdict: PASS WITH FINDINGS; the findings are filed as issues #66-#73.
+
+- 2026-08-27 (issue #66): the muxer fact this phase measured -- "neither MKV nor
+  a `v/a/s/t` map carries data or timecode streams" (Prior decisions, row 3) --
+  is right about the *mapping* and wrong about the *output* for `mp4` and `mov`.
+  Re-measured against ffmpeg 9.0 on Windows 11 with a `-timecode`-bearing source:
+  the `tmcd` stream is absent from an `.mkv` and a `.webm` output, exactly as the
+  table says, but present in both an `.mp4` and a `.mov` one, because MOV/MP4's
+  muxer regenerates a timecode track from the source's metadata although no
+  selector maps it. The phase therefore shipped a note claiming a loss that did
+  not happen -- the false-positive half of the loss accounting `docs/vision.md`
+  names as the USP, and the reason this was treated as a correctness bug rather
+  than cosmetics.
+
+  Fixed **generally rather than by special-casing `tmcd`**: `jobs.verify_success`
+  is now explicitly a *prediction* from the mapping, and `jobs.confirm_drops`
+  weighs it against the file that was actually written, keeping only the drops
+  the output does not contain. The comparison counts both files' streams
+  **twice** -- once per stream type, once per `(codec_type, codec_name,
+  codec_tag_string)` key -- and forgives a predicted drop only where *both*
+  counts show a surplus **and** that surplus covers every predicted drop sharing
+  the key. An index cannot be a match key at all: a stream the muxer put back
+  carries whatever index the output gives it.
+
+  It took three review rounds to arrive at those conditions, and every one of
+  them exists because review built a counter-example that hid a real loss -- the
+  direction `docs/constitution.md` forbids outright, and the one this fix must
+  not open while closing its mirror image. Recorded in full because the sequence
+  is the argument: each round's fix was locally correct and opened the next hole,
+  so the final rule is not a stack of patches but the shape the three failures
+  jointly describe.
+
+  **Round 1 killed matching by type alone.** No profile declares a `data` rule,
+  so `kept["data"]` is always 0 and *any* data stream in the output forgave one
+  predicted data drop. A source carrying `gpmd`/ANC telemetry *and* a
+  source-level timecode reported a clean success while the telemetry was
+  genuinely gone. Re-measured on ffmpeg 9.0 to settle the key: a source with a
+  `TIMECODE` tag and no data stream at all still produces a `tmcd` data stream in
+  a MOV output (so the track comes from *metadata*), and a `video + bin_data`
+  source produces an output with zero data streams (so `bin_data` really is
+  lost). ffprobe reports no `codec_name` on *either* side of a `tmcd` pair and
+  `bin_data` on both sides of a telemetry one -- which is what makes the codec
+  name a usable match key.
+
+  **Round 2 killed matching by that key alone.** A cheap attempt that
+  *re-encodes* makes the two sides disagree by construction: `kept` carries the
+  source's codec name, the output carries the encoder's. WAV's `-map 0:a:0 -c:a
+  pcm_s16le` over an `[aac, pcm_s16le]` source writes one `pcm_s16le` stream,
+  which read as a surplus under that key and forgave the drop of the source's
+  second, genuinely lost, `pcm_s16le` track -- an ordinary camera/pro-video MOV
+  through `--to wav`, not a corner case. A re-encode preserves a stream's *type*
+  but not its codec name, which is exactly why the type count is immune to that
+  phantom, and why requiring both is not a patch on top of the first rule but the
+  rule the two failures jointly describe. WAV is the only live instance today,
+  but the hazard is structural: it arms itself for any future profile that
+  combines a re-encoding cheap attempt with a `stream_limit`.
+
+  **Round 3 killed attributing a partial surplus in source order.** The rule as
+  of round 2 forgave one predicted drop per surviving stream, and disclosed the
+  residual as "the *count* of reported losses is right while the index named may
+  not be" -- which read as cosmetic mis-numbering and was not. Review measured
+  the case that makes it substantive: an Apple `mebx` metadata track, which every
+  iPhone `.mov` carries, demuxes with `codec_id = NONE` because its 4CC maps to
+  no codec id, so ffprobe omits `codec_name` for it exactly as it does for a
+  `tmcd`. A source carrying both, converted to `mov` or `mp4`, keeps only the
+  regenerated timecode -- and source order put the genuinely lost metadata track
+  first, so it was forgiven while the *survivor* was reported as the loss. That
+  is issue #66's own failure mode with a real loss hidden behind it, and on
+  `main` both streams had at least been named.
+
+  Two changes close it. `codec_tag_string` joins the probe's `-show_entries` and
+  the match key -- one extra field on a query that was already being made, no
+  extra process -- so `mebx` and `tmcd` are distinguishable and a regenerated
+  timecode still matches its source, both carrying the tag `tmcd` (measured).
+  And a key's predicted drops are now forgiven **all or none**: where the probe
+  genuinely cannot tell two streams apart and only one returns, every candidate
+  keeps its note. Guessing would break both halves of the promise at once, so
+  the residual is now over-reporting on real ambiguity rather than a
+  possibly-wrong index -- and the disclosure says so.
+
+  The forbidden direction is closed on three further sides: a drop with no
+  surplus under either count keeps its note, a probe that fails leaves the whole
+  prediction standing with an added note saying it could not be confirmed, and
+  *both* success-side probes catch `OSError` as well as `ProbeError` rather than
+  turning a conversion ffmpeg already completed into a reported failure -- the
+  source probe included, since review pointed out it runs after a successful
+  conversion for the same reason the output probe does.
+
+  **ffprobe frequency changed, deliberately.** The success side now spends a
+  second probe -- on the *output* -- but only on a run that has already predicted
+  at least one drop, so a conversion whose mapping gives nothing up costs exactly
+  the one probe it cost before. How often that is depends on the profile rather
+  than on any general "common case": every one of the 17 shipped profiles
+  declares `partial_mapping=True`, so the change reaches all of them, and an
+  audio target over a library whose files all carry cover art predicts a drop --
+  and pays for the second probe -- on every file. This is the same trade issue
+  #18 made and
+  `spec-profile-registry.md`'s Decision log records (the loss-accounting USP over
+  a probe on a minority of runs), applied to the mirror-image bug, so it was
+  resolved as settled by precedent rather than escalated as a design fork. The
+  restatements moved with it in this PR: `docs/constitution.md` (Architecture
+  principles), `docs/design/degradation-ladder.md` (the diagram gains node `C`
+  and a rule for it), `docs/design.md` (Cost markers), `docs/architecture.md`
+  (Key flows section 1), `docs/prior-art.md`'s ADOPT note, and
+  `converter/ffmpegtool.probe_streams`'s docstring. One restatement is left
+  stale on purpose: `spec-profile-registry.md`'s Constraints still say "the
+  engine probes at most once per file". That file was being edited concurrently
+  by another issue's branch, and a Decision log entry outside one's own spec is
+  not this issue's to write -- the live normative statement in
+  `docs/constitution.md` is corrected, and the archived one is a record of what
+  phase 1 decided.
+
+  Review also proposed renaming `jobs.verify_success` to `predict_drops`, since
+  it now returns something that must never be reported unconfirmed. Declined for
+  now, and recorded rather than dropped: `spec-target-driven-cli.md` names the
+  symbol and belongs to a concurrently edited branch, so the rename would leave a
+  dangling reference in a file this issue must not touch. The docstring carries
+  the correction instead, and the rename is cheap to make once that branch lands.
+
+  `mov`'s standing note (`"data and timecode streams are not carried into MOV"`,
+  Prior decisions row 3 and the Verification item pinning its wording) is
+  **removed**, and its test now pins the absence. It was a blanket claim, printed
+  on every MOV conversion, that the measurement above shows to be false for the
+  commonest data stream a MOV source carries; the per-file confirmation names a
+  real data drop per stream instead, so nothing is lost by dropping it. `mkv`'s
+  and `webm`'s standing notes are untouched -- there the loss is real, and the
+  issue's acceptance asked for that behaviour to stay unchanged.

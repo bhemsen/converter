@@ -120,6 +120,29 @@ class TestProbeStreams:
 
         assert ffmpegtool.probe_streams(TOOLS, "in.mkv") == [Stream(7, "", "")]
 
+    def test_the_container_tag_is_asked_for_and_parsed(self, monkeypatch):
+        """A `tmcd` timecode track and an Apple `mebx` metadata track both report
+        no `codec_name` at all, so the tag is the only thing that tells them
+        apart -- and `jobs.confirm_drops` needs to (issue #66)."""
+        payload = {
+            "streams": [
+                {"index": 0, "codec_type": "data", "codec_tag_string": "tmcd"},
+                {"index": 1, "codec_type": "data", "codec_tag_string": "mebx"},
+            ]
+        }
+        seen: list[list[str]] = []
+
+        def record(argv, **_kwargs):
+            seen.append(list(argv))
+            return CommandResult(tuple(argv), 0, json.dumps(payload), "")
+
+        monkeypatch.setattr(ffmpegtool, "run", record)
+
+        streams = ffmpegtool.probe_streams(TOOLS, "in.mov")
+
+        assert "stream=index,codec_type,codec_name,codec_tag_string" in seen[0]
+        assert [stream.codec_tag for stream in streams] == ["tmcd", "mebx"]
+
     def test_streams_without_a_usable_index_are_skipped(self, monkeypatch):
         payload = {
             "streams": [

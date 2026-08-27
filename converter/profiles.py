@@ -353,17 +353,24 @@ MOV = Profile(
     # missing rule drops it with a real per-stream note -- better than a
     # blanket standing note for the one case MOV can make loud. Still not
     # "-map 0": that would also select data and timecode streams, which no
-    # "v/a/s/t" map -- MOV's included -- carries at all (measured).
+    # "v/a/s/t" map -- MOV's included -- selects at all (measured).
+    #
+    # No standing note about data and timecode streams, unlike MKV's otherwise
+    # identical shape: MOV's muxer *regenerates* a tmcd timecode track from the
+    # source's metadata even though no selector maps it, so the blanket claim
+    # was measurably false for the commonest data stream a MOV source carries
+    # (issue #66). What actually reaches the output is settled per file by the
+    # success-side verification, which reads the written file rather than the
+    # mapping -- a real data drop still gets its own per-stream note there.
     cheap_attempt=Attempt(
         label="remux",
         options=flags("-map 0:v? -map 0:a? -map 0:s? -map 0:t? -c copy -c:s mov_text"),
-        notes=("data and timecode streams are not carried into MOV",),
     ),
     explicit_streams=False,
     # The blind "?" selectors carry every video, audio and subtitle stream
-    # MOV's muxer can hold, but never a data or timecode one, and an attachment
-    # only ever forces the cheap attempt to fail -- exactly the standing note's
-    # claim, verified once per successful cheap attempt rather than assumed.
+    # MOV's muxer can hold, and an attachment only ever forces the cheap attempt
+    # to fail; what the muxer does with a data stream is checked against the
+    # output per file rather than declared here.
     partial_mapping=True,
     rules={
         "video": StreamRule(

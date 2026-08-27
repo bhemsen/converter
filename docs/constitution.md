@@ -31,8 +31,12 @@
   actually failed. A cheap attempt that is **partial by construction** — one
   whose mapping can leave source streams unmapped, and which says so as a
   declared field on its profile — is probed once even when it succeeds, so that
-  what it dropped is named rather than reported as a plain success. Either way,
-  at most one probe per file.
+  what it dropped is named rather than reported as a plain success. One probe per
+  file, plus a second only where a loss is about to be *reported*: what a mapping
+  gives up is a prediction, and a muxer may put back what no `-map` selected, so
+  the claim is confirmed against the written file before it is printed
+  (`docs/design/degradation-ladder.md`). A conversion that gives nothing up never
+  pays for that second probe.
 - A target format is data, not code: adding one must produce no diff in
   `cli.py`, `batch.py` or `paths.py`.
 - One broken input file must not abort the batch.

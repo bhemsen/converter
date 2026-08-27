@@ -28,7 +28,7 @@ from converter import ffmpegtool
 # Aliased: run_batch's own `jobs` keyword (parallelism count) would otherwise
 # shadow the module name inside this file.
 from converter import jobs as engine
-from converter.ffmpegtool import ProbeError, Tools
+from converter.ffmpegtool import ProbeError, Stream, Tools
 from converter.paths import ensure_directory
 from converter.profiles import Profile
 
@@ -76,6 +76,31 @@ def _discard_partial_output(dst: Path, *, existed: bool) -> None:
         dst.unlink(missing_ok=True)
 
 
+def _confirm_against_output(
+    profile: Profile,
+    task: Task,
+    tools: Tools,
+    streams: Sequence[Stream],
+    predicted: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Weigh a predicted loss against the file that was actually written.
+
+    The second probe of ``docs/design/degradation-ladder.md``, and the only one
+    ever aimed at an output. It is spent solely on a run that is *about to claim
+    a loss*, so a conversion whose mapping gives nothing up still costs a single
+    probe.
+    """
+    try:
+        produced = ffmpegtool.probe_streams(tools, task.dst)
+    except (ProbeError, OSError) as exc:
+        # Over-reporting is the safe side of "never report success for a
+        # conversion that silently dropped something" (``docs/constitution.md``):
+        # keep the prediction and say it could not be checked, rather than
+        # discarding notes on the strength of a probe that never answered.
+        return (*predicted, f"could not confirm this against the output: {exc}")
+    return engine.confirm_drops(profile, streams, produced)
+
+
 def _verify_cheap_attempt(profile: Profile, task: Task, tools: Tools) -> tuple[str, ...]:
     """Name whatever a structurally partial cheap attempt left behind.
 
@@ -88,11 +113,18 @@ def _verify_cheap_attempt(profile: Profile, task: Task, tools: Tools) -> tuple[s
         return ()
     try:
         streams = ffmpegtool.probe_streams(tools, task.src)
-    except ProbeError as exc:
+    # Both probes on this side run *after* ffmpeg already produced a good file,
+    # so a spawn failure must degrade the bookkeeping, never the conversion:
+    # letting an OSError escape would report FAILED for a file that converted
+    # fine and leave the output behind for the next run to skip.
+    except (ProbeError, OSError) as exc:
         # A run whose completeness could not be established must not read as a
         # plain success either (``docs/constitution.md``).
         return (f"could not verify which source streams were kept: {exc}",)
-    return engine.verify_success(profile, streams)
+    predicted = engine.verify_success(profile, streams)
+    if not predicted:
+        return ()
+    return _confirm_against_output(profile, task, tools, streams, predicted)
 
 
 def _attempt_conversion(profile: Profile, task: Task, tools: Tools, *, overwrite: bool) -> Result:

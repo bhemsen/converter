@@ -693,8 +693,13 @@ class TestMovProfile:
     def test_cheap_attempt_is_declared_partial(self):
         assert MOV.partial_mapping is True
 
-    def test_cheap_attempt_carries_the_standing_note(self):
-        assert MOV.cheap_attempt.notes == ("data and timecode streams are not carried into MOV",)
+    def test_cheap_attempt_carries_no_standing_note(self):
+        """MOV's muxer regenerates a `tmcd` timecode track from source metadata
+        even though no selector maps it, so the standing note MKV still carries
+        was measurably false here (issue #66). The per-file success-side
+        verification reads the written output and names a real data drop
+        itself, so nothing is lost by dropping the blanket claim."""
+        assert MOV.cheap_attempt.notes == ()
 
     def test_last_resort_excludes_container_options(self):
         assert MOV.last_resort is not None

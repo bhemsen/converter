@@ -2,6 +2,7 @@
 
 import subprocess
 from dataclasses import replace
+from typing import ClassVar
 
 import pytest
 
@@ -2636,6 +2637,188 @@ class TestSuccessSideVerification:
         streams = [Stream(0, "video", "vp8"), Stream(1, "subtitle", "dvd_subtitle")]
 
         assert jobs.verify_success(MP4, streams) == ()
+
+
+class TestConfirmDrops:
+    """`jobs.confirm_drops`: the prediction weighed against the written file.
+
+    `verify_success` reads the mapping, which says what ffmpeg was *asked* to
+    carry. MP4 and MOV regenerate a `tmcd` timecode track from source metadata
+    with no selector naming it (issue #66), so the mapping alone over-reports.
+
+    A drop is forgiven only when the output holds a surplus by stream type
+    *and* by `(type, codec name, container tag)`, and only when that surplus
+    covers every predicted drop sharing the key. Three review rounds killed the
+    weaker forms in turn, each with a counter-example that hid a real loss --
+    the one direction `docs/constitution.md` forbids outright:
+
+    * by type alone, a regenerated `tmcd` forgave the drop of a `gpmd`/ANC
+      telemetry stream in the same file, since no profile declares a `data`
+      rule;
+    * by type and codec name, WAV's re-encoding cheap attempt made source and
+      output disagree on the codec name, so its own `pcm_s16le` output forgave
+      the drop of a second, genuinely lost `pcm_s16le` source track;
+    * without the container tag, an Apple `mebx` metadata track -- which reports
+      no codec name either -- was forgiven in place of the `tmcd` beside it, so
+      the survivor was named as the loss and the real loss went unreported;
+    * without the all-or-nothing clause, a partial surplus had to guess which of
+      several indistinguishable streams survived, and guessing wrong breaks both
+      halves of the promise at once.
+    """
+
+    SOURCE: ClassVar[list[Stream]] = [
+        Stream(0, "video", "h264"),
+        Stream(1, "audio", "aac"),
+        Stream(2, "data", ""),
+    ]
+
+    def test_a_stream_the_output_still_holds_is_not_reported_as_dropped(self):
+        assert jobs.confirm_drops(MP4, self.SOURCE, self.SOURCE) == ()
+
+    def test_a_stream_the_output_does_not_hold_keeps_its_note(self):
+        produced = [Stream(0, "video", "h264"), Stream(1, "audio", "aac")]
+
+        assert jobs.confirm_drops(MKV, self.SOURCE, produced) == (
+            "data stream 2 (unknown) dropped: not supported by MKV",
+        )
+
+    def test_an_output_that_holds_nothing_keeps_every_note(self):
+        """Nothing survived, so nothing is forgiven -- the direction that
+        over-reports rather than falling silent."""
+        assert jobs.confirm_drops(MP4, self.SOURCE, []) == jobs.verify_success(MP4, self.SOURCE)
+
+    def test_an_ambiguous_surplus_forgives_nothing(self):
+        """Two streams that are indistinguishable to the probe are predicted
+        dropped and exactly one comes back. Which one survived is unknowable, so
+        both keep their note: forgiving one at a guess would claim a loss that
+        did not happen *and* fall silent about one that did."""
+        source = [
+            Stream(0, "video", "h264", "avc1"),
+            Stream(1, "data", "", "tmcd"),
+            Stream(2, "data", "", "tmcd"),
+        ]
+        produced = [Stream(0, "video", "h264", "avc1"), Stream(1, "data", "", "tmcd")]
+
+        assert jobs.confirm_drops(MP4, source, produced) == (
+            "data stream 1 (unknown) dropped: not supported by MP4",
+            "data stream 2 (unknown) dropped: not supported by MP4",
+        )
+
+    def test_the_same_streams_all_surviving_are_all_forgiven(self):
+        """The counterpart: the surplus covers every predicted drop of the key,
+        so there is nothing to guess and none of them is reported."""
+        source = [
+            Stream(0, "video", "h264", "avc1"),
+            Stream(1, "data", "", "tmcd"),
+            Stream(2, "data", "", "tmcd"),
+        ]
+
+        assert jobs.confirm_drops(MP4, source, source) == ()
+
+    @pytest.mark.parametrize("profile", [MP4, MOV], ids=lambda profile: profile.label)
+    def test_a_regenerated_timecode_never_forgives_a_metadata_drop(self, profile):
+        """The counter-example that added the container tag to the key.
+
+        Apple `mebx` metadata -- every iPhone `.mov` has one -- demuxes with no
+        codec id, so ffprobe omits `codec_name` for it exactly as it does for a
+        `tmcd`. Source stream 2 is genuinely gone and stream 3 is the one the
+        muxer put back at a *different index*; without the tag the two were
+        indistinguishable, the first was forgiven and the survivor was reported
+        as the loss -- issue #66's own failure mode, with the real loss hidden
+        behind it.
+        """
+        source = [
+            Stream(0, "video", "h264", "avc1"),
+            Stream(1, "audio", "aac", "mp4a"),
+            Stream(2, "data", "", "mebx"),
+            Stream(3, "data", "", "tmcd"),
+        ]
+        produced = [
+            Stream(0, "video", "h264", "avc1"),
+            Stream(1, "audio", "aac", "mp4a"),
+            Stream(2, "data", "", "tmcd"),
+        ]
+
+        assert jobs.confirm_drops(profile, source, produced) == (
+            f"data stream 2 (unknown) dropped: not supported by {profile.label}",
+        )
+
+    @pytest.mark.parametrize("profile", [MP4, MOV], ids=lambda profile: profile.label)
+    def test_a_regenerated_timecode_never_forgives_a_telemetry_drop(self, profile):
+        """The counter-example that decided the match key: one source data
+        stream (`gpmd`/ANC telemetry, `bin_data`) genuinely lost, and one data
+        stream in the output that the muxer synthesised from metadata (`tmcd`,
+        no codec name on either side). Matching on `codec_type` alone reported
+        this as a clean success while a real stream was gone."""
+        source = [Stream(0, "video", "h264"), Stream(1, "data", "bin_data")]
+        produced = [Stream(0, "video", "h264"), Stream(1, "data", "")]
+
+        assert jobs.confirm_drops(profile, source, produced) == (
+            f"data stream 1 (bin_data) dropped: not supported by {profile.label}",
+        )
+
+    @pytest.mark.parametrize("profile", [MP4, MOV], ids=lambda profile: profile.label)
+    def test_both_verdicts_are_reached_when_both_data_streams_are_present(self, profile):
+        """The same file carrying both: the timecode is forgiven, the telemetry
+        is not. One key forgiving another would collapse the two. Note the
+        surviving stream's output index differs from its source index, so an
+        index-based match would fail this even though every field agrees."""
+        source = [
+            Stream(0, "video", "h264", "avc1"),
+            Stream(1, "data", "bin_data", "gpmd"),
+            Stream(2, "data", "", "tmcd"),
+        ]
+        produced = [Stream(0, "video", "h264", "avc1"), Stream(1, "data", "", "tmcd")]
+
+        assert jobs.confirm_drops(profile, source, produced) == (
+            f"data stream 1 (bin_data) dropped: not supported by {profile.label}",
+        )
+
+    def test_a_re_encoded_output_stream_never_forgives_a_real_drop(self):
+        """The counter-example that decided the *second* half of the rule.
+
+        WAV's cheap attempt re-encodes (`-map 0:a:0 -c:a pcm_s16le`), so the
+        source's codec name and the output's disagree by construction. Its one
+        `pcm_s16le` output stream reads as a surplus under that key, and by key
+        alone it forgave the drop of the source's second track -- which happens
+        to be `pcm_s16le` too and is genuinely gone. The stream-type count is
+        what closes it: a re-encode preserves the type, so `audio` shows no
+        surplus at all.
+        """
+        source = [Stream(0, "audio", "aac"), Stream(1, "audio", "pcm_s16le")]
+        produced = [Stream(0, "audio", "pcm_s16le")]
+
+        assert jobs.confirm_drops(WAV, source, produced) == (
+            "audio stream 1 (pcm_s16le) dropped: WAV holds 1 audio stream",
+        )
+
+    def test_a_stream_of_another_type_never_forgives_a_drop(self):
+        """Neither budget is spendable across stream types, so an extra audio
+        stream in the output cannot silence a dropped attachment."""
+        source = [Stream(0, "video", "h264"), Stream(1, "attachment", "ttf")]
+        produced = [Stream(0, "video", "h264"), Stream(1, "audio", "aac")]
+
+        assert jobs.confirm_drops(MP4, source, produced) == (
+            "attachment stream 1 (ttf) dropped: not supported by MP4",
+        )
+
+    def test_a_surplus_of_a_type_with_no_predicted_drop_changes_nothing(self):
+        source = [Stream(0, "video", "h264"), Stream(1, "attachment", "ttf")]
+        produced = [Stream(0, "video", "h264"), Stream(1, "video", "h264")]
+
+        assert jobs.confirm_drops(MP4, source, produced) == (
+            "attachment stream 1 (ttf) dropped: not supported by MP4",
+        )
+
+    def test_a_stream_limit_drop_the_output_disproves_is_forgiven(self):
+        """Not a `tmcd` special case: the same confirmation covers D2, where the
+        prediction is "the container holds only so many of this type"."""
+        source = [Stream(0, "audio", "opus"), Stream(1, "audio", "opus")]
+
+        assert jobs.confirm_drops(WAV, source, source) == ()
+        assert jobs.confirm_drops(WAV, source, source[:1]) == (
+            "audio stream 1 (opus) dropped: WAV holds 1 audio stream",
+        )
 
 
 @pytest.mark.parametrize(
