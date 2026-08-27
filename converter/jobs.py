@@ -61,6 +61,19 @@ def _room_reason(profile: Profile, stream_type: str, limit: int) -> str:
     return f"{profile.label} holds {limit} {stream_type} {noun}"
 
 
+def _rule_key(profile: Profile, stream: Stream) -> str:
+    """PIC node of stream-decision.md: resolve *stream* to its rule key.
+
+    An attached picture resolves to the ``"attached_pic"`` key when the profile
+    declares one, falling back to ``codec_type`` -- the fallback that leaves a
+    profile with no ``attached_pic`` rule byte-for-byte unchanged, since that is
+    exactly what it already did.
+    """
+    if stream.attached_pic and "attached_pic" in profile.rules:
+        return "attached_pic"
+    return stream.codec_type
+
+
 def _structural_drop(profile: Profile, stream: Stream, counts: dict[str, int]) -> str | None:
     """D1 and D2 of stream-decision.md: the drops the profile's *shape* forces.
 
@@ -69,7 +82,7 @@ def _structural_drop(profile: Profile, stream: Stream, counts: dict[str, int]) -
     success-side verification in :func:`_predict_unmapped` reuse them without
     asserting anything about what an already-successful attempt encoded.
     """
-    rule = profile.rules.get(stream.codec_type)
+    rule = profile.rules.get(_rule_key(profile, stream))
     if rule is None:
         return _drop_note(stream, f"not supported by {profile.label}")
 
@@ -169,7 +182,7 @@ def _decide_stream(
     if structural is not None:
         return [], [], structural
 
-    rule = profile.rules[stream.codec_type]
+    rule = profile.rules[_rule_key(profile, stream)]
     position = counts.get(stream.codec_type, 0)
     maps = ["-map", f"0:{stream.index}"]
     if stream.codec_name in rule.copy_mask:
