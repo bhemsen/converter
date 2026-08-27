@@ -1718,7 +1718,7 @@ class TestLossyCodecs:
         the companded PCM trio applies to every codec below. `wmav1`/
         `wmav2`/`wmapro` are the sharpest case: this set already guards
         against misreading `wmalossless`, so staying silent on the far
-        commoner lossy WMA family would have been backwards. All eight
+        commoner lossy WMA family would have been backwards. All ten
         report ffmpeg's `L` flag only, no `S` -- no ambiguity to trade
         against, unlike `dts`."""
         assert {
@@ -1730,6 +1730,8 @@ class TestLossyCodecs:
             "amr_wb",
             "nellymoser",
             "speex",
+            "gsm",
+            "ilbc",
         } <= LOSSY_CODECS
 
     def test_includes_the_motivating_and_flag_contradicting_cases(self):
