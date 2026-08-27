@@ -213,7 +213,6 @@ PowerShell, one command per line:
 New-Item -ItemType Directory -Force in
 & $FF -y -f lavfi -i testsrc=size=320x240:rate=10:duration=3 -f lavfi -i sine=duration=3 -c:v libx264 -c:a aac in/h264.mkv
 & $FF -y -f lavfi -i testsrc=size=320x240:rate=10:duration=3 -f lavfi -i sine=duration=3 -c:v libvpx-vp9 -b:v 200k -c:a libopus in/vp9.webm
-& $FF -y -f lavfi -i testsrc=size=320x240:rate=10:duration=3 -c:v ffv1 in/lossless.mkv
 & $FF -y -i in/h264.mkv -attach C:\Windows\Fonts\arial.ttf -metadata:s:t mimetype=application/x-truetype-font -c copy in/attached.mkv
 ```
 
@@ -692,3 +691,54 @@ New-Item -ItemType Directory -Force in
   real data drop per stream instead, so nothing is lost by dropping it. `mkv`'s
   and `webm`'s standing notes are untouched -- there the loss is real, and the
   issue's acceptance asked for that behaviour to stay unchanged.
+
+- 2026-08-27 (issue #69): The `in/lossless.mkv` fixture (`-c:v ffv1`) is
+  **removed** from the milestone-QA gate's Verification block. Two independent
+  defects, found together: no checklist item in this spec's Verification
+  section ever referenced `lossless.mkv` -- it was built and never used, unlike
+  the sibling spec's own `lossless.mkv` (`spec-profile-registry.md`, issue #19,
+  `d3fd5ca`), which a real checklist item did depend on and which issue #19
+  therefore *replaced* rather than removed. And, re-measured against this
+  machine's ffmpeg 9.0 (gyan.dev build) directly, `ffv1` no longer forces any
+  ladder in this spec's own scope either: `mkv`'s video mask already includes
+  `ffv1` (Prior decisions, muxer-facts row 2, "MKV accepts every codec tried"),
+  `mov`'s mask includes it too (row "MOV also copies `ffv1`, `theora`, `dts` and
+  `pcm_s16le`"), and `mp4`'s mask -- out of this phase's scope, but the profile
+  this same fixture would exercise if reused there -- was independently
+  confirmed at the QA gate that opened this issue to remux `ffv1` without
+  re-encoding on this build too. Only `webm` would reject it, and that ladder
+  path is already exercised, with its own per-stream note, by `h264.mkv` (video
+  outside `WEBM_VIDEO_CODECS`) -- so replacing the fixture with a codec `webm`
+  rejects (as the sibling spec's `vp8` precedent would suggest) would have
+  added a fixture that forces a branch this Verification block already covers,
+  not new coverage. Removal was chosen over replacement because nothing in this
+  spec's checklist was ever built to depend on this fixture, unlike the sibling
+  case.
+
+  Ran the whole Verification block as written, after the edit, against real
+  ffmpeg 9.0 (`--ffmpeg`/`--ffprobe` absolute paths) in a temp directory outside
+  the repo, with the three remaining fixtures (`h264.mkv`, `vp9.webm`,
+  `attached.mkv`): `--to mkv` converted all three and kept `attached.mkv`'s font
+  attachment (confirmed via `ffprobe`: stream 2, `codec_type=attachment`,
+  `codec_name=ttf`); `--to mov` failed `attached.mkv`'s cheap attempt and named
+  the dropped attachment (`attachment stream 2 (ttf) dropped: not supported by
+  MOV`), left `h264.mkv` untouched (already inside `mov`'s mask, no note), and
+  re-encoded `vp9.webm`'s video and audio rather than failing (`video stream 0
+  (vp9) re-encoded to h264`, `audio stream 1 (opus) re-encoded to aac`); `--to
+  webm` stream-copied `vp9.webm` (packet-identical, `-f md5` matched on both
+  sides: `11a93fafaf50ebc580471108fdb3b030`) while printing only the standing
+  note, re-encoded `h264.mkv`'s video and audio with both re-encodes named, and
+  reached the ladder for `attached.mkv` -- re-encoding video and audio *and*
+  naming the attachment drop with its own per-stream note, not the standing
+  note alone, exactly as the existing Verification item already describes; `--to
+  mp4` was unchanged from its pre-phase behaviour (only `attached.mkv`'s
+  attachment named, no standing note, matching the documented standing-note
+  hole); a second run over the `--to webm` output tree reported `0 converted, 3
+  skipped, 0 failed`, exit 0; and a 30 s, 320x240, 10 fps `libx264`+`aac` source
+  timed through `--to webm` took ~2.6 s end to end, consistent with the
+  previously recorded ~2 s figure on the same class of synthetic clip. No
+  expectation in the block needed correcting -- removing the unreferenced
+  fixture changed nothing else the block checks, and none of the surviving
+  checklist items name data or timecode streams, so issue #66's `mov`
+  standing-note removal (recorded above) left nothing stale in this block to
+  fix.
