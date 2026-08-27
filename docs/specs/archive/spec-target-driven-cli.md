@@ -487,3 +487,24 @@ reusing the fixtures the phase-1 gate synthesises:
 - 2026-08-26: Close-out. The final QA gate ran against real ffmpeg 9.0 on
   Windows 11, verifying all 17 target formats end-to-end with ffprobe.
   Verdict: PASS WITH FINDINGS; the findings are filed as issues #66-#73.
+- 2026-08-27 (#72): `_resolve_output_root`'s `--mirror-to` branch now re-roots
+  `args.input_dir` as typed, not `.resolve()`d -- the QA gate's finding that a
+  `subst`/junction/symlinked INPUT mirrored onto the physical path it resolves
+  to, nesting the whole physical prefix into the output tree instead of the
+  shallow tree the user asked for. `mirror_command` (the `converter mirror`
+  preview sub-command) changed the same way, since it exists to preview what
+  `--mirror-to` will do and a divergent derivation would make the preview lie.
+  The two concerns the issue asked to separate turn out to already be
+  separate: `paths.is_self_write` and `paths.find_overwrite_hazards` resolve
+  *both* the source and the derived output path themselves, independently, at
+  comparison time (`paths._resolved_key`) -- so which path
+  `_resolve_output_root` starts from cannot change what those guards catch,
+  only the shape of the tree that gets built. Proved rather than assumed: a
+  real `subst Q: <fixtures>; subst R: <dest>` reproduction confirmed both the
+  fixed tree shape and the unchanged guards (self-write, `--overwrite` hazard,
+  collision, in-place idempotence all still fire/hold exactly as before), and
+  `tests/test_cli.py` gained two tests -- one proving `_resolve_output_root`
+  now uses the typed root (and fails against the old `.resolve()` call when
+  reverted), one proving the self-write guard still fires once that root is
+  no longer pre-resolved. `README.md`'s Options section documents the chosen
+  behaviour for `subst`/junction/symlinked inputs.

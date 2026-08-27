@@ -105,6 +105,20 @@ option list (`converter mirror --help` for the mirror sub-command's own).
 | `-q`, `--quiet` | hide the progress bar |
 | `--ffmpeg`, `--ffprobe` | use a specific executable instead of searching `PATH` |
 
+> **`--mirror-to` and `subst`/junction/symlinked inputs.** `--mirror-to` re-roots
+> `INPUT_DIR` onto `ROOT` using the path you typed, not the physical path it
+> resolves to. So `subst Q: D:\Rips` followed by
+> `converter --to mp4 -r Q:\ --mirror-to E:` writes to `E:\...` mirroring what is
+> under `Q:\`, **not** `E:\D\Rips\...` or some other re-rooting of the physical
+> drive `Q:` happens to point at. The same holds for a directory junction or an
+> NTFS symlink standing in for `INPUT_DIR`. This only changes the *shape* of the
+> mirrored tree; the safety checks below are unaffected — a self-write or an
+> `--overwrite` hazard is still caught by resolving both the input and the
+> derived output path to their physical location before comparing, however
+> `INPUT_DIR` was typed, so mirroring a virtual drive back onto the real
+> location it points at is still refused (self-write) or reported (skip)
+> exactly as if no `subst`/junction/symlink were involved.
+
 ### Examples
 
 ```sh

@@ -281,6 +281,31 @@ class TestOutputRootResolution:
 
         assert cli._resolve_output_root(args) == Path("some/out")
 
+    def test_mirror_to_uses_the_typed_root_not_the_resolved_one(self, tmp_path, monkeypatch):
+        """Issue #72: a `subst`/junction/symlinked INPUT must shape the mirrored
+        tree from the path the user typed, not the physical path it resolves
+        to -- otherwise the whole physical prefix gets nested into the output
+        tree instead of the shallow tree the user asked for. Faked here (no
+        real subst/junction needed) by making `Path.resolve` answer for the
+        input root the way a virtual drive would."""
+        typed_root = tmp_path / "Q"
+        typed_root.mkdir()
+        physical_root = tmp_path / "physical" / "mirsrc"
+        real_resolve = Path.resolve
+        monkeypatch.setattr(
+            Path,
+            "resolve",
+            lambda self, *a, **kw: (
+                physical_root if self == typed_root else real_resolve(self, *a, **kw)
+            ),
+        )
+        args = parse(convert_argv(str(typed_root), "--mirror-to", "E:"))
+
+        result = cli._resolve_output_root(args)
+
+        assert result == cli.paths.mirror_to_drive(typed_root, "E:")
+        assert result != cli.paths.mirror_to_drive(physical_root, "E:")
+
 
 class TestConvertCommand:
     def test_missing_input_directory_is_a_usage_error(self, tmp_path, capsys):
@@ -523,6 +548,27 @@ class TestSourceSelection:
 
         assert code == 2
         assert "would be overwritten" in capsys.readouterr().err
+
+    def test_the_self_write_guard_still_fires_once_the_typed_root_is_resolved(
+        self, tmp_path, capsys, stub_ffmpeg
+    ):
+        """Issue #72 stops `_resolve_output_root` from resolving INPUT before
+        deriving the mirror root -- this proves that does not reopen the hole
+        `_resolved_key` exists to close. `sub/..` stands in for a second drive
+        the same way `tests/test_paths.py::TestIsSelfWrite.test_resolves_before_
+        comparing` does: the guard must still catch the self-write once it
+        resolves both sides itself, at comparison time, regardless of how the
+        (now unresolved) output root was built."""
+        (tmp_path / "sub").mkdir()
+        typed_root = tmp_path / "sub" / ".." / "in"
+        make_source(typed_root, f"a{VIDEO_SUFFIX}")
+
+        code = main(
+            convert_argv(str(typed_root), "--mirror-to", self_mirroring_root(typed_root), "-q")
+        )
+
+        assert code == 0
+        assert "this file itself" in capsys.readouterr().out
 
     def test_a_nested_output_root_converges(self, tmp_path, capsys, stub_ffmpeg):
         """Without the output-tree exclusion this grows one `converted` level per
