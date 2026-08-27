@@ -568,3 +568,24 @@ reusing the fixtures the phase-1 gate synthesises:
   "not capped (default: 4, ...)", matching what the code does. A follow-up
   issue for actually capping `--jobs` at the CPU count, if desired, belongs
   to whoever owns `batch.py`.
+- 2026-08-27 (#86): `run_batch`'s up-front `ensure_directory` loop let an
+  `OSError` from one task's output directory (typically a derived path over
+  Windows' `MAX_PATH`, proven end-to-end in #73/#84) propagate straight out of
+  `run_batch` and abort the whole run before a single file converted --
+  violating `docs/constitution.md`'s "one broken input file must not abort the
+  batch". Fixed by splitting the loop into a new `_stage_output_directories`
+  helper that catches `OSError` (only `OSError`, not `Exception`, so a genuine
+  programming error in this loop still crashes rather than being filed away as
+  a failed conversion) per task, turning a failing directory into a counted
+  `Outcome.FAILED` result naming the original path-length message, and
+  excluding only that task from the pool. Every other task still converts, the
+  exit code still reflects the genuine failure, and no output file is ever
+  written for the failing task since its directory was never created. Verified
+  both with a reproduction (a 257-character output root: the two good sources
+  in the tree convert, the long one fails by name, exit code 1, and a second
+  run is idempotent -- the good outputs are skipped, the bad one fails again)
+  and with `tests/test_batch_containment.py`, a new file rather than
+  `tests/test_batch.py` (owned by the in-flight #76): it monkeypatches
+  `batch.ensure_directory` to fail for one directory the way a too-long path
+  would, so the containment is exercised without depending on an actual
+  Windows path-length failure, and stays green on Linux CI.
