@@ -26,6 +26,10 @@ from converter.profiles import (
     WAV,
     WEBM,
     WEBP,
+    Attempt,
+    Profile,
+    StreamRule,
+    flags,
 )
 
 
@@ -2819,6 +2823,170 @@ class TestConfirmDrops:
         assert jobs.confirm_drops(WAV, source, source[:1]) == (
             "audio stream 1 (opus) dropped: WAV holds 1 audio stream",
         )
+
+
+def _audio_and_picture_profile(*, picture_rule: bool = True) -> Profile:
+    """A profile shaped like the audio targets this phase amends (mp3, m4a,
+    flac): an audio rule plus, optionally, an ``attached_pic`` one -- built
+    locally so the resolution logic can be pinned without waiting on a shipped
+    profile to gain the rule (issue #87, a sibling of this one).
+    """
+    rules = {"audio": StreamRule(frozenset({"aac"}), flags("-c:a copy"))}
+    if picture_rule:
+        rules["attached_pic"] = StreamRule(frozenset({"png", "mjpeg"}), flags("-c:v:{n} copy"))
+    return Profile(
+        label="PICT",
+        name="pict",
+        description="a test double, not a shipped format",
+        target_suffix=".pict",
+        container_options=(),
+        cheap_attempt=Attempt(
+            label="remux", options=flags("-map 0:a? -map 0:disp:attached_pic? -c copy")
+        ),
+        explicit_streams=False,
+        partial_mapping=True,
+        rules=rules,
+    )
+
+
+class TestDispositionResolution:
+    """`jobs._rule_key` -- stream-decision.md's PIC node: a stream resolves to
+    the profile's ``attached_pic`` rule when one is declared, and falls back to
+    its ``codec_type`` otherwise (issue #76)."""
+
+    def test_an_attached_picture_resolves_to_its_own_rule(self):
+        """A copy mask and accept template distinct from any ``video`` rule
+        would use proves it is the ``attached_pic`` rule that actually fired,
+        not a coincidence of the two being identical."""
+        profile = _audio_and_picture_profile()
+        streams = [Stream(0, "audio", "aac"), Stream(1, "video", "png", attached_pic=True)]
+
+        [selective] = jobs.retries(profile, streams)
+
+        assert selective.options == (
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:a",
+            "copy",
+            "-c:v:0",
+            "copy",
+        )
+        assert selective.notes == ()
+
+    def test_falls_back_to_codec_type_when_the_profile_declares_no_rule(self):
+        """The same picture, but a profile that never gained the rule --
+        stream-decision.md's fallback branch. It resolves to the ``video``
+        lookup, finds nothing, and is dropped exactly as it always was."""
+        profile = _audio_and_picture_profile(picture_rule=False)
+        streams = [Stream(0, "audio", "aac"), Stream(1, "video", "png", attached_pic=True)]
+
+        notes = jobs.verify_success(profile, streams)
+
+        assert notes == ("video stream 1 (png) dropped: not supported by PICT",)
+
+    @pytest.mark.parametrize("profile", [OGG, OPUS, WAV], ids=lambda profile: profile.label)
+    def test_ogg_opus_and_wav_are_unaffected_by_the_disposition(self, profile):
+        """None of the three declares a ``video`` rule *or* an ``attached_pic``
+        one, so a video-typed stream is dropped by D1 either way (issue #76's
+        Acceptance names these three as the guard). This alone cannot catch a
+        broken ``"attached_pic" in profile.rules`` clause in `_rule_key` --
+        neither key resolves to a declared rule here regardless -- so
+        `test_a_profile_with_a_video_rule_and_no_attached_pic_rule_uses_it`
+        below is the case that actually exercises the guard."""
+        plain = Stream(0, "video", "png")
+        picture = Stream(0, "video", "png", attached_pic=True)
+
+        assert jobs.verify_success(profile, [plain]) == jobs.verify_success(profile, [picture])
+        assert jobs.retries(profile, [plain]) == jobs.retries(profile, [picture])
+
+    def test_a_profile_with_a_video_rule_and_no_attached_pic_rule_uses_it(self):
+        """MP4 declares a ``video`` rule but no ``attached_pic`` one -- unlike
+        ogg/opus/wav above, a picture-disposition stream here must still fall
+        back to and be handled by the ``video`` rule, identically to an
+        ordinary video stream of the same codec. Dropping `_rule_key`'s
+        ``"attached_pic" in profile.rules`` guard clause changes this exact
+        case: the stream would resolve to the undeclared ``"attached_pic"``
+        key instead, and be dropped by D1 rather than copied by the video
+        rule -- a fabricated drop note and a lost stream, invisible to any
+        test that never gives the profile a ``video`` rule to steal."""
+        plain = Stream(0, "video", "mjpeg")
+        picture = Stream(0, "video", "mjpeg", attached_pic=True)
+
+        assert jobs.verify_success(MP4, [plain]) == jobs.verify_success(MP4, [picture]) == ()
+
+        plain_selective = jobs.retries(MP4, [plain])[0]
+        picture_selective = jobs.retries(MP4, [picture])[0]
+        assert plain_selective == picture_selective
+        assert plain_selective.options[:4] == ("-map", "0:0", "-c:v:0", "copy")
+
+    def test_the_engine_still_counts_a_carried_picture_under_video(self):
+        """A real video stream and an attached picture share one position
+        counter, because ffmpeg numbers a carried picture as a video output
+        stream (Prior decisions, spec-stream-disposition.md) -- so the second
+        stream here substitutes ``{n} == 1``, not ``{n} == 0``."""
+        base = _audio_and_picture_profile()
+        profile = replace(
+            base,
+            rules={**base.rules, "video": StreamRule(frozenset({"h264"}), flags("-c:v:{n} copy"))},
+        )
+        streams = [
+            Stream(0, "video", "h264"),
+            Stream(1, "video", "png", attached_pic=True),
+        ]
+
+        [selective] = jobs.retries(profile, streams)
+
+        assert selective.options == (
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:v:0",
+            "copy",
+            "-c:v:1",
+            "copy",
+        )
+
+    def test_two_attached_pictures_both_survive_uncounted_against_a_limit(self):
+        """The rule declares no ``stream_limit`` (Prior decisions), so a second
+        picture is carried, not reported as dropped for want of room."""
+        profile = _audio_and_picture_profile()
+        streams = [
+            Stream(0, "video", "png", attached_pic=True),
+            Stream(1, "video", "mjpeg", attached_pic=True),
+        ]
+
+        assert jobs.verify_success(profile, streams) == ()
+
+    def test_describe_unsupported_stays_keyed_on_codec_type(self):
+        """Deliberate (Prior decisions, spec-stream-disposition.md): the
+        discriminator asks whether the source carries any stream *type* the
+        profile could use at all, which a disposition does not change -- even
+        though this profile's ``attached_pic`` rule would in fact carry the
+        stream once the ladder ran."""
+        profile = _audio_and_picture_profile()
+        streams = [Stream(0, "video", "png", attached_pic=True)]
+
+        notes = jobs.describe_unsupported(profile, streams)
+
+        assert notes == ("video stream 0 (png) dropped: not supported by PICT",)
+
+    def test_verify_success_does_not_report_a_carried_picture_as_dropped(self):
+        """The two outcomes stream-decision.md's PIC node exists to tell apart,
+        in one source: a picture the profile carries via its own rule, and an
+        ordinary video stream the profile still has no rule for."""
+        profile = _audio_and_picture_profile()
+        streams = [
+            Stream(0, "audio", "aac"),
+            Stream(1, "video", "png", attached_pic=True),
+            Stream(2, "video", "h264", attached_pic=False),
+        ]
+
+        notes = jobs.verify_success(profile, streams)
+
+        assert notes == ("video stream 2 (h264) dropped: not supported by PICT",)
 
 
 @pytest.mark.parametrize(

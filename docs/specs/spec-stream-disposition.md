@@ -342,3 +342,17 @@ New-Item -ItemType Directory -Force in
   object at all" default is a defensive fallback for a payload shape this
   ffprobe version never produced, not one observed here — the parser handles it
   with `raw.get("disposition") or {}` regardless.
+- 2026-08-27 (issue #76): `jobs._structural_drop` and `jobs._decide_stream` now
+  resolve a stream's rule through one new helper, `jobs._rule_key`, rather than
+  reading `profile.rules[stream.codec_type]` directly — it returns
+  `"attached_pic"` when the stream carries that disposition *and* the profile
+  declares such a rule, and `stream.codec_type` otherwise. `counts` stays keyed
+  on `codec_type` throughout (unchanged), so a carried picture still shares its
+  position counter with real video streams, matching ffmpeg's own output
+  numbering. `describe_unsupported` was left untouched, as decided above.
+  `Stream.attached_pic` (issue #75) had not landed on `main` while this issue's
+  code and tests were written; the resolution logic and every new test were
+  written against its documented shape (a boolean, added last, defaulted
+  `False`) and proven correct with a duck-typed stand-in exercising the real,
+  unmodified `converter.jobs` code, then re-proven against the real `Stream`
+  type once #75 merged.

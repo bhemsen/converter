@@ -33,6 +33,30 @@ def exhaustive_profile() -> Profile:
     )
 
 
+def picture_carrying_profile() -> Profile:
+    """A profile shaped like the audio targets spec-stream-disposition.md
+    amends (mp3, m4a, flac): an audio rule plus an ``attached_pic`` one, so the
+    full `batch.convert_one` path can be proven end-to-end without waiting on
+    a shipped profile to gain the rule (issue #87, a sibling of this one).
+    """
+    return Profile(
+        label="PICT",
+        name="pict",
+        description="a test double, not a shipped format",
+        target_suffix=".pict",
+        container_options=(),
+        cheap_attempt=Attempt(
+            label="remux", options=flags("-map 0:a? -map 0:disp:attached_pic? -c copy")
+        ),
+        explicit_streams=False,
+        partial_mapping=True,
+        rules={
+            "audio": StreamRule(frozenset({"aac"}), flags("-c:a copy"), stream_limit=1),
+            "attached_pic": StreamRule(frozenset({"png", "mjpeg"}), flags("-c:v:{n} copy")),
+        },
+    )
+
+
 @pytest.fixture
 def fake_ffmpeg(monkeypatch):
     """Replace ffmpeg with a scripted stand-in and record every invocation."""
@@ -427,6 +451,38 @@ class TestPartialCheapAttemptVerification:
         assert result.attempt == "selective"
         assert len(probes) == 1
         assert result.notes == ("video stream 0 (vp8) re-encoded to h264",)
+
+
+class TestAttachedPictureVerification:
+    """stream-decision.md's PIC node, exercised through the full
+    `convert_one` path rather than `jobs` in isolation (issue #76): a carried
+    picture must never read as a drop, and a real video stream still must."""
+
+    def test_a_carried_picture_is_not_reported_as_dropped(self, tmp_path, fake_ffmpeg):
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        picture = Stream(1, "video", "png", attached_pic=True)
+        fake_ffmpeg.streams = [Stream(0, "audio", "aac"), picture]
+        # The muxer wrote back exactly what the mapping asked for.
+        fake_ffmpeg.output_streams = [Stream(0, "audio", "aac"), picture]
+
+        result = convert_one(picture_carrying_profile(), task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert result.notes == ()
+
+    def test_a_real_video_stream_is_still_named_as_dropped(self, tmp_path, fake_ffmpeg):
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        fake_ffmpeg.streams = [Stream(0, "audio", "aac"), Stream(1, "video", "h264")]
+        # The profile has no ``video`` rule, so the disposition-less video
+        # stream really was left behind.
+        fake_ffmpeg.output_streams = [Stream(0, "audio", "aac")]
+
+        result = convert_one(picture_carrying_profile(), task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert result.notes == ("video stream 1 (h264) dropped: not supported by PICT",)
 
 
 class TestDropsAreConfirmedAgainstTheOutput:
