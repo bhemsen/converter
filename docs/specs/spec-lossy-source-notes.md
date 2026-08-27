@@ -63,9 +63,9 @@ carry it at all.
   not bound by the three-things rule the way a degradation note is -- the
   precedent for such a carve-out is already in that file, for the unverified-run
   note.
-- **Under option 2 only:** `docs/architecture.md` Key flow 1,
-  `docs/design/degradation-ladder.md` and the engine docstring, which is where the
-  codec-level restriction actually lives.
+(The gate chose `flac` only, so `docs/architecture.md` Key flow 1,
+`docs/design/degradation-ladder.md` and the engine docstring are **not** touched:
+the codec-level restriction they carry stays exactly as it is.)
 - The tests, including one asserting the advisory does **not** fire for a
   lossless source or a lossy target.
 
@@ -121,9 +121,10 @@ carry it at all.
 
 ## Design
 
-No new design artifact. Whether `docs/design/degradation-ladder.md` needs an
-amendment depends on the gate's decision — under option 2 it does, since that
-file records what the success-side verification may and may not assert.
+No new design artifact, and no amendment to `docs/design/degradation-ladder.md`:
+the gate confined the advisory to the failure-side rung, so what that file records
+about the success-side verification stays true unchanged. `docs/design/stream-decision.md`
+gains only the carve-out sentence for the advisory's note shape.
 
 ## Human prerequisites
 
@@ -155,9 +156,9 @@ Read off the merged registry and engine, not assumed.
 | **No advisory for a lossy target.** A lossy-to-lossy conversion already carries the engine's re-encode note naming both codecs | One advisory, not a commentary track. The re-encode note is the honest report there, and a second line would fire on the commonest conversion the tool performs | 2026-08-27 |
 | The advisory names the stream index and the source codec, and says plainly that the target cannot restore what the source had already discarded | `docs/vision.md` requires a note to name the stream and its codec. The wording is pinned by test, as every note in this project is | 2026-08-27 |
 | `docs/constitution.md` gains one line distinguishing a **degradation note** (what this conversion gave up) from an **advisory** (what the source had already given up), authored in this PR | The current notes convention and its test gate — "a new degradation branch ships with a test asserting the note it emits" — assume the former. Without the distinction, the advisory reads as a claim the tool destroyed something | 2026-08-27 |
-| OPEN — which of the five lossless targets carry the advisory | resolved at the spec-acceptance gate; see the note below | — |
+| **Only `flac` carries the advisory**, on the failure-side selective rung. `wav`, `png`, `tiff` and `bmp` stay silent | Resolved at the gate on 2026-08-27. It covers the motivating case -- an MP3 library into FLAC -- and costs nothing: that rung already holds the stream list and emits no note today. Widening it would have required a codec-level statement on the success side that issue #18 deliberately excluded, at three foundation restatements plus a test narrowing, and would have added an advisory to every JPEG in an image batch. The inconsistency it leaves -- the same source says something on the way to FLAC and nothing on the way to WAV -- is accepted and recorded rather than hidden | 2026-08-27 |
 
-### The one open decision, in full
+### The scope decision, in full (resolved at the gate)
 
 The advisory needs the source codec, which the engine holds only where it has a
 stream list. That splits the five lossless targets in two:
@@ -182,7 +183,9 @@ reading. Getting that list right matters here: issue #38's own follow-up commit
 existed because a restatement was missed and a grep disproved the claim that all
 of them had moved.
 
-1. **`flac` only — the failure-side rung.** Covers the motivating case, needs no
+**Resolved at the gate on 2026-08-27: option 1, `flac` only.**
+
+1. **`flac` only -- the failure-side rung.** Covers the motivating case, needs no
    amendment beyond the degradation-versus-advisory line, and leaves `--to wav`
    over an MP3 silent. Smallest change, and inconsistent in a way a user could
    notice: the same source says something on the way to FLAC and nothing on the
@@ -222,8 +225,9 @@ Machine checks:
       the lossless criterion across the **whole** registry -- the guard that stops
       phase 6's three new fallback-less rules from being read as lossless targets.
 - [ ] A test that the probe count per file is unchanged.
-- [ ] Under option 2 only: a test that the success-side verification still refuses
-      every codec-level statement other than this one.
+- [ ] A test that the success-side verification still refuses every codec-level
+      statement -- unchanged by this phase, and the guard that the advisory did not
+      leak onto the success path.
 
 Human milestone-QA gate. `$FF` is the absolute ffmpeg path from *This machine*;
 every fixture has a distinct stem:
@@ -242,12 +246,11 @@ New-Item -ItemType Directory -Force in
       and the output is a playable FLAC. This is the case the phase exists for.
 - [ ] The same run over `lossless-alac.m4a` prints **no** advisory -- the negative
       that actually reaches the rung. `lossless-flac.flac` is the rung-1 control.
-- [ ] `--to wav in out` over `lossy-mp3.mp3` behaves as the gate decided —
-      advisory under option 2, silence under option 1.
+- [ ] `--to wav in out` over `lossy-mp3.mp3` prints **no** advisory. Silent by
+      decision, not by oversight -- the accepted inconsistency.
 - [ ] `--to mp3 in out` over `lossy-opus.opus` prints the ordinary re-encode note
       and no advisory: lossy-to-lossy is out of scope by decision.
-- [ ] Under option 2: `--to png in out` over `lossy-jpg.jpg` prints the advisory.
-      Judge the noise on a real photo folder before accepting.
+- [ ] `--to png in out` over `lossy-jpg.jpg` prints no advisory either.
 - [ ] A second run over any converted tree reports `0 converted`, exit 0.
 
 ## Risks and mitigations
@@ -255,9 +258,9 @@ New-Item -ItemType Directory -Force in
 | Risk | Mitigation |
 |---|---|
 | The advisory reads as "the tool destroyed something" | The constitution gains the degradation-versus-advisory distinction, and the wording is pinned by test |
-| Widening the success-side verification becomes a licence for any codec claim | Option 2's amendment has to state the new boundary precisely; the Verification bullet pins that nothing else gets through |
+| The advisory leaks onto the success path and erodes #18's boundary | The gate confined it to the failure-side rung, and a Verification bullet pins that the success-side verification still refuses every codec-level statement |
 | The lossy set misclassifies a codec | The awkward members are named in a test rather than left to the author's memory |
-| The advisory fires on every file of an image batch | Named as option 2's cost, with a QA item asking the human to judge it on real photos before accepting |
+| The same source says something into FLAC and nothing into WAV | Accepted at the gate and recorded, with a QA item asserting the silence is deliberate. Closing it needs the success-side widening the gate declined |
 | Someone extends this to detect laundered sources | Named out of scope, with the reason: it needs spectral analysis, which `docs/vision.md` already rules out |
 | Under option 1, a lossy source that also fails the *selective* rung wins on `last_resort` and prints no advisory | A declared attempt's notes are fixed data, so the advisory cannot reach it. Named as a known gap rather than discovered: the fix, if it is wanted, is to extend the five lossless targets' `last_resort` note text, which is a profile edit and not an engine one |
 | The bit-depth truncation `--to wav` performs stays unreported | Out of scope here and named in the facts table with its measurement, so it is a recorded gap with somewhere to land rather than an assumption this phase quietly inherits |
@@ -301,3 +304,8 @@ New-Item -ItemType Directory -Force in
   row. All three now say what the measurements say. Worth noting as a failure
   mode: correcting a claim is not finished until every restatement of it moves,
   which is the same lesson issue #38's follow-up commit recorded.
+- 2026-08-27: Gate chose `flac` only. The advisory stays on the failure-side rung,
+  where it is free, and the success-side boundary #18 drew is left intact. The
+  accepted cost is an inconsistency a user can notice — the same MP3 says
+  something on the way to FLAC and nothing on the way to WAV — which is recorded
+  in the decision row and pinned by a QA item rather than left to be discovered.
