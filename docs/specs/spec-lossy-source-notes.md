@@ -309,3 +309,97 @@ New-Item -ItemType Directory -Force in
   accepted cost is an inconsistency a user can notice — the same MP3 says
   something on the way to FLAC and nothing on the way to WAV — which is recorded
   in the decision row and pinned by a QA item rather than left to be discovered.
+- 2026-08-27 (issue #87): `LOSSY_CODECS` landed as a module-level frozenset in
+  `converter/profiles.py`, beside `TEXT_SUBTITLE_CODECS`. Re-verified the
+  decision row's `-codecs` claims against ffmpeg 9.0 directly rather than
+  trusting the earlier round's numbers: `alac`, `flac`, `wmalossless`, `truehd`
+  and every *linear* `pcm_*` decoder still report `S` only, `webp` still
+  reports both (`DEVILS`), and `gif` still reports `S` only despite the
+  measured 182-of-36485-colour loss. One thing the earlier rounds had not
+  checked: `h264`, `hevc` and `av1` also report both `L` and `S` (`DEV.LS`),
+  and so does `dts` (`DEAILS`) — each has a real lossless mode (x264/x265
+  `-qp 0`, AV1's lossless tools, DTS-HD Master Audio) that the codec name
+  alone cannot rule out, the same ambiguity `webp` has. All four are excluded
+  from `LOSSY_CODECS` for that reason.
+- 2026-08-27 (issue #87 review round 1): two claims in the entry above did not
+  survive verification and are corrected here rather than left standing.
+  First, "the `pcm_*` family all report `S` only" is false as a universal
+  claim: `pcm_alaw`/`pcm_mulaw` (G.711 companding) and `pcm_vidc` report `L`
+  only, since companding genuinely discards information — the true claim is
+  scoped to the *linear* PCM decoders (`pcm_s16le`, `pcm_s24le`, and the rest
+  of that family), the only ones this registry ever names. Second,
+  "`h264`/`hevc`/`av1`/`dts` cost nothing to exclude, since none is reachable
+  through the `flac`-only advisory" is false for `dts`: `flac`'s only rule is
+  `audio`, so a DTS source genuinely reaches the selective rung the advisory
+  would live on, unlike `h264`/`hevc`/`av1`, which are video and `flac` never
+  maps a video stream at all. Excluding `dts` is a real accuracy-over-coverage
+  trade — a lossy DTS core into `flac` stays silent — not a free hedge; kept
+  anyway, on the same footing as `webp`, because a false "this was already
+  lossy" advisory on a genuinely lossless DTS-HD Master Audio source is the
+  worse failure mode of the two.
+  The lossless criterion `fallback_options is not None and fallback_name is
+  None` was checked registry-wide
+  (`tests/test_profiles.py::TestLosslessTargetCriterion`) and confirmed to
+  select exactly `flac`, `wav`, `png`, `tiff`, `bmp` against the registry as it
+  stands on `main` at this issue's base commit. The pair is already exercised
+  by live fallback-less rules today — `mkv`'s `attachment` rule and the bare
+  subtitle-drop rules on `mp4`/`mov`/`webm` all fail the pair's first half
+  (`fallback_options is None`) and are correctly excluded — so this is not an
+  untested guard; milestone 6's incoming `attached_pic` rules on `mp3`/`m4a`/
+  `flac` had not yet merged into this branch specifically, and will exercise
+  the identical, already-proven mechanism once that work lands.
+- 2026-08-27 (issue #87 review round 2): the round-1 fix above relocated the
+  same overreach it was meant to remove rather than closing it. "This registry
+  never produces or accepts any of the three [`pcm_alaw`/`pcm_mulaw`/
+  `pcm_vidc`], so their absence costs nothing" is a non sequitur: `LOSSY_CODECS`
+  matches a *source* codec, and what the registry's own copy masks and
+  fallback encoders produce is irrelevant to what a source file may carry. A
+  G.711-encoded `.wav` is an ordinary `SOURCE_SUFFIXES` member, fails `flac`'s
+  `-map 0:a? -c:a copy` the same way an MP3 does, and lands on the identical
+  selective rung the `dts` gap above already concedes reaches the advisory.
+  Unlike `dts`, none of the three has a genuine lossless-mode ambiguity to
+  trade against -- the flag reports `L` only for all three -- so there was no
+  reason to leave the gap open at all. Fixed by adding `pcm_alaw`,
+  `pcm_mulaw` and `pcm_vidc` to `LOSSY_CODECS` and narrowing
+  `test_excludes_the_named_lossless_family` from a blanket `pcm_` prefix ban
+  to the specific linear-PCM codecs the exclusion actually covers, with a new
+  `test_includes_the_lossy_pcm_companding_variants` pinning the three in.
+- 2026-08-27 (issue #87 review round 3): the round-2 fix closed the PCM gap
+  correctly but the comment's closing sentence still carried the exact
+  non sequitur round 2 had just rejected -- "otherwise scoped to the codecs
+  this registry's own copy masks and fallback names already name" treats
+  what a target profile happens to use as if it bounded what a source file
+  may carry, which it does not. `LOSSY_CODECS` matches a source codec
+  reachable through `SOURCE_SUFFIXES`, independent of any profile. Concretely:
+  `.wma` is a source suffix, so `wmav1`/`wmav2`/`wmapro` reach `flac`'s
+  audio-only rule and fail its copy the same way an MP3 does — and this set
+  already guards against misreading `wmalossless`, so staying silent on the
+  far commoner lossy WMA family was backwards. Fixed by adding the common
+  single-codec lossy audio formats a media library plausibly carries as a
+  source, each checked individually against ffmpeg 9.0 and confirmed `L`
+  only: the WMA family, `mp2`, `amr_nb`/`amr_wb`, `nellymoser`, `speex`,
+  `gsm`, `ilbc`. The ADPCM family (62 decoders, all uniformly `L` only) is
+  deliberately left unenumerated and named as a disclosed gap rather than
+  curated around: it is an order of magnitude larger than every other set in
+  this module and almost entirely obscure game/broadcast-specific variants,
+  so naming the two a real source could plausibly carry would misleadingly
+  promise coverage of the other sixty. Also corrected: the closing sentence
+  no longer implies "ambiguous per any format spec" is the exclusion test --
+  it is anchored to what this ffmpeg build's flags report, which is why
+  `vp9` (a documented but here-unreported lossless mode) stays a member on
+  the same footing as every other codec this build reports unambiguously.
+  Also corrected the round-1 log entry above: it claimed the lossless
+  criterion was "proven by construction … rather than by a live conflict",
+  which undersold it -- `mkv`'s `attachment` rule and the subtitle-drop rules
+  on `mp4`/`mov`/`webm` are live fallback-less rules today that the pair
+  already discriminates correctly against, not merely a hypothetical
+  construction.
+- 2026-08-27 (issue #87, self-review before round 4): added an explicit
+  non-exhaustiveness statement at the top of `LOSSY_CODECS`'s docstring,
+  stating plainly that the set does not claim to list every lossy codec
+  ffmpeg can decode, only the ones checked individually and found
+  unambiguous -- so a codec found missing later (a legacy video codec such
+  as a WMV or RealVideo variant, say) is the disclosed, by-design boundary
+  the ADPCM paragraph already demonstrates the shape of, not an
+  undiscovered instance of the round-3 reachability bug. No membership
+  change; comment only.

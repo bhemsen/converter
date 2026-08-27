@@ -106,6 +106,126 @@ MP4_AUDIO_CODECS = frozenset({"aac", "mp3", "ac3", "eac3", "alac", "opus", "flac
 #: Subtitle codecs that convert cleanly into MP4's own ``mov_text``.
 TEXT_SUBTITLE_CODECS = frozenset({"subrip", "srt", "ass", "ssa", "mov_text", "webvtt", "text"})
 
+#: Codecs that discard source information when they encode -- curated by hand
+#: for `docs/specs/spec-lossy-source-notes.md`'s advisory ("this lossless target
+#: cannot restore what a lossy source had already given up"), the same kind of
+#: hand-maintained artifact as the copy masks above and for the same reason:
+#: ffmpeg can be asked what a build contains, never how *this* project judges a
+#: format's behaviour.
+#:
+#: Deliberately non-exhaustive: this project does not claim it lists every lossy
+#: codec ffmpeg can decode, only the ones checked individually and found
+#: unambiguous. A missing codec is a known, disclosable gap (the ADPCM family
+#: below is the worked example), not license to guess -- the same discipline the
+#: copy masks above already apply to what a muxer accepts.
+#:
+#: ffmpeg does ship a lossy/lossless classification (``-codecs``, columns ``L``
+#: and ``S``), and for the five codecs this issue names it is not wrong -- measured
+#: against ffmpeg 9.0: ``alac``, ``flac``, ``wmalossless``, ``truehd`` and every
+#: *linear* ``pcm_*`` decoder (``pcm_s16le``, ``pcm_s24le`` and the rest of that
+#: family) report ``S`` only, no ``L``. Three ``pcm_*`` decoders are the opposite:
+#: ``pcm_alaw``/``pcm_mulaw`` (G.711 companding) and ``pcm_vidc`` report ``L``
+#: only, no ``S`` -- genuinely and unambiguously lossy, unlike every case below --
+#: so all three are members of this set, not exceptions to it. A companded source
+#: is reachable the same way a lossy audio source of any other codec is (a G.711
+#: ``.wav`` is an ordinary `SOURCE_SUFFIXES` member), so leaving them out would
+#: have been a silent gap, not a saved judgement call. The flag still cannot be
+#: read wholesale as a general rule, for three measured reasons:
+#:
+#: - Some codecs report **both** flags at once. ``webp`` does (``DEVILS``): it is
+#:   genuinely used both ways -- a lossy photograph and a lossless screenshot are
+#:   both ordinary WebP files -- so the codec name alone cannot say which *this*
+#:   stream is. The same measured ambiguity holds for ``h264``, ``hevc`` and
+#:   ``av1`` (``DEV.LS``, all three) and for ``dts`` (``DEAILS``): each format has
+#:   a real, if less common, mathematically lossless mode (x264/x265 "-qp 0",
+#:   AV1's lossless coding tools, DTS-HD Master Audio), so none of the four is in
+#:   this set either -- excluded for the identical reason as ``webp``. Unlike
+#:   ``h264``/``hevc``/``av1``, which this phase's only consumer (`flac`, an
+#:   audio-only rule) can never even map, ``dts`` is audio and genuinely reaches
+#:   that rule -- a lossy DTS core into `flac` lands on the selective rung with
+#:   no advisory. That is a real accepted gap, not a free exclusion: unlike the
+#:   companded PCM trio above, ``dts``'s ambiguity is genuine (a DTS-HD Master
+#:   Audio track really is losslessly encoded under the same codec name), so a
+#:   false "already lossy" claim against one is the worse failure mode of the
+#:   two, and exclusion is kept.
+#: - Reading the flag at all costs a subprocess call this project does not
+#:   otherwise spend on the happy path; a curated Python literal costs nothing.
+#: - ``gif`` reports lossless (``S`` only, no ``L`` -- ffmpeg calls the format
+#:   itself lossless) and is a member of this set anyway: phase 5
+#:   (`docs/specs/archive/spec-image-formats.md`) measured a photograph through
+#:   GIF's palette encoder keeping 182 of 36 485 colours. The flag describes the
+#:   container's ceiling, not what its one encoder actually does, and this set
+#:   exists precisely to say so instead of repeating ffmpeg's classification.
+#:
+#: "Ambiguous, so excluded" is anchored to what this ffmpeg build's flags
+#: actually report, not to an independent survey of every format's spec --
+#: ``vp9`` has a documented lossless mode too, but this build reports it
+#: ``L`` only (``DEV.L.``, no ``S``), so it is included on the same basis
+#: every other unambiguous member is, consistent with how this set already
+#: treats ``gif`` (curated against the tool's own measured output, not
+#: against every fact a format's specification could support).
+#:
+#: A codec's membership never depends on whether this registry's own copy
+#: masks or fallback encoders name it -- `LOSSY_CODECS` matches a *source*
+#: codec, which can be anything `SOURCE_SUFFIXES` admits, regardless of what
+#: any target profile does with it (the same correction that added the
+#: companded PCM trio above applies here too). Beyond the codecs already
+#: named above, this set covers the common single-codec lossy formats a
+#: media library plausibly carries as a source, each checked individually
+#: against ffmpeg 9.0 and confirmed ``L`` only: the WMA family (``wmav1``,
+#: ``wmav2``, ``wmapro`` -- reachable via the `.wma` source suffix, and the
+#: sharpest case this set would otherwise get backwards: guarding against
+#: misreading ``wmalossless`` while staying silent on the far commoner lossy
+#: WMA), ``mp2`` (`.mpg`/`.ts`/`.vob` sources), ``amr_nb``/``amr_wb``
+#: (`.3gp`), and ``nellymoser``/``speex``/``gsm``/``ilbc`` (legacy voice and
+#: streaming codecs `.flv`/`.caf`/`.wav` sources can carry).
+#:
+#: Deliberately **not** enumerated: the ADPCM family. All 62 ``adpcm_*``
+#: decoders this ffmpeg build ships report ``L`` only, no ``S`` -- uniformly
+#: lossy, unlike PCM's mixed family above -- but the family is an order of
+#: magnitude larger than every other curated set in this module and almost
+#: entirely made of obscure, game- or broadcast-specific variants
+#: (``adpcm_ea_maxis_xa``, ``adpcm_psx``, ``adpcm_thp``) a real media library
+#: is unlikely to carry under those names. Naming the two a `.wav`/`.avi`
+#: source can plausibly carry -- ``adpcm_ima_wav``, ``adpcm_ms`` -- would
+#: silently promise coverage of the other sixty; this comment names the gap
+#: instead of curating around it, the same choice this project makes rather
+#: than a false claim of completeness (`docs/vision.md`: losses are named,
+#: not hidden).
+LOSSY_CODECS = frozenset(
+    {
+        # video
+        "mjpeg",
+        "mpeg2video",
+        "mpeg4",
+        "prores",
+        "theora",
+        "vp8",
+        "vp9",
+        "gif",
+        # audio
+        "aac",
+        "ac3",
+        "eac3",
+        "mp3",
+        "opus",
+        "vorbis",
+        "pcm_alaw",
+        "pcm_mulaw",
+        "pcm_vidc",
+        "wmav1",
+        "wmav2",
+        "wmapro",
+        "mp2",
+        "amr_nb",
+        "amr_wb",
+        "nellymoser",
+        "speex",
+        "gsm",
+        "ilbc",
+    }
+)
+
 MP4 = Profile(
     label="MP4",
     name="mp4",

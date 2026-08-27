@@ -15,6 +15,7 @@ from converter.profiles import (
     FLAC,
     GIF,
     JPG,
+    LOSSY_CODECS,
     M4A,
     MKV,
     MOV,
@@ -1667,6 +1668,112 @@ class TestRegistryTargetCoherence:
         duplicates = {suffix for suffix in suffixes if suffixes.count(suffix) > 1}
 
         assert not duplicates, f"target_suffix collision(s) in the registry: {sorted(duplicates)}"
+
+
+class TestLossyCodecs:
+    """`LOSSY_CODECS` (issue #87, `docs/specs/spec-lossy-source-notes.md`): the
+    curated set the source-codec advisory checks against, hand-maintained
+    because ffmpeg's own `-codecs` classification cannot be read wholesale --
+    see the constant's own docstring in `converter/profiles.py` for the full
+    argument and the ffmpeg 9.0 flags it was measured against.
+    """
+
+    def test_excludes_the_named_lossless_family(self):
+        """The four awkward codecs the issue names -- `alac`, `flac`,
+        `wmalossless`, `truehd` -- and the *linear* `pcm_*` decoders all
+        report ffmpeg's own lossless flag (`S`) with no `L`, and none of
+        them may ever read as a lossy source. Scoped to a representative
+        sample of linear PCM (`pcm_s16le`, `pcm_s24le`, `pcm_s32le`,
+        `pcm_f32le`, `pcm_u8` -- different bit depths, signedness and a
+        float variant) rather than a blanket `pcm_` prefix ban: three
+        *other* `pcm_*` decoders -- `pcm_alaw`, `pcm_mulaw`, `pcm_vidc` --
+        are genuinely lossy and are members (the next test)."""
+        assert LOSSY_CODECS.isdisjoint(
+            {
+                "alac",
+                "flac",
+                "wmalossless",
+                "truehd",
+                "pcm_s16le",
+                "pcm_s24le",
+                "pcm_s32le",
+                "pcm_f32le",
+                "pcm_u8",
+            }
+        )
+
+    def test_includes_the_lossy_pcm_companding_variants(self):
+        """`pcm_alaw`/`pcm_mulaw` (G.711 companding) and `pcm_vidc` report
+        `L` only, no `S` -- unambiguously lossy, unlike every codec this
+        set deliberately leaves out. A companded source is an ordinary
+        `SOURCE_SUFFIXES` member (a G.711 `.wav`), so omitting them would
+        have been a silent gap rather than a judgement call."""
+        assert {"pcm_alaw", "pcm_mulaw", "pcm_vidc"} <= LOSSY_CODECS
+
+    def test_includes_the_common_lossy_audio_codecs_reachable_as_a_source(self):
+        """Membership cannot be scoped to "whatever this registry's own copy
+        masks and fallback names already use": `LOSSY_CODECS` matches a
+        *source* codec, reachable via `SOURCE_SUFFIXES` regardless of what
+        any target profile does with it -- the same correction that added
+        the companded PCM trio applies to every codec below. `wmav1`/
+        `wmav2`/`wmapro` are the sharpest case: this set already guards
+        against misreading `wmalossless`, so staying silent on the far
+        commoner lossy WMA family would have been backwards. All ten
+        report ffmpeg's `L` flag only, no `S` -- no ambiguity to trade
+        against, unlike `dts`."""
+        assert {
+            "wmav1",
+            "wmav2",
+            "wmapro",
+            "mp2",
+            "amr_nb",
+            "amr_wb",
+            "nellymoser",
+            "speex",
+            "gsm",
+            "ilbc",
+        } <= LOSSY_CODECS
+
+    def test_includes_the_motivating_and_flag_contradicting_cases(self):
+        """A set could satisfy the exclusion test above by being empty, which
+        would not be a lossy-codec set at all. `mp3` is the motivating case
+        (Verification, spec-lossy-source-notes.md: "an MP3 library into
+        FLAC"); `gif` is the case ffmpeg's own flag gets wrong (reports
+        lossless, measured lossy in `docs/specs/archive/spec-image-formats.md`).
+        Both must actually be members for this set to be doing its job.
+        """
+        assert {"mp3", "gif"} <= LOSSY_CODECS
+
+
+def lossless_target_names(registry: dict[str, Profile]) -> set[str]:
+    """Names of every profile with at least one rule matching the lossless
+    criterion the spec pins: `fallback_options is not None and fallback_name
+    is None` -- it re-encodes, and the profile declared that re-encode not
+    worth naming. The bare `fallback_name is None` test is overloaded (Prior
+    decisions, spec-lossy-source-notes.md): it also matches a rule with no
+    fallback at all, which is a *drop*, not a lossless re-encode -- exactly
+    the shape phase 6's fallback-less `attached_pic` rules have, which must
+    not be misread as lossless targets the moment they land.
+    """
+    return {
+        profile.name
+        for profile in registry.values()
+        if any(
+            rule.fallback_options is not None and rule.fallback_name is None
+            for rule in profile.rules.values()
+        )
+    }
+
+
+class TestLosslessTargetCriterion:
+    """The second, load-bearing guard rail from issue #87: pins that exactly
+    the five profiles the spec's Prior decisions table names satisfy the
+    lossless criterion, checked against the *whole* registry so a profile
+    added later -- lossless or not -- is covered without editing this test.
+    """
+
+    def test_exactly_five_profiles_satisfy_the_lossless_criterion(self):
+        assert lossless_target_names(PROFILES) == {"flac", "wav", "png", "tiff", "bmp"}
 
 
 class TestResolveTarget:
