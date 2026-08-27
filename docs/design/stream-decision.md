@@ -65,7 +65,7 @@ flowchart TD
   exists precisely because no stream list could be obtained
   (`degradation-ladder.md`); it reports the absence of the facts this rule
   demands, and is not a per-stream verdict at all. An advisory
-  (`docs/specs/spec-lossy-source-notes.md`) is exempt on the same footing: it
+  (`docs/specs/archive/spec-lossy-source-notes.md`) is exempt on the same footing: it
   names the stream and its codec, but what it reports is the source's own
   history, not this conversion's sacrifice, so it is not bound by this rule the
   way a degradation note is (`docs/constitution.md`'s degradation-note/advisory

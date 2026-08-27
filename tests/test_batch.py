@@ -856,7 +856,7 @@ class TestRunBatch:
 
 
 class TestLossySourceAdvisory:
-    """Issue #88, `docs/specs/spec-lossy-source-notes.md`: the advisory that
+    """Issue #88, `docs/specs/archive/spec-lossy-source-notes.md`: the advisory that
     fires when a lossy source reaches FLAC's selective (failure-side) rung --
     "your FLAC came from a 128 kbit/s MP3." Scoped to `jobs.retries` /
     `convert_one` behaviour; profile definitions and `test_argv.py` are #77's
@@ -897,7 +897,7 @@ class TestLossySourceAdvisory:
         the control the spec's Verification section names, proving nothing
         about the guard on its own.
 
-        Issue #78, docs/specs/spec-stream-disposition.md: rung 1's standing
+        Issue #78, docs/specs/archive/spec-stream-disposition.md: rung 1's standing
         note is retired -- `jobs.verify_success` already names any drop this
         note used to describe, per stream. This control now asserts the
         rung carries no notes of its own at all, still proving nothing about
@@ -944,7 +944,7 @@ class TestLossySourceAdvisory:
 
     def test_copied_through_cover_art_carries_no_advisory(self):
         """Regression: `main` gained FLAC's `attached_pic` rule (issue #77,
-        `docs/specs/spec-stream-disposition.md`) between this issue's review
+        `docs/specs/archive/spec-stream-disposition.md`) between this issue's review
         and its merge. That rule's copy mask (`_AcceptAnyCodec`) accepts every
         codec and the rule declares no fallback, so a cover picture is always
         copied byte-for-byte, never re-encoded into FLAC's own codec -- unlike

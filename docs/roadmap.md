@@ -16,8 +16,8 @@
 | 3 | audio-formats | [spec-audio-formats.md](specs/archive/spec-audio-formats.md) | [#3](https://github.com/bhemsen/converter/milestone/3) |
 | 4 | video-formats | [spec-video-formats.md](specs/archive/spec-video-formats.md) | [#4](https://github.com/bhemsen/converter/milestone/4) |
 | 5 | image-formats | [spec-image-formats.md](specs/archive/spec-image-formats.md) | [#5](https://github.com/bhemsen/converter/milestone/5) |
-| 6 | stream-disposition | [spec-stream-disposition.md](specs/spec-stream-disposition.md) | [#6](https://github.com/bhemsen/converter/milestone/6) |
-| 7 | lossy-source-notes | [spec-lossy-source-notes.md](specs/spec-lossy-source-notes.md) | [#7](https://github.com/bhemsen/converter/milestone/7) |
+| 6 | stream-disposition | [spec-stream-disposition.md](specs/archive/spec-stream-disposition.md) | [#6](https://github.com/bhemsen/converter/milestone/6) |
+| 7 | lossy-source-notes | [spec-lossy-source-notes.md](specs/archive/spec-lossy-source-notes.md) | [#7](https://github.com/bhemsen/converter/milestone/7) |
 
 A phase gets a Spec link once `/plan` drafts it, and a Milestone link once the
 spec is merged. The milestone (open/closed + issue progress) is where status
