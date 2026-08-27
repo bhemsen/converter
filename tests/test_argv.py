@@ -171,7 +171,9 @@ class TestMp3Job:
     compatible single-stream source still gets a selective rung -- the same
     shape MP4 has (`TestMp4Retries.test_selective_copies_compatible_streams`)."""
 
-    def test_first_attempt_carries_the_standing_note(self):
+    def test_first_attempt_carries_no_standing_note(self):
+        """Issue #78: the standing note is retired -- a source with nothing
+        to lose now prints nothing at all, the change a user notices first."""
         attempt = jobs.first_attempt(MP3)
 
         assert attempt.options == (
@@ -182,9 +184,7 @@ class TestMp3Job:
             "-c",
             "copy",
         )
-        assert attempt.notes == (
-            "non-audio streams, including cover art, are not carried into MP3",
-        )
+        assert attempt.notes == ()
 
     def test_single_mp3_stream_reaches_a_selective_copy(self):
         streams = [Stream(0, "audio", "mp3")]
@@ -258,6 +258,16 @@ class TestMp3Job:
 
         assert jobs.verify_success(MP3, streams) == ()
 
+    def test_a_source_with_nothing_to_lose_prints_no_note_at_all(self):
+        """Acceptance, issue #78 -- the change a user notices first. The
+        retired cheap-attempt note is gone, and `verify_success` predicts
+        nothing for an ordinary matching-codec source; together (`batch.py`'s
+        `attempt.notes + extra`) that is what a caller reports."""
+        streams = [Stream(0, "audio", "mp3")]
+
+        assert jobs.first_attempt(MP3).notes == ()
+        assert jobs.verify_success(MP3, streams) == ()
+
     def test_last_resort_notes_are_pinned(self):
         """The explicit-index last resort cannot name a per-stream drop itself
         (unlike the selective rung), so what it gives up has to be its own
@@ -277,7 +287,8 @@ class TestFlacJob:
     as `MP3`, but flac's fallback carries no `fallback_name`, so a re-encode
     into flac itself is never reported as a loss."""
 
-    def test_first_attempt_carries_the_standing_note(self):
+    def test_first_attempt_carries_no_standing_note(self):
+        """Issue #78 -- see `TestMp3Job`'s equivalent for why."""
         attempt = jobs.first_attempt(FLAC)
 
         assert attempt.options == (
@@ -288,9 +299,7 @@ class TestFlacJob:
             "-c",
             "copy",
         )
-        assert attempt.notes == (
-            "non-audio streams, including cover art, are not carried into FLAC",
-        )
+        assert attempt.notes == ()
 
     def test_single_flac_stream_reaches_a_selective_copy(self):
         streams = [Stream(0, "audio", "flac")]
@@ -353,6 +362,13 @@ class TestFlacJob:
 
         assert jobs.verify_success(FLAC, streams) == ()
 
+    def test_a_source_with_nothing_to_lose_prints_no_note_at_all(self):
+        """Acceptance, issue #78 -- see `TestMp3Job`'s equivalent for why."""
+        streams = [Stream(0, "audio", "flac")]
+
+        assert jobs.first_attempt(FLAC).notes == ()
+        assert jobs.verify_success(FLAC, streams) == ()
+
     def test_last_resort_notes_are_pinned(self):
         """Unlike its `StreamRule.fallback_name=None`, the last resort still
         needs its own note: it is an explicit-index attempt, so it cannot name
@@ -372,7 +388,8 @@ class TestM4aJob:
     as `MP3`/`FLAC`, but `m4a` declares no `stream_limit` -- the ipod muxer
     holds several audio streams, so every one the source has is carried."""
 
-    def test_first_attempt_carries_the_standing_note(self):
+    def test_first_attempt_carries_no_standing_note(self):
+        """Issue #78 -- see `TestMp3Job`'s equivalent for why."""
         attempt = jobs.first_attempt(M4A)
 
         assert attempt.options == (
@@ -383,9 +400,7 @@ class TestM4aJob:
             "-c",
             "copy",
         )
-        assert attempt.notes == (
-            "non-audio streams, including cover art, are not carried into M4A",
-        )
+        assert attempt.notes == ()
 
     def test_single_matching_stream_reaches_a_selective_copy(self):
         streams = [Stream(0, "audio", "aac")]
@@ -482,6 +497,13 @@ class TestM4aJob:
 
         assert jobs.verify_success(M4A, streams) == ()
 
+    def test_a_source_with_nothing_to_lose_prints_no_note_at_all(self):
+        """Acceptance, issue #78 -- see `TestMp3Job`'s equivalent for why."""
+        streams = [Stream(0, "audio", "aac")]
+
+        assert jobs.first_attempt(M4A).notes == ()
+        assert jobs.verify_success(M4A, streams) == ()
+
     def test_last_resort_notes_are_pinned(self):
         reencode = jobs.retries(M4A, [])[-1]
 
@@ -498,13 +520,14 @@ class TestOggJob:
     with a wider copy mask and no stream limit either -- the ogg muxer holds
     several audio streams too."""
 
-    def test_first_attempt_carries_the_standing_note(self):
+    def test_first_attempt_carries_no_standing_note(self):
+        """Issue #78: argv is byte-for-byte unchanged -- ogg gains no
+        disposition map, since it gains no artwork rule -- only the note is
+        gone."""
         attempt = jobs.first_attempt(OGG)
 
         assert attempt.options == ("-map", "0:a?", "-c", "copy")
-        assert attempt.notes == (
-            "non-audio streams, including cover art, are not carried into OGG",
-        )
+        assert attempt.notes == ()
 
     def test_single_matching_stream_reaches_a_selective_copy(self):
         streams = [Stream(0, "audio", "vorbis")]
@@ -573,6 +596,28 @@ class TestOggJob:
 
         assert selective.notes == ("video stream 1 (h264) dropped: not supported by OGG",)
 
+    def test_cover_art_is_dropped_with_a_note_same_as_any_other_video_stream(self):
+        """Issue #78: ogg gains no `attached_pic` rule (Out of scope), so a
+        disposition-marked stream is still an ordinary video stream to this
+        profile -- `verify_success` names its drop exactly as the retired
+        standing note used to claim, per stream rather than as a blanket
+        line."""
+        streams = [
+            Stream(0, "audio", "vorbis"),
+            Stream(1, "video", "mjpeg", attached_pic=True),
+        ]
+
+        notes = jobs.verify_success(OGG, streams)
+
+        assert notes == ("video stream 1 (mjpeg) dropped: not supported by OGG",)
+
+    def test_a_source_with_nothing_to_lose_prints_no_note_at_all(self):
+        """Acceptance, issue #78 -- see `TestMp3Job`'s equivalent for why."""
+        streams = [Stream(0, "audio", "vorbis")]
+
+        assert jobs.first_attempt(OGG).notes == ()
+        assert jobs.verify_success(OGG, streams) == ()
+
     def test_last_resort_notes_are_pinned(self):
         reencode = jobs.retries(OGG, [])[-1]
 
@@ -590,13 +635,13 @@ class TestOpusJob:
     decisions) -- the mask below governs only the failure-side selective rung,
     where a Vorbis stream is re-encoded rather than copied."""
 
-    def test_first_attempt_carries_the_standing_note(self):
+    def test_first_attempt_carries_no_standing_note(self):
+        """Issue #78: argv is byte-for-byte unchanged -- see `TestOggJob`'s
+        equivalent for why."""
         attempt = jobs.first_attempt(OPUS)
 
         assert attempt.options == ("-map", "0:a?", "-c", "copy")
-        assert attempt.notes == (
-            "non-audio streams, including cover art, are not carried into OPUS",
-        )
+        assert attempt.notes == ()
 
     def test_single_matching_stream_reaches_a_selective_copy(self):
         streams = [Stream(0, "audio", "opus")]
@@ -668,6 +713,24 @@ class TestOpusJob:
         selective = jobs.retries(OPUS, streams)[0]
 
         assert selective.notes == ("video stream 1 (h264) dropped: not supported by OPUS",)
+
+    def test_cover_art_is_dropped_with_a_note_same_as_any_other_video_stream(self):
+        """Issue #78 -- see `TestOggJob`'s equivalent for why."""
+        streams = [
+            Stream(0, "audio", "opus"),
+            Stream(1, "video", "mjpeg", attached_pic=True),
+        ]
+
+        notes = jobs.verify_success(OPUS, streams)
+
+        assert notes == ("video stream 1 (mjpeg) dropped: not supported by OPUS",)
+
+    def test_a_source_with_nothing_to_lose_prints_no_note_at_all(self):
+        """Acceptance, issue #78 -- see `TestMp3Job`'s equivalent for why."""
+        streams = [Stream(0, "audio", "opus")]
+
+        assert jobs.first_attempt(OPUS).notes == ()
+        assert jobs.verify_success(OPUS, streams) == ()
 
     def test_last_resort_notes_are_pinned(self):
         reencode = jobs.retries(OPUS, [])[-1]

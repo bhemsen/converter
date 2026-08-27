@@ -930,10 +930,12 @@ class TestMp3Profile:
             "copy",
         )
 
-    def test_cheap_attempt_carries_the_standing_non_audio_note(self):
-        assert MP3.cheap_attempt.notes == (
-            "non-audio streams, including cover art, are not carried into MP3",
-        )
+    def test_cheap_attempt_carries_no_standing_note(self):
+        """Issue #78: the standing note is retired -- `jobs.verify_success`
+        already names every dropped stream per stream, and the blanket line
+        had gone false for cover art specifically once #77 started carrying
+        it. See `tests/test_argv.py::TestMp3Job` for the per-stream proof."""
+        assert MP3.cheap_attempt.notes == ()
 
     def test_cheap_attempt_is_declared_partial(self):
         assert MP3.partial_mapping is True
@@ -1002,10 +1004,9 @@ class TestFlacProfile:
             "copy",
         )
 
-    def test_cheap_attempt_carries_the_standing_non_audio_note(self):
-        assert FLAC.cheap_attempt.notes == (
-            "non-audio streams, including cover art, are not carried into FLAC",
-        )
+    def test_cheap_attempt_carries_no_standing_note(self):
+        """Issue #78 -- see `TestMp3Profile`'s equivalent for why."""
+        assert FLAC.cheap_attempt.notes == ()
 
     def test_cheap_attempt_is_declared_partial(self):
         assert FLAC.partial_mapping is True
@@ -1078,10 +1079,9 @@ class TestM4aProfile:
             "copy",
         )
 
-    def test_cheap_attempt_carries_the_standing_non_audio_note(self):
-        assert M4A.cheap_attempt.notes == (
-            "non-audio streams, including cover art, are not carried into M4A",
-        )
+    def test_cheap_attempt_carries_no_standing_note(self):
+        """Issue #78 -- see `TestMp3Profile`'s equivalent for why."""
+        assert M4A.cheap_attempt.notes == ()
 
     def test_cheap_attempt_is_declared_partial(self):
         assert M4A.partial_mapping is True
@@ -1153,10 +1153,12 @@ class TestOggProfile:
         assert OGG.explicit_streams is False
         assert OGG.cheap_attempt.options == ("-map", "0:a?", "-c", "copy")
 
-    def test_cheap_attempt_carries_the_standing_non_audio_note(self):
-        assert OGG.cheap_attempt.notes == (
-            "non-audio streams, including cover art, are not carried into OGG",
-        )
+    def test_cheap_attempt_carries_no_standing_note(self):
+        """Issue #78: ogg gains no artwork rule, so this note's claim was
+        never about a false statement -- it was pure duplication of the
+        per-stream drop `jobs.verify_success` already names for any non-audio
+        stream, cover art included. See `tests/test_argv.py::TestOggJob`."""
+        assert OGG.cheap_attempt.notes == ()
 
     def test_cheap_attempt_is_declared_partial(self):
         assert OGG.partial_mapping is True
@@ -1208,10 +1210,9 @@ class TestOpusProfile:
         assert OPUS.explicit_streams is False
         assert OPUS.cheap_attempt.options == ("-map", "0:a?", "-c", "copy")
 
-    def test_cheap_attempt_carries_the_standing_non_audio_note(self):
-        assert OPUS.cheap_attempt.notes == (
-            "non-audio streams, including cover art, are not carried into OPUS",
-        )
+    def test_cheap_attempt_carries_no_standing_note(self):
+        """Issue #78 -- see `TestOggProfile`'s equivalent for why."""
+        assert OPUS.cheap_attempt.notes == ()
 
     def test_cheap_attempt_is_declared_partial(self):
         assert OPUS.partial_mapping is True
@@ -1242,6 +1243,58 @@ class TestOpusProfile:
     def test_declares_the_pinned_last_resort(self):
         assert OPUS.last_resort is not None
         assert OPUS.last_resort.options == ("-map", "0:a:0", "-c:a", "libopus", "-b:a", "128k")
+
+
+#: The five audio profiles a cheap-attempt standing note used to sit on
+#: (Acceptance, issue #78, docs/specs/spec-stream-disposition.md). `wav` is
+#: deliberately absent: it carries none, so there is nothing for it to retire.
+AUDIO_PROFILES_WITH_A_RETIRED_NOTE = [MP3, FLAC, M4A, OGG, OPUS]
+
+#: Each profile's `last_resort.notes`, exactly as declared before this issue --
+#: unchanged, since that rung maps `-map 0:a:0` explicitly and is never
+#: verified (Out of scope, docs/specs/spec-stream-disposition.md: "`last_resort`
+#: notes ... the only place that information exists").
+_LAST_RESORT_NOTES = {
+    MP3.name: (
+        "non-audio streams, and any audio stream beyond the first, are not carried into MP3",
+    ),
+    FLAC.name: (
+        "non-audio streams, and any audio stream beyond the first, are not carried into FLAC",
+    ),
+    M4A.name: (
+        "non-audio streams, and any audio stream beyond the first, are not carried into M4A",
+    ),
+    OGG.name: (
+        "non-audio streams, and any audio stream beyond the first, are not carried into OGG",
+    ),
+    OPUS.name: (
+        "non-audio streams, and any audio stream beyond the first, are not carried into OPUS",
+    ),
+}
+
+
+class TestStandingNoteRetirement:
+    """Issue #78: the cheap-attempt standing note is gone from every audio
+    profile that used to carry one, and `last_resort` -- never verified, so
+    its note is the only place that information exists -- is untouched."""
+
+    @pytest.mark.parametrize(
+        "profile", AUDIO_PROFILES_WITH_A_RETIRED_NOTE, ids=lambda profile: profile.label
+    )
+    def test_no_audio_profile_carries_a_cheap_attempt_standing_note(self, profile):
+        assert profile.cheap_attempt.notes == ()
+
+    def test_wav_never_carried_one_either(self):
+        """The sixth audio profile, named explicitly since it is absent from
+        `AUDIO_PROFILES_WITH_A_RETIRED_NOTE` above -- nothing to retire."""
+        assert WAV.cheap_attempt.notes == ()
+
+    @pytest.mark.parametrize(
+        "profile", AUDIO_PROFILES_WITH_A_RETIRED_NOTE, ids=lambda profile: profile.label
+    )
+    def test_last_resort_notes_are_unchanged(self, profile):
+        assert profile.last_resort is not None
+        assert profile.last_resort.notes == _LAST_RESORT_NOTES[profile.name]
 
 
 #: One tuple per image2 profile this phase adds: the profile itself, the codec

@@ -865,10 +865,14 @@ class TestLossySourceAdvisory:
         reaches the selective rung the advisory lives on, so it is kept only as
         the control the spec's Verification section names, proving nothing
         about the guard on its own.
+
+        Issue #78, docs/specs/spec-stream-disposition.md: rung 1's standing
+        note is retired -- `jobs.verify_success` already names any drop this
+        note used to describe, per stream. This control now asserts the
+        rung carries no notes of its own at all, still proving nothing about
+        the advisory (which lives on the selective rung, never reached here).
         """
-        assert jobs.first_attempt(FLAC).notes == (
-            "non-audio streams, including cover art, are not carried into FLAC",
-        )
+        assert jobs.first_attempt(FLAC).notes == ()
 
     def test_lossy_source_into_a_lossy_target_keeps_the_ordinary_note_only(self):
         """Lossy-to-lossy is out of scope by decision: the engine's own

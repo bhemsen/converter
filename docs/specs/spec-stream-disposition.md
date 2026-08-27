@@ -386,3 +386,36 @@ New-Item -ItemType Directory -Force in
   `attached_pic` rule, or giving it `stream_limit=1`) and confirming both the
   scratch check and the shipped `tests/test_profiles.py` invariants fail
   against the mutation.
+- 2026-08-27 (issue #78): the cheap-attempt standing note is retired from all
+  five audio profiles that carried one -- `mp3`, `flac`, `m4a`, `ogg`, `opus`
+  -- leaving `Attempt(label="remux", options=...)` with no `notes` argument at
+  all rather than an empty tuple, the same shape a profile that never carried
+  one already had. Nothing named by a removed note is now unsaid: for `mp3`,
+  `m4a` and `flac`, `jobs.verify_success` already named a real drop (a video,
+  subtitle or attachment stream) per stream via `_structural_drop`'s "not
+  supported by `<LABEL>`" branch before this issue touched anything, and the
+  note's cover-art half had already gone false the moment #77 started
+  carrying artwork -- so removing it deletes a statement that was either
+  redundant or already wrong, never one still true and unreplaced. `ogg` and
+  `opus` gain no `attached_pic` rule (Out of scope), so a cover-art stream
+  there resolves to the plain `video` rule same as any other video stream and
+  is dropped with the identical per-stream note -- proven by new tests
+  (`TestOggJob`/`TestOpusJob::test_cover_art_is_dropped_with_a_note_same_as_any_other_video_stream`)
+  rather than assumed. `last_resort` notes on all five profiles are untouched
+  and pinned unchanged (`tests/test_profiles.py::TestStandingNoteRetirement`),
+  since that rung is never verified and its note is the only place its claim
+  exists. `ogg`, `opus` and `wav` argv is byte-for-byte unchanged -- `wav`
+  needed no edit at all, since it carried no standing note to begin with.
+  Verified against real ffmpeg 9.0 with distinct-stem fixtures: a plain
+  matching-codec source into its own target (`tone-mp3.mp3 --to mp3`, and the
+  `flac`/`m4a`/`ogg`/`opus` equivalents) converts and prints no note at all --
+  the change a user notices first; artwork still survives the cheap-attempt
+  and selective-rung paths into `mp3`/`m4a`/`flac` with no false drop; a real
+  h264 and a real mjpeg video stream are still dropped with a note into `mp3`
+  and `m4a`; an artwork-bearing source into `ogg`, `opus` and `wav` still
+  drops the picture with a per-stream note; a second run over a converted tree
+  reports 0 converted, exit 0. Every new or changed assertion was proven
+  non-vacuous by mutating a profile copy in a scratch script outside the repo
+  (restoring the removed standing note, adding an `attached_pic` rule to
+  `ogg`, emptying a `last_resort` note) and confirming the same assertion the
+  shipped test uses fails against each mutation.

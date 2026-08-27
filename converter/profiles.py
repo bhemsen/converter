@@ -639,18 +639,16 @@ MP3 = Profile(
     # muxer's default instead of copying it, an undeclared loss the mask would
     # hide; "-c copy" behaves identically to "-c:a copy" for the audio stream
     # since the map now selects only audio and pictures.
+    # Issue #78, docs/specs/spec-stream-disposition.md: the standing note this
+    # cheap attempt used to carry alongside the map is retired.
+    # partial_mapping's success-side verification (jobs.verify_success) already
+    # names every dropped stream -- index, codec and reason -- so the blanket
+    # line was pure duplication for a plain video/subtitle drop, and for cover
+    # art specifically it had already gone false the moment artwork started
+    # being carried (issue #77).
     cheap_attempt=Attempt(
         label="remux",
         options=flags("-map 0:a? -map 0:disp:attached_pic? -c copy"),
-        # partial_mapping's success-side verification (docs/design/degradation-
-        # ladder.md) already names a dropped stream precisely when the ladder
-        # actually drops one; this line is the standing note the audio-formats
-        # spec's gate chose to keep alongside it -- always true, so it costs
-        # nothing to state even for the many files that had nothing to lose.
-        # (Now stale for cover art specifically -- issue #78, a dependent of
-        # this one, retires it once the verifier's per-stream note is the only
-        # place that claim needs to live.)
-        notes=("non-audio streams, including cover art, are not carried into MP3",),
     ),
     explicit_streams=False,
     # "-map 0:a?" selects no video, subtitle or attachment stream, so any of
@@ -703,11 +701,10 @@ FLAC = Profile(
     #
     # Same disposition addition as MP3's, and the same "-c copy" reasoning --
     # see its comment (docs/specs/spec-stream-disposition.md).
+    # Standing note retired -- issue #78, see MP3's identical comment.
     cheap_attempt=Attempt(
         label="remux",
         options=flags("-map 0:a? -map 0:disp:attached_pic? -c copy"),
-        # Stale for cover art -- see MP3's identical note and its comment.
-        notes=("non-audio streams, including cover art, are not carried into FLAC",),
     ),
     explicit_streams=False,
     partial_mapping=True,
@@ -755,11 +752,10 @@ M4A = Profile(
     # the ipod muxer's *default* video encoder is h264, which ipod then
     # rejects, so leaving "-c:a copy" in place would fail every artwork-bearing
     # "--to m4a" at rung 1 rather than silently mis-encoding as mp3/flac would.
+    # Standing note retired -- issue #78, see MP3's identical comment.
     cheap_attempt=Attempt(
         label="remux",
         options=flags("-map 0:a? -map 0:disp:attached_pic? -c copy"),
-        # Stale for cover art -- see MP3's identical note and its comment.
-        notes=("non-audio streams, including cover art, are not carried into M4A",),
     ),
     explicit_streams=False,
     partial_mapping=True,
@@ -807,10 +803,15 @@ OGG = Profile(
     # through as a whole video file renamed ".ogg" -- the same defect that
     # rules m4a out. The cheap attempt maps audio only, so the two spellings
     # behave identically; "-c copy" is what the spec pins.
+    # Issue #78, docs/specs/spec-stream-disposition.md: the standing note this
+    # cheap attempt used to carry alongside the map is retired -- ogg gains no
+    # artwork rule (Out of scope), so a cover-art stream here is an ordinary
+    # video stream and partial_mapping's success-side verification
+    # (jobs.verify_success) already names its drop per stream, the same as any
+    # other unsupported type. The blanket line was pure duplication.
     cheap_attempt=Attempt(
         label="remux",
         options=flags("-map 0:a? -c copy"),
-        notes=("non-audio streams, including cover art, are not carried into OGG",),
     ),
     explicit_streams=False,
     partial_mapping=True,
@@ -849,10 +850,10 @@ OPUS = Profile(
     # every already-Opus file through libopus would be a real generation loss
     # on the common case to prevent a mislabel reachable only from an Ogg
     # source.
+    # Standing note retired -- issue #78, see OGG's identical comment.
     cheap_attempt=Attempt(
         label="remux",
         options=flags("-map 0:a? -c copy"),
-        notes=("non-audio streams, including cover art, are not carried into OPUS",),
     ),
     explicit_streams=False,
     partial_mapping=True,
