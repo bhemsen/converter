@@ -628,8 +628,13 @@ class TestMkvProfile:
         source with either loses it without ffmpeg ever complaining."""
         assert MKV.partial_mapping is True
 
-    def test_cheap_attempt_carries_the_standing_note(self):
-        assert MKV.cheap_attempt.notes == ("data and timecode streams are not carried into MKV",)
+    def test_cheap_attempt_carries_no_standing_note(self):
+        """Issue #67: the standing note is retired -- `jobs.verify_success`
+        already names a real data or timecode drop per stream, and MKV's
+        muxer never regenerates one from source metadata (measured), unlike
+        MOV/MP4's `tmcd`. See `tests/test_argv.py::TestConfirmDrops` for the
+        per-stream proof."""
+        assert MKV.cheap_attempt.notes == ()
 
     def test_last_resort_excludes_container_options(self):
         assert MKV.last_resort is not None
@@ -809,10 +814,14 @@ class TestWebmProfile:
     def test_cheap_attempt_is_declared_partial(self):
         assert WEBM.partial_mapping is True
 
-    def test_cheap_attempt_carries_the_standing_note(self):
-        assert WEBM.cheap_attempt.notes == (
-            "attachments, data and timecode streams are not carried into WebM",
-        )
+    def test_cheap_attempt_carries_no_standing_note(self):
+        """Issue #67: the standing note is retired -- `jobs.verify_success`
+        already names a real attachment, data or timecode drop per stream
+        (WebM declares neither rule), and WebM's muxer regenerates nothing
+        from source metadata (measured). See
+        `tests/test_argv.py::TestWebmDegradationNotes` for the per-stream
+        proof."""
+        assert WEBM.cheap_attempt.notes == ()
 
     def test_last_resort_excludes_container_options(self):
         assert WEBM.last_resort is not None

@@ -419,3 +419,85 @@ New-Item -ItemType Directory -Force in
   (restoring the removed standing note, adding an `attached_pic` rule to
   `ogg`, emptying a `last_resort` note) and confirming the same assertion the
   shipped test uses fails against each mutation.
+- 2026-08-27 (issue #67): the finding this issue was filed to fix -- the
+  cheap-attempt standing note firing even when a source had nothing for the
+  target to drop, and naming neither a stream index nor a codec -- is
+  resolved differently for the six profiles it covers, depending on what the
+  note actually described.
+
+  **`mkv` and `webm` retire theirs outright**, the same resolution #78 gave
+  the five audio profiles: `jobs.verify_success`'s `_structural_drop` already
+  names any stream of a type the profile declares no rule for, per stream,
+  via its "not supported by `<LABEL>`" branch -- `mkv` declares no `data`
+  rule and `webm` declares neither `attachment` nor `data`, so an attachment,
+  data or timecode stream a partial cheap attempt could not have mapped was
+  already named individually before this issue touched anything; the
+  standing note was pure duplication, never a statement with no
+  replacement. Measured against real ffmpeg 9.0, and pinned by new tests
+  (`tests/test_argv.py::TestMkvDegradationNotes`/`TestWebmDegradationNotes`):
+  unlike `mov`/`mp4` (issue #66), neither `mkv`'s nor `webm`'s muxer
+  regenerates a data or timecode stream from source metadata -- a `.mov`
+  source carrying a real `tmcd` timecode track converts to both containers
+  holding video and audio only, nothing put back -- so no `confirm_drops`
+  forgiveness is even in play and the per-stream prediction is exact on every
+  file, not merely on average. `mov` needed no change: it already carries no
+  standing note, having lost it to issue #66's finding that its muxer's own
+  `tmcd` regeneration made the blanket claim measurably false.
+
+  **`jpg`, `gif` and `avif` keep theirs, unconditional, by decision rather
+  than oversight.** All three notes this issue's QA finding named for these
+  profiles -- JPEG's and GIF's transparency loss, GIF's colour quantisation,
+  AVIF's frame reduction -- describe a *within-stream* loss: the video
+  stream is still mapped and kept, only something inside it (an alpha
+  channel, a colour count, a frame count) is gone. `_structural_drop` only
+  ever reasons about whether a stream was mapped at all, so it has no
+  opinion on what survived inside one, and confirmed by measurement rather
+  than assumed: a source already in the target format (a GIF converted to
+  GIF, already alpha-less and already <=256 colours; a single-frame source
+  into AVIF) still prints every one of these notes, exactly the QA finding's
+  own example of a plain opaque `yuvj420p` JPEG still claiming a
+  transparency loss. Making them conditional -- firing only when the source
+  actually had the property -- would need `Stream` (`converter/ffmpegtool.py`)
+  to carry a pixel format and a frame count, neither of which it does today,
+  and the decision of whether a given source had one would have to live in
+  `jobs.py`'s engine, since `converter/profiles.py` is data, not code (`docs/
+  constitution.md`) -- both changes are out of this issue's file boundary
+  (`converter/jobs.py` was read-only for this work; `converter/ffmpegtool.py`
+  was not in scope either). Retiring the notes without that replacement would
+  violate `docs/constitution.md`'s "never report success for a conversion
+  that silently dropped something" -- an unmeasured within-stream loss is
+  still a loss the constitution forbids leaving unsaid, so over-reporting
+  stays the safer failure mode until the probing exists. **Finding, not
+  fixed in this issue:** conditional firing for `jpg`/`gif`/`avif` needs a
+  `pix_fmt` and a frame-count field on `Stream`, plus new engine logic in
+  `jobs.py` to compare a kept stream's measured properties against what its
+  target actually holds -- recorded here for a follow-up issue rather than
+  attempted piecemeal against the file boundary this issue was scoped to.
+
+  Verified against real ffmpeg 9.0 with distinct-stem fixtures: a source with
+  no data or timecode stream into `mkv`/`webm` now prints nothing at all,
+  where the retired standing note used to fire unconditionally -- the change
+  a user notices first; a source carrying a real `tmcd`-tagged data stream
+  (built with `-timecode 00:00:00:00`) into `mkv` prints exactly
+  `data stream 2 (unknown) dropped: not supported by MKV`, nothing more, and
+  the output genuinely holds no data stream; a font-attachment-bearing MKV
+  source into `webm` prints exactly
+  `attachment stream 2 (ttf) dropped: not supported by WebM`; the same
+  attachment source into `mov` still fails the cheap attempt and is dropped
+  with `attachment stream 1 (unknown) dropped: not supported by MOV` at the
+  selective rung, unchanged; an alpha-bearing PNG (measured source alpha byte
+  `0x7e`) into `jpg`, `gif` and `avif` prints the transparency note and the
+  loss is real and measured -- `ffprobe` reports `yuvj444p`/no-alpha `gbrp`
+  pixel formats on the `jpg`/`avif` outputs, and the decoded alpha byte comes
+  back `0xff` (opaque) on all three, where PNG, TIFF, BMP and WebP round-trip
+  the same source at `0xfe`/`0xff` only because they keep an alpha channel at
+  all (WebP: `yuva420p`, alpha `0xfe`); a multi-frame GIF source (3 frames,
+  measured via `ffprobe -count_frames`) into `avif` prints the frame-reduction
+  note and the output genuinely holds 1 frame; a second run over each
+  converted tree reports 0 converted, exit 0. Every new or changed assertion
+  was proven non-vacuous by mutating a profile copy in a scratch script
+  outside the repo (restoring `mkv`'s and `webm`'s removed standing notes,
+  and separately giving each profile a bogus `data` rule that would make
+  `verify_success` stop predicting the drop the shipped test pins) and
+  confirming the shipped assertion's expected value no longer matches against
+  either mutation.

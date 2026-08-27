@@ -393,12 +393,21 @@ MKV = Profile(
     # subtitle, *and* attachment ("-map 0:t?"), which no earlier profile has
     # needed. Still not "-map 0": that would also select data and timecode
     # streams, which no "v/a/s/t" map -- MKV's included -- carries at all
-    # (measured), so the standing note below says so instead of ffmpeg silently
-    # dropping them off a bare "-map 0".
+    # (measured).
+    #
+    # Issue #67, docs/specs/spec-stream-disposition.md: the standing note this
+    # cheap attempt used to carry alongside the map is retired. jobs.verify_success
+    # already names a real data or timecode drop per stream via _structural_drop's
+    # "not supported by MKV" branch -- MKV declares no "data" rule, so any such
+    # stream is caught regardless of what the map above did or did not select.
+    # Unlike MOV/MP4, MKV's muxer never regenerates one from source metadata
+    # (measured, ffmpeg 9.0: a source carrying a `tmcd` timecode track converts
+    # to MKV holding video and audio only, nothing put back), so no
+    # confirm_drops forgiveness is even in play -- the per-stream note is exact
+    # every time.
     cheap_attempt=Attempt(
         label="remux",
         options=flags("-map 0:v? -map 0:a? -map 0:s? -map 0:t? -c copy"),
-        notes=("data and timecode streams are not carried into MKV",),
     ),
     explicit_streams=False,
     # The blind "?" selectors carry every video, audio, subtitle and attachment
@@ -560,16 +569,24 @@ WEBM = Profile(
     # only the standing note below can say so, since nothing ever fails on one.
     # Still not "-map 0": that would also select data and timecode streams,
     # which no "v/a/s" map -- WebM's included -- carries at all (measured).
+    #
+    # Issue #67, docs/specs/spec-stream-disposition.md: the standing note this
+    # cheap attempt used to carry alongside the map is retired. WebM declares
+    # no "attachment" or "data" rule, so jobs.verify_success's
+    # _structural_drop already names any attachment, data or timecode stream
+    # per stream via its "not supported by WebM" branch -- regardless of the
+    # map above never selecting one, the same mechanism MP4's own attachment
+    # gap already relies on. Measured, ffmpeg 9.0: WebM's muxer regenerates
+    # nothing from source metadata (unlike MOV/MP4's `tmcd`), so no
+    # confirm_drops forgiveness is in play here either.
     cheap_attempt=Attempt(
         label="remux",
         options=flags("-map 0:v? -map 0:a? -map 0:s? -c copy -c:s webvtt"),
-        notes=("attachments, data and timecode streams are not carried into WebM",),
     ),
     explicit_streams=False,
     # The blind "?" selectors carry every video, audio and subtitle stream
     # WebM's muxer can hold, but never an attachment, data or timecode stream --
-    # exactly the standing note's claim, verified once per successful cheap
-    # attempt rather than assumed.
+    # a real one is still named by the success-side verification, per stream.
     partial_mapping=True,
     rules={
         "video": StreamRule(
@@ -940,6 +957,23 @@ PNG = Profile(
     ),
 )
 
+#: Issue #67, docs/specs/spec-stream-disposition.md: JPG's, GIF's and AVIF's
+#: standing notes below (transparency, colour quantisation, frame reduction)
+#: were found to fire even on a source with nothing to lose -- a plain opaque
+#: `yuvj420p` JPEG still claims transparency was dropped. Unlike MKV's and
+#: WEBM's retired notes, none of these has a per-stream replacement:
+#: `jobs.verify_success` only ever names a stream the mapping left *out*
+#: entirely (D1/D2 of stream-decision.md), and every one of these three is a
+#: *within-stream* loss -- the video stream itself is still mapped and kept,
+#: only something inside it (an alpha channel, a colour count, a frame count)
+#: is gone. `Stream` (converter/ffmpegtool.py) carries no `pix_fmt` or frame
+#: count today, and the decision of whether a given source actually had the
+#: property would have to live in `jobs.py`'s engine (data, not code, is what
+#: `profiles.py` is for) -- both out of this issue's scope. Retiring the notes
+#: anyway would violate docs/constitution.md's "never report success for a
+#: conversion that silently dropped something", so all three stay unconditional
+#: standing notes; making them conditional on the source's actual pixel format
+#: and frame count is recorded as a finding for a follow-up issue instead.
 JPG = Profile(
     label="JPG",
     name="jpg",
@@ -952,7 +986,8 @@ JPG = Profile(
         # Standing note, not a fallback-branch one: this cheap attempt always
         # wins for an ordinary single-frame image (it forces the encoder
         # unconditionally), so it is the only rung whose notes are ever
-        # actually reported for the overwhelming majority of inputs.
+        # actually reported for the overwhelming majority of inputs. Retained
+        # unconditionally -- see the module-level comment above this profile.
         notes=("transparency is not carried by JPEG; the image was re-encoded",),
     ),
     explicit_streams=False,
@@ -1074,7 +1109,11 @@ GIF = Profile(
         # Standing notes, not fallback-branch ones: this cheap attempt always
         # wins (it forces the encoder unconditionally), so it is the only rung
         # whose notes are ever actually reported for the overwhelming majority
-        # of inputs -- the same shape JPG's cheap-attempt note is.
+        # of inputs -- the same shape JPG's cheap-attempt note is. Retained
+        # unconditionally -- issue #67, see JPG's module-level comment above
+        # for why: both are a within-stream loss no per-stream drop note can
+        # replace. Measured: a source that is itself already a GIF (already
+        # <=256 colours, already alpha-less) still prints both notes.
         notes=(
             "transparency is not carried by GIF",
             "colours are reduced to GIF's 256-colour palette",
@@ -1154,7 +1193,10 @@ AVIF = Profile(
         # Standing notes: the cheap attempt always wins (forced encoder), so
         # this is the only place AVIF's one silent loss this phase cannot
         # avoid -- the muxer keeps one frame no matter what is asked of it --
-        # is ever actually named.
+        # is ever actually named. Retained unconditionally -- issue #67, see
+        # JPG's module-level comment above GIF for why: both are a
+        # within-stream loss no per-stream drop note can replace. Measured: a
+        # single-frame, alpha-less source still prints both notes.
         notes=(
             "transparency is not carried by AVIF",
             "a multi-frame source is reduced to a single frame",

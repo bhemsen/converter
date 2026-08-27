@@ -509,6 +509,12 @@ class TestDropsAreConfirmedAgainstTheOutput:
     WebM really do leave it behind. Every test here drives the
     cheap-attempt-succeeds path through `convert_one`, so it exercises the
     success-side verification rather than `jobs.confirm_drops` in isolation.
+
+    MKV's and WebM's cheap-attempt standing note that used to sit alongside
+    this per-stream note is retired (issue #67) -- the tuples below are
+    pinned directly rather than built from `profile.cheap_attempt.notes`, so
+    a standing note re-added to either profile by mistake would fail this
+    test rather than being silently absorbed by it.
     """
 
     #: What ffprobe reports for a `tmcd` stream: a data stream whose codec name
@@ -546,10 +552,7 @@ class TestDropsAreConfirmedAgainstTheOutput:
 
         result = convert_one(profile, task, TOOLS, overwrite=False)
 
-        # The full tuple, not a membership check: the standing note these two
-        # profiles still carry is part of what must not have changed.
         assert result.notes == (
-            *profile.cheap_attempt.notes,
             f"data stream 2 (unknown) dropped: not supported by {profile.label}",
         )
 

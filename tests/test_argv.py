@@ -1046,6 +1046,35 @@ class TestMkvDegradationNotes:
 
         assert selective.notes == ("subtitle stream 1 (mov_text) re-encoded to subrip",)
 
+    def test_no_standing_note_on_the_cheap_attempt(self):
+        """Issue #67: retired -- see MKV's profile comment for why."""
+        assert jobs.first_attempt(MKV).notes == ()
+
+    def test_a_source_with_nothing_to_lose_prints_no_note_at_all(self):
+        """Acceptance, issue #67 -- the change a user notices first. A source
+        with no data or timecode stream now prints nothing at all, where the
+        retired standing note used to fire unconditionally."""
+        streams = [Stream(0, "video", "h264"), Stream(1, "audio", "aac")]
+
+        assert jobs.first_attempt(MKV).notes == ()
+        assert jobs.verify_success(MKV, streams) == ()
+
+    def test_a_real_data_or_timecode_drop_is_still_named_per_stream(self):
+        """What the retired standing note used to claim, now the only place it
+        is said -- with the index and codec the blanket line never carried.
+        `tests/test_argv.py::TestConfirmDrops` proves this against the written
+        output too, and that MKV's muxer (unlike MOV/MP4's) never regenerates
+        one to forgive."""
+        streams = [
+            Stream(0, "video", "h264"),
+            Stream(1, "audio", "aac"),
+            Stream(2, "data", "bin_data"),
+        ]
+
+        assert jobs.verify_success(MKV, streams) == (
+            "data stream 2 (bin_data) dropped: not supported by MKV",
+        )
+
     def test_last_resort_notes_are_pinned(self):
         reencode = jobs.retries(MKV, [])[-1]
 
@@ -1374,19 +1403,42 @@ class TestWebmDegradationNotes:
             "bitmap subtitles cannot be stored in WebM",
         )
 
-    def test_standing_note_names_attachments_data_and_timecode(self):
-        assert jobs.first_attempt(WEBM).notes == (
-            "attachments, data and timecode streams are not carried into WebM",
-        )
+    def test_no_standing_note_on_the_cheap_attempt(self):
+        """Issue #67: retired -- see WEBM's profile comment for why."""
+        assert jobs.first_attempt(WEBM).notes == ()
+
+    def test_a_source_with_nothing_to_lose_prints_no_note_at_all(self):
+        """Acceptance, issue #67 -- the change a user notices first. A source
+        with no attachment, data or timecode stream now prints nothing at
+        all, where the retired standing note used to fire unconditionally."""
+        streams = [Stream(0, "video", "vp9"), Stream(1, "audio", "opus")]
+
+        assert jobs.first_attempt(WEBM).notes == ()
+        assert jobs.verify_success(WEBM, streams) == ()
 
     def test_attachment_drop_via_success_side_verification_is_exact(self):
         """WebM never maps an attachment, so a successful cheap attempt still
         leaves one behind; the success-side verifier (`jobs.verify_success`)
-        names it per stream, alongside the standing note above -- the same
-        mechanism MP4 already uses for its own attachment gap."""
+        names it per stream -- what the retired standing note used to claim
+        in a blanket line, the same mechanism MP4 already uses for its own
+        attachment gap."""
         notes = jobs.verify_success(WEBM, [Stream(0, "attachment", "unknown")])
 
         assert notes == ("attachment stream 0 (unknown) dropped: not supported by WebM",)
+
+    def test_a_real_data_or_timecode_drop_is_still_named_per_stream(self):
+        """The other half of the retired standing note's claim. WebM's muxer
+        regenerates nothing from source metadata (measured, unlike MOV/MP4's
+        `tmcd`), so the prediction is exact every time."""
+        streams = [
+            Stream(0, "video", "vp9"),
+            Stream(1, "audio", "opus"),
+            Stream(2, "data", "bin_data"),
+        ]
+
+        assert jobs.verify_success(WEBM, streams) == (
+            "data stream 2 (bin_data) dropped: not supported by WebM",
+        )
 
     def test_last_resort_notes_are_pinned(self):
         reencode = jobs.retries(WEBM, [])[-1]

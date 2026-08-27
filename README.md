@@ -187,10 +187,29 @@ note    Show.S01E02.mkv: subtitle stream 2 (hdmv_pgs_subtitle) dropped: bitmap s
   audio streams, the first one is converted and the rest are dropped. For MP3
   and FLAC that limit is the container's own muxer, not a choice this tool
   makes.
-* **MP3 and FLAC never carry video.** Any non-audio stream — including
-  embedded cover art — is left out. A straight copy says so even when the
-  source had nothing to lose; when the audio itself has to be re-encoded, the
-  dropped stream is still named, just without the extra line.
+* **MP3, FLAC and M4A carry embedded cover art, but nothing else non-audio.**
+  A picture stream survives a straight copy untouched, byte for byte. Any
+  other video, subtitle or attachment stream is left out, and — like every
+  other target — is only reported when one was actually present to drop;
+  nothing prints for a source that never had one.
+* **MKV, MOV and WebM name a dropped attachment, data or timecode stream
+  individually, by index and codec, rather than with a blanket warning.** MKV
+  keeps font attachments and drops data or timecode streams; MOV rejects a
+  mapped attachment outright, so its loss surfaces through the same rung a
+  genuinely incompatible codec would, and its muxer regenerates a `tmcd`
+  timecode track from source metadata on its own, so that one is not
+  reported as dropped even though nothing mapped it; WebM silently discards
+  an attachment, data or timecode stream at exit 0. None of the three prints
+  anything for a source that carries none of these.
+* **JPG, GIF and AVIF always state the format's structural limits, even when
+  the source had nothing to lose.** JPEG and GIF cannot hold an alpha
+  channel, GIF is limited to a 256-colour palette, and AVIF's muxer keeps
+  only one frame of an animated source no matter what is asked of it — but
+  the notes for these say so on every conversion, not only the ones where the
+  source actually had transparency, extra colours or extra frames to give
+  up. Unlike a per-stream drop, this is a loss inside a stream that is still
+  kept, which the engine has no way to measure from the source today, so it
+  is announced unconditionally rather than confirmed.
 * **`--to opus` can hand you a `.opus` file that is actually Vorbis.** A
   Vorbis source (typically a `.ogg`/`.oga` file) is stream-copied into the
   `.opus` container without transcoding — genuinely lossless, but `.opus` is a
