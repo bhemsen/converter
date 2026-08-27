@@ -105,6 +105,23 @@ option list (`converter mirror --help` for the mirror sub-command's own).
 | `-q`, `--quiet` | hide the progress bar |
 | `--ffmpeg`, `--ffprobe` | use a specific executable instead of searching `PATH` |
 
+> **`--mirror-to` and `subst`/junction/symlinked inputs.** `--mirror-to` re-roots
+> `INPUT_DIR` onto `ROOT` using the path you typed, not the physical path it
+> resolves to. So `subst Q: <fixtures>` followed by
+> `converter --to mp4 -r Q:\ --mirror-to R:` writes to `R:\Season1\...`, mirroring
+> the shallow tree under `Q:\` — **not** `R:\Users\...\<physical path>\Season1\...`,
+> the whole physical path `Q:` happens to resolve to. The same holds for a
+> directory junction, an NTFS symlink standing in for `INPUT_DIR`, or a relative
+> `INPUT_DIR` (mirrored from the path as given, not resolved against the current
+> working directory first). This only changes the *shape* of the mirrored tree,
+> never its safety: a self-write (`INPUT_DIR` and `--mirror-to` resolving to the
+> same file) is still reported as a skipped file at exit 0, and an `--overwrite`
+> hazard that would destroy one of the run's own inputs is still refused at
+> exit 2 — both checks resolve the input and the derived output path to their
+> physical location at comparison time, so mirroring a virtual drive back onto
+> the real directory behind it is still caught exactly as if no
+> `subst`/junction/symlink were involved.
+
 ### Examples
 
 ```sh

@@ -178,11 +178,25 @@ def list_formats_command() -> int:
 
 
 def _resolve_output_root(args: argparse.Namespace) -> Path:
+    """Derive OUTPUT from ``--mirror-to``, or return the OUTPUT the user gave.
+
+    ``--mirror-to`` re-roots the path *as typed*, not ``args.input_dir.resolve()``
+    -- a `subst`/junction/symlinked INPUT would otherwise mirror onto the
+    physical path it resolves to, nesting the whole physical prefix into the
+    output tree instead of the shallow tree the user asked for (issue #72).
+    This is safe: the self-write and overwrite-hazard guards
+    (``paths.is_self_write``, ``paths.find_overwrite_hazards``) resolve both
+    the source and the derived output path themselves, independently, at
+    comparison time -- so a mirrored output that physically lands back on an
+    input is still caught no matter how the output root was built. Only
+    ``README.md``'s documented shape of the mirrored tree depends on this
+    choice, not the safety of the guards.
+    """
     if args.output_dir is not None and args.mirror_to is not None:
         raise UsageError("give either OUTPUT or --mirror-to, not both")
     if args.mirror_to is not None:
         try:
-            return paths.mirror_to_drive(args.input_dir.resolve(), args.mirror_to)
+            return paths.mirror_to_drive(args.input_dir, args.mirror_to)
         except ValueError as exc:
             raise UsageError(str(exc)) from exc
     if args.output_dir is not None:
@@ -358,14 +372,19 @@ def convert_command(args: argparse.Namespace) -> int:
 
 
 def mirror_command(args: argparse.Namespace) -> int:
-    """Print, and optionally create, the mirrored directory tree."""
+    """Print, and optionally create, the mirrored directory tree.
+
+    Re-roots each directory *as typed*, matching ``_resolve_output_root``: this
+    command exists to preview what ``--mirror-to`` will do, so resolving here
+    and not there would make the preview lie about the tree that gets built.
+    """
     try:
         directories = paths.list_directories(args.input_root, recursive=args.recursive)
     except NotADirectoryError as exc:
         raise UsageError(str(exc)) from exc
     for directory in directories:
         try:
-            target = paths.mirror_to_drive(directory.resolve(), args.output_root)
+            target = paths.mirror_to_drive(directory, args.output_root)
         except ValueError as exc:
             raise UsageError(str(exc)) from exc
         print(f"{directory} -> {target}")

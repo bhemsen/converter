@@ -281,6 +281,31 @@ class TestOutputRootResolution:
 
         assert cli._resolve_output_root(args) == Path("some/out")
 
+    def test_mirror_to_uses_the_typed_root_not_the_resolved_one(self, tmp_path, monkeypatch):
+        """Issue #72: a `subst`/junction/symlinked INPUT must shape the mirrored
+        tree from the path the user typed, not the physical path it resolves
+        to -- otherwise the whole physical prefix gets nested into the output
+        tree instead of the shallow tree the user asked for. Faked here (no
+        real subst/junction needed) by making `Path.resolve` answer for the
+        input root the way a virtual drive would."""
+        typed_root = tmp_path / "Q"
+        typed_root.mkdir()
+        physical_root = tmp_path / "physical" / "mirsrc"
+        real_resolve = Path.resolve
+        monkeypatch.setattr(
+            Path,
+            "resolve",
+            lambda self, *a, **kw: (
+                physical_root if self == typed_root else real_resolve(self, *a, **kw)
+            ),
+        )
+        args = parse(convert_argv(str(typed_root), "--mirror-to", "E:"))
+
+        result = cli._resolve_output_root(args)
+
+        assert result == cli.paths.mirror_to_drive(typed_root, "E:")
+        assert result != cli.paths.mirror_to_drive(physical_root, "E:")
+
 
 class TestConvertCommand:
     def test_missing_input_directory_is_a_usage_error(self, tmp_path, capsys):
@@ -460,9 +485,10 @@ class TestSourceSelection:
         assert "this file itself" in out
 
     def test_the_self_write_guard_fires_under_mirror_to(self, tmp_path, capsys, stub_ffmpeg):
-        """--mirror-to derives the output root from a *resolved* input path while
-        discovery returns paths built from the root as typed, so a guard that
-        compared them as given would miss this."""
+        """Mirroring INPUT straight back onto its own drive reconstructs the
+        identical path, so the guard must catch it exactly as an in-place
+        self-write would -- `self_mirroring_root` only needs one real
+        directory to show this, no second drive required."""
         inside = tmp_path / "in"
         make_source(inside, f"a{VIDEO_SUFFIX}")
 
@@ -523,6 +549,41 @@ class TestSourceSelection:
 
         assert code == 2
         assert "would be overwritten" in capsys.readouterr().err
+
+    def test_the_self_write_guard_still_fires_across_a_virtual_drive_boundary(
+        self, tmp_path, capsys, stub_ffmpeg, monkeypatch
+    ):
+        """The case resolution is still needed for after issue #72: INPUT is
+        typed through a virtual drive (`subst`/junction/symlink), and
+        --mirror-to names the *real* directory that virtual drive backs onto,
+        by its physical spelling -- a different string from what was typed,
+        but the same file. `_resolve_output_root` no longer resolves INPUT
+        itself, so this only stays caught because `paths.is_self_write`
+        resolves both sides independently, at comparison time. Faked without a
+        real subst/junction: `Path.resolve` is patched so everything under
+        `typed_root` answers as if it physically lived under `physical_root`,
+        the same relationship `subst Q: <physical_root>` would establish for
+        real -- and `physical_root` is computed with the very function under
+        test, so it is exactly the output root the CLI will derive."""
+        typed_root = tmp_path / "Q"
+        make_source(typed_root, f"a{VIDEO_SUFFIX}")
+        mirror_to = str(tmp_path / "physical")
+        physical_root = cli.paths.mirror_to_drive(typed_root, mirror_to)
+        real_resolve = Path.resolve
+
+        def fake_resolve(self, *a, **kw):
+            try:
+                rel = self.relative_to(typed_root)
+            except ValueError:
+                return real_resolve(self, *a, **kw)
+            return real_resolve(physical_root / rel, *a, **kw)
+
+        monkeypatch.setattr(Path, "resolve", fake_resolve)
+
+        code = main(convert_argv(str(typed_root), "--mirror-to", mirror_to, "-q"))
+
+        assert code == 0
+        assert "this file itself" in capsys.readouterr().out
 
     def test_a_nested_output_root_converges(self, tmp_path, capsys, stub_ffmpeg):
         """Without the output-tree exclusion this grows one `converted` level per
@@ -659,6 +720,32 @@ class TestMirrorCommand:
 
         assert code == 2
         assert "does not exist" in capsys.readouterr().err
+
+    def test_uses_the_typed_root_not_the_resolved_one(self, tmp_path, monkeypatch, capsys):
+        """This preview exists to show what --mirror-to will actually build
+        (issue #72), so it must not resolve INPUT_ROOT before re-rooting it
+        either -- faked the same way `TestOutputRootResolution` fakes a
+        virtual drive, without needing a real subst/junction. Asserted against
+        the exact typed-root mapping rather than a substring check: both
+        candidate targets share a drive letter and a `physical` segment name,
+        so a weaker check would not actually fail if `.resolve()` came back."""
+        typed_root = tmp_path / "Q"
+        typed_root.mkdir()
+        physical_root = tmp_path / "physical" / "mirsrc"
+        real_resolve = Path.resolve
+        monkeypatch.setattr(
+            Path,
+            "resolve",
+            lambda self, *a, **kw: (
+                physical_root if self == typed_root else real_resolve(self, *a, **kw)
+            ),
+        )
+
+        main([cli.MIRROR_COMMAND, str(typed_root), "E:"])
+        out = capsys.readouterr().out
+
+        assert f"{typed_root} -> {cli.paths.mirror_to_drive(typed_root, 'E:')}" in out
+        assert str(cli.paths.mirror_to_drive(physical_root, "E:")) not in out
 
 
 class TestInteractivePrompt:

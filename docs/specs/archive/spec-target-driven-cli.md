@@ -487,3 +487,65 @@ reusing the fixtures the phase-1 gate synthesises:
 - 2026-08-26: Close-out. The final QA gate ran against real ffmpeg 9.0 on
   Windows 11, verifying all 17 target formats end-to-end with ffprobe.
   Verdict: PASS WITH FINDINGS; the findings are filed as issues #66-#73.
+- 2026-08-27 (#72): `_resolve_output_root`'s `--mirror-to` branch now re-roots
+  `args.input_dir` as typed, not `.resolve()`d -- the QA gate's finding that a
+  `subst`/junction/symlinked INPUT mirrored onto the physical path it resolves
+  to, nesting the whole physical prefix into the output tree instead of the
+  shallow tree the user asked for. `mirror_command` (the `converter mirror`
+  preview sub-command) changed the same way, since it exists to preview what
+  `--mirror-to` will do and a divergent derivation would make the preview lie.
+  The two concerns the issue asked to separate turn out to already be
+  separate: `paths.is_self_write` and `paths.find_overwrite_hazards` resolve
+  *both* the source and the derived output path themselves, independently, at
+  comparison time (`paths._resolved_key`) -- so which path
+  `_resolve_output_root` starts from cannot change what those guards catch,
+  only the shape of the tree that gets built. Proved rather than assumed: a
+  real `subst Q: <fixtures>; subst R: <dest>` reproduction confirmed both the
+  fixed tree shape and the unchanged guards (self-write, `--overwrite` hazard,
+  collision, in-place idempotence all still fire/hold exactly as before), and
+  `tests/test_cli.py` gained two tests -- one proving `_resolve_output_root`
+  now uses the typed root (and fails against the old `.resolve()` call when
+  reverted), one proving the self-write guard still fires once that root is
+  no longer pre-resolved. `README.md`'s Options section documents the chosen
+  behaviour for `subst`/junction/symlinked inputs.
+- 2026-08-27 (#72, review round 1): The self-write regression test above
+  proved to be a false positive under mutation -- an independent review
+  replaced `paths._resolved_key`'s resolve call with a plain string compare
+  and the whole `tests/test_cli.py` suite still passed, because
+  `self_mirroring_root` (drive-only) plus `sub/..` puts the same lexical `..`
+  segment on *both* the derived source and the derived output, so the two
+  sides matched textually before resolution was ever needed. Replaced with
+  `test_the_self_write_guard_still_fires_across_a_virtual_drive_boundary`,
+  which fakes a `subst`-like alias with `Path.resolve` (redirecting an entire
+  subtree, not one path, and computing the "physical" location with
+  `paths.mirror_to_drive` itself rather than a hand-picked path) and a
+  `--mirror-to` target that names the alias's real location directly by a
+  *different* spelling -- confirmed to fail under the same mutation, and to
+  pass again once reverted. The same review found `mirror_command`'s
+  typed-vs-resolved change had no test at all; added
+  `TestMirrorCommand::test_uses_the_typed_root_not_the_resolved_one`, first
+  written with a substring assertion that also proved not to fail when
+  `directory.resolve()` was restored (both candidate targets share a drive
+  letter and a `physical` path segment), then corrected to assert the exact
+  expected line. The review also found `docs/design/source-selection.md`
+  (the OWN, SELF and HAZ nodes) and three `converter/paths.py` docstrings
+  (`_resolved_key`, `is_self_write`, plus the now-adjacent test docstrings in
+  `tests/test_cli.py` and `tests/test_paths.py`) still gave resolving's *why*
+  as "the output root is derived from a resolved input path" -- true before
+  this issue, false after it. Corrected throughout to the reason that
+  actually holds post-fix: a `subst`/junction/symlinked INPUT and a
+  `--mirror-to` target can each be spelled through the alias or through the
+  real path behind it, and only resolving both sides catches the two
+  spellings naming the same file. Also corrected in `README.md`: the
+  `--mirror-to`-onto-a-plain-drive counter-example named a path
+  (`E:\D\Rips\...`) `mirror_to_drive` cannot produce (it strips a drive
+  letter, never turns one into a directory component); the note attached
+  "refused" to a self-write when the design (SELF -> SKIP, HAZ -> REFUSE) and
+  the observed behaviour both make a self-write the *reported skip* and only
+  the `--overwrite` hazard the refusal; "the safety checks below" pointed at
+  a section that does not exist; and a relative `INPUT_DIR`'s own blast-radius
+  change (mirrored from the path as given, not resolved against the cwd
+  first) went unmentioned. No functional line changed in `converter/cli.py`
+  or `converter/paths.py` in this round -- the reviewer's verdict was that
+  the fix itself does not weaken the guards, only that the tests proving it
+  and the docs explaining it needed to be right.
