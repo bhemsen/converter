@@ -202,7 +202,7 @@ of them had moved.
 
 ## Tracking
 
-- Milestone: lossy-source-notes (created at the spec-acceptance gate)
+- Milestone: [lossy-source-notes](https://github.com/bhemsen/converter/milestone/7) (#7)
 - Issues: created from this spec once it is merged (one per implementable step)
 
 ## Verification
