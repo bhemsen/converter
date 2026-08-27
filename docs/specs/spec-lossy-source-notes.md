@@ -429,3 +429,29 @@ New-Item -ItemType Directory -Force in
   `docs/design/stream-decision.md`) are issue #89's scope, not this one's --
   confirmed against the actual issue text, which depends on #88 and owns
   exactly those two files -- so they are left untouched here.
+- 2026-08-27 (fix, post-#88 merge): issue #77's `feat(profiles): carry cover
+  art into mp3, m4a and flac` (#95) landed in `main` between #88's review and
+  its merge, giving `flac` an `attached_pic` rule whose copy mask
+  (`_AcceptAnyCodec`) accepts every codec and declares no fallback, so a cover
+  picture is always copied byte-for-byte, never re-encoded. `_lossy_source_notes`
+  had gated only on `_structural_drop` plus `LOSSY_CODECS` membership, which
+  was sound for the audio rule (its copy mask is `{"flac"}` alone, so reaching
+  a `LOSSY_CODECS` member there was only possible via the re-encode branch) but
+  not for the new `attached_pic` rule, where a `LOSSY_CODECS` member (`mjpeg`
+  cover art is the common case) reaches the check via the copy branch instead.
+  Measured against real ffmpeg 9.0: an mp3-with-cover-art source produced
+  `"video stream 1 (mjpeg) was already lossy before this file reached FLAC;
+  FLAC cannot restore what mjpeg discarded"` for a stream copied unchanged --
+  a false claim, since nothing was discarded. Exactly the "latent divergence"
+  the review round on #88 flagged as "not reachable today"; it became reachable
+  the moment #95 merged first. Fixed by checking the *matched rule*, not just
+  structural survival: a stream now qualifies only when
+  `stream.codec_name not in rule.copy_mask and rule.fallback_options is not
+  None` -- i.e. it actually took the fallback/re-encode branch
+  (`stream-decision.md`'s ENC node) -- mirroring `_decide_stream`'s own branch
+  logic exactly, so a copied-through stream (or a codec-level D3 drop, not
+  currently reachable for `flac` but excluded on the same footing) can never
+  draw the advisory. Regression test added:
+  `TestLossySourceAdvisory.test_copied_through_cover_art_carries_no_advisory`.
+  Landed as a fast-follow PR rather than amending #96, since #96 was already
+  squash-merged before the gap was found.

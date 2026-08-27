@@ -266,6 +266,15 @@ def _lossy_source_notes(profile: Profile, streams: Sequence[Stream]) -> tuple[st
     check :func:`_build_selective` uses (:func:`_structural_drop`), rather than
     reusing that pass's own accounting, so this function can stay entirely
     outside the plan it describes.
+
+    A kept stream still needs its matched rule checked before it qualifies:
+    FLAC's `attached_pic` rule (spec-stream-disposition.md, issue #77) accepts
+    any codec and never re-encodes, so a copied-through JPEG cover image is
+    carried byte-for-byte -- nothing was discarded and nothing the target
+    "cannot restore". Only a stream that actually takes the *fallback* branch
+    (`stream-decision.md`'s ENC node) is written into the target's own codec,
+    which is the only case this advisory is about; a stream the rule copies
+    verbatim, or would drop for a codec reason (D3), is excluded the same way.
     """
     if profile.name not in _LOSSY_SOURCE_ADVISORY_TARGETS:
         return ()
@@ -275,7 +284,11 @@ def _lossy_source_notes(profile: Profile, streams: Sequence[Stream]) -> tuple[st
         if _structural_drop(profile, stream, counts) is not None:
             continue
         counts[stream.codec_type] = counts.get(stream.codec_type, 0) + 1
-        if stream.codec_name in LOSSY_CODECS:
+        rule = profile.rules[_rule_key(profile, stream)]
+        was_reencoded = (
+            stream.codec_name not in rule.copy_mask and rule.fallback_options is not None
+        )
+        if was_reencoded and stream.codec_name in LOSSY_CODECS:
             notes.append(_lossy_source_note(stream, profile))
     return tuple(notes)
 
