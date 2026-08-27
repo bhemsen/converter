@@ -907,6 +907,40 @@ class TestLossySourceAdvisory:
 
         assert selective.notes == ()
 
+    def test_copied_through_cover_art_carries_no_advisory(self):
+        """Regression: `main` gained FLAC's `attached_pic` rule (issue #77,
+        `docs/specs/spec-stream-disposition.md`) between this issue's review
+        and its merge. That rule's copy mask (`_AcceptAnyCodec`) accepts every
+        codec and the rule declares no fallback, so a cover picture is always
+        copied byte-for-byte, never re-encoded into FLAC's own codec -- unlike
+        the audio rule, where reaching `LOSSY_CODECS` membership implies the
+        fallback branch ran. A common `mjpeg` cover image is a `LOSSY_CODECS`
+        member, so without this guard the copy-through would wrongly read as
+        "FLAC cannot restore what mjpeg discarded" for a stream nothing was
+        discarded from.
+        """
+        streams = [
+            Stream(0, "audio", "mp3"),
+            Stream(1, "video", "mjpeg", attached_pic=True),
+        ]
+
+        selective = jobs.retries(FLAC, streams)[0]
+
+        assert selective.options == (
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:a",
+            "flac",
+            "-c:v:0",
+            "copy",
+        )
+        assert selective.notes == (
+            "audio stream 0 (mp3) was already lossy before this file reached "
+            "FLAC; FLAC cannot restore what mp3 discarded",
+        )
+
     def test_end_to_end_advisory_and_probe_count(self, tmp_path, fake_ffmpeg, monkeypatch):
         """Full `convert_one` path, not just `jobs.retries` in isolation: the
         advisory must survive into `Result.notes`, and
