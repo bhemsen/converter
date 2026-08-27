@@ -330,3 +330,15 @@ New-Item -ItemType Directory -Force in
   of seventeen targets rather than a correctness one. This also corrects
   `docs/roadmap.md`'s seeded "constitution — none" verdict for this phase, which
   the version floor made false.
+- 2026-08-27: Issue #75 (`converter/ffmpegtool.py`) landed. `Stream` gained
+  `attached_pic: bool = False` as its last field, and `probe_streams`'s
+  `-show_entries` argument grew the `:stream_disposition=attached_pic` clause,
+  still one ffprobe call per file. Verified against real ffprobe 9.0: an
+  `art.mp3` fixture (audio + a `disposition:v:0 attached_pic` cover stream)
+  reports `disposition: {"attached_pic": 1}` on the picture stream and `0` on
+  the audio stream; a plain h264 `.mkv` and a plain `tone.mp3` both report `0`.
+  Every payload ffprobe 9.0 actually returned carried the `disposition` object
+  regardless of value once the entry was requested, so the "no `disposition`
+  object at all" default is a defensive fallback for a payload shape this
+  ffprobe version never produced, not one observed here — the parser handles it
+  with `raw.get("disposition") or {}` regardless.

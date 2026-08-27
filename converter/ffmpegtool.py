@@ -67,6 +67,13 @@ class Stream:
     #: does not care -- every test that builds a Stream by hand -- can leave it
     #: out. Read by :func:`converter.jobs.confirm_drops`, nothing else.
     codec_tag: str = ""
+    #: Whether ffprobe's ``disposition`` object flags this stream as an
+    #: embedded picture (cover art). Not a general disposition set -- only
+    #: this one flag has a decision resting on it, because ``mjpeg`` and
+    #: ``png`` are the codec of both a cover picture and a real video and
+    #: nothing else distinguishes them (docs/specs/spec-stream-disposition.md).
+    #: Defaults to false so existing construction sites are unaffected.
+    attached_pic: bool = False
 
 
 @dataclass(frozen=True)
@@ -200,6 +207,30 @@ def version(tools: Tools) -> str:
     return first_line.strip() or "unknown"
 
 
+def _parse_stream(raw: dict[str, object]) -> Stream | None:
+    """Build a :class:`Stream` from one ffprobe JSON stream object.
+
+    Returns ``None`` for an entry with no usable index, so the caller can drop
+    it without duplicating the guard. Split out of :func:`probe_streams` to
+    keep that function under the constitution's 50-line ceiling.
+    """
+    try:
+        index = int(raw["index"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    # A stream with no disposition flagged at all -- most of them -- omits
+    # the "disposition" object entirely rather than reporting zeros, so the
+    # fallback to {} is what makes attached_pic default to false.
+    disposition = raw.get("disposition") or {}
+    return Stream(
+        index=index,
+        codec_type=str(raw.get("codec_type", "")),
+        codec_name=str(raw.get("codec_name", "")),
+        codec_tag=str(raw.get("codec_tag_string", "")),
+        attached_pic=bool(disposition.get("attached_pic", 0)),
+    )
+
+
 def probe_streams(tools: Tools, src: str | os.PathLike[str]) -> list[Stream]:
     """List the elementary streams of *src*.
 
@@ -218,8 +249,11 @@ def probe_streams(tools: Tools, src: str | os.PathLike[str]) -> list[Stream]:
             "-show_entries",
             # One query, one process: an extra field costs nothing here, and
             # codec_tag_string is the only thing that distinguishes two data
-            # tracks ffprobe reports no codec name for.
-            "stream=index,codec_type,codec_name,codec_tag_string",
+            # tracks ffprobe reports no codec name for. stream_disposition=
+            # is a separate entry clause because disposition flags arrive
+            # nested under their own JSON object rather than alongside the
+            # plain stream fields.
+            "stream=index,codec_type,codec_name,codec_tag_string:stream_disposition=attached_pic",
             "-of",
             "json",
             cli_path(src),
@@ -232,18 +266,5 @@ def probe_streams(tools: Tools, src: str | os.PathLike[str]) -> list[Stream]:
     except json.JSONDecodeError as exc:  # pragma: no cover - malformed ffprobe output
         raise ProbeError(f"could not parse ffprobe output: {exc}") from exc
 
-    streams = []
-    for raw in payload.get("streams", []):
-        try:
-            index = int(raw["index"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        streams.append(
-            Stream(
-                index=index,
-                codec_type=str(raw.get("codec_type", "")),
-                codec_name=str(raw.get("codec_name", "")),
-                codec_tag=str(raw.get("codec_tag_string", "")),
-            )
-        )
-    return streams
+    parsed = (_parse_stream(raw) for raw in payload.get("streams", []))
+    return [stream for stream in parsed if stream is not None]
