@@ -957,41 +957,50 @@ PNG = Profile(
     ),
 )
 
-#: Issue #67, docs/specs/spec-stream-disposition.md: the QA finding this issue
-#: was filed against reads "standing notes fire when nothing was lost **and
-#: name no stream**" -- JPG's, GIF's and AVIF's standing notes below
-#: (transparency, colour palette, frame reduction) still have both halves of
-#: that problem, for different reasons, and neither is fixed here:
-#:
-#: * They are worded as *format facts* ("transparency is not carried by
-#:   JPEG"), true of every conversion to that target regardless of what the
-#:   source held -- not a claim that *this* file's transparency was dropped, so
-#:   they do not over-report the way the retired MKV/WEBM notes did. The one
-#:   exception was GIF's "colours are reduced to GIF's 256-colour palette",
-#:   worded as an action rather than a fact; measured, an already-GIF,
-#:   already-<=256-colour source re-encodes pixel-identically, so that wording
-#:   was a genuine false claim for that file (unlike its four siblings) and is
-#:   reworded below to the same fact-not-action shape as the rest.
-#: * None of the five names a stream index or codec, unlike a per-stream drop
-#:   note -- because none of these is a per-stream drop: the video stream
-#:   itself is still mapped and kept, only something inside it (an alpha
-#:   channel, a colour count, a frame count) is gone.
-#:   `jobs.verify_success`/`_structural_drop` only ever reasons about whether a
-#:   stream was mapped at all (D1/D2 of stream-decision.md), so it has no
-#:   opinion on what survived inside one, and a profile's `notes` tuple is
-#:   static data with no access to the source's probed streams at all -- naming
-#:   an index and codec here would need both a `pix_fmt`/frame-count field on
-#:   `Stream` (converter/ffmpegtool.py) and new decision logic in `jobs.py`'s
-#:   engine to compare a kept stream's measured properties against what its
-#:   target actually holds. Both are out of this issue's file boundary
-#:   (`jobs.py` was read-only for this work), so the gap is recorded as a
-#:   finding for a follow-up issue rather than attempted piecemeal.
-#:
-#: Retiring these notes outright, leaving the within-stream loss unsaid
-#: entirely, would violate docs/constitution.md's "never report success for a
-#: conversion that silently dropped something" -- an unmeasured loss is still
-#: a loss the constitution forbids leaving unsaid -- so all five stay
-#: unconditional standing notes rather than being deleted.
+# Issue #67, docs/specs/spec-stream-disposition.md: the QA finding this issue
+# was filed against reads "standing notes fire when nothing was lost **and
+# name no stream**" -- this covers JPG's, GIF's and AVIF's standing notes
+# below (transparency, colour palette, frame reduction). Review round 2 of
+# this PR flagged the summary this comment used to open with ("neither half
+# is fixed here") as false about this PR's own contents, since half one is
+# fixed for the one note that actually needed it -- restated precisely below.
+#
+# * Half one -- firing when nothing was lost. Four of the five notes are
+#   worded as claims about what *this profile's pipeline always does*
+#   ("transparency is not carried by JPEG" -- true of JPEG the format;
+#   AVIF's own notes are true of this profile's forced
+#   "-still-picture 1"/no-alpha pipeline specifically, not of the AVIF format,
+#   which does support alpha and multiple frames elsewhere), true of every
+#   conversion through that profile regardless of what the source held -- not
+#   a claim that *this* file's transparency was dropped, so they do not
+#   over-report the way the retired MKV/WEBM notes did. Half one's one real
+#   defect was GIF's "colours are reduced to GIF's 256-colour palette", worded
+#   as an action rather than a fact; measured, an already-GIF,
+#   already-<=256-colour source re-encodes pixel-identically, so that wording
+#   was a genuine false claim for that file (unlike its four siblings). It is
+#   fixed below, reworded to the same fact-not-action shape as the rest; the
+#   other four needed no change.
+# * Half two -- naming a stream index and codec. None of the five names one,
+#   and this half is not fixed for any of them, only recorded. None of these
+#   is a per-stream drop: the video stream itself is still mapped and kept,
+#   only something inside it (an alpha channel, a colour count, a frame
+#   count) is gone. `jobs.verify_success`/`_structural_drop` only ever
+#   reasons about whether a stream was mapped at all (D1/D2 of
+#   stream-decision.md), so it has no opinion on what survived inside one,
+#   and a profile's `notes` tuple is static data with no access to the
+#   source's probed streams at all -- naming an index and codec here would
+#   need both a `pix_fmt`/frame-count field on `Stream`
+#   (converter/ffmpegtool.py) and new decision logic in `jobs.py`'s engine to
+#   compare a kept stream's measured properties against what its target
+#   actually holds. Both are out of this issue's file boundary (`jobs.py` was
+#   read-only for this work), so the gap is recorded as a finding for a
+#   follow-up issue rather than attempted piecemeal.
+#
+# Retiring these notes outright, leaving the within-stream loss unsaid
+# entirely, would violate docs/constitution.md's "never report success for a
+# conversion that silently dropped something" -- an unmeasured loss is still
+# a loss the constitution forbids leaving unsaid -- so all five stay
+# unconditional standing notes rather than being deleted.
 JPG = Profile(
     label="JPG",
     name="jpg",
@@ -1128,7 +1137,7 @@ GIF = Profile(
         # wins (it forces the encoder unconditionally), so it is the only rung
         # whose notes are ever actually reported for the overwhelming majority
         # of inputs -- the same shape JPG's cheap-attempt note is. Retained
-        # unconditionally -- issue #67, see JPG's module-level comment above
+        # unconditionally -- issue #67, see the module-level comment above JPG
         # for why: both are a within-stream loss no per-stream drop note can
         # replace. Both wordings are format facts, true of every conversion to
         # GIF regardless of what the source held -- not a claim that *this*
@@ -1217,7 +1226,7 @@ AVIF = Profile(
         # this is the only place AVIF's one silent loss this phase cannot
         # avoid -- the muxer keeps one frame no matter what is asked of it --
         # is ever actually named. Retained unconditionally -- issue #67, see
-        # JPG's module-level comment above GIF for why: both are a
+        # the module-level comment above JPG for why: both are a
         # within-stream loss no per-stream drop note can replace. Measured: a
         # single-frame, alpha-less source still prints both notes.
         notes=(

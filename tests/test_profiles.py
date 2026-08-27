@@ -728,10 +728,12 @@ class TestMovProfile:
 
     def test_cheap_attempt_carries_no_standing_note(self):
         """MOV's muxer regenerates a `tmcd` timecode track from source metadata
-        even though no selector maps it, so the standing note MKV still carries
-        was measurably false here (issue #66). The per-file success-side
-        verification reads the written output and names a real data drop
-        itself, so nothing is lost by dropping the blanket claim."""
+        even though no selector maps it, so a standing note here would have
+        been measurably false (issue #66) -- unlike MKV's and WebM's own
+        retired notes (issue #67), which needed no such exemption since
+        neither muxer regenerates one. The per-file success-side verification
+        reads the written output and names a real data drop itself, so
+        nothing is lost by dropping the blanket claim."""
         assert MOV.cheap_attempt.notes == ()
 
     def test_last_resort_excludes_container_options(self):

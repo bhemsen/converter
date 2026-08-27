@@ -556,17 +556,27 @@ class TestDropsAreConfirmedAgainstTheOutput:
             f"data stream 2 (unknown) dropped: not supported by {profile.label}",
         )
 
-    @pytest.mark.parametrize("profile", [MKV, WEBM], ids=lambda profile: profile.label)
+    @pytest.mark.parametrize(
+        ("profile", "video_codec", "audio_codec"),
+        [(MKV, "h264", "aac"), (WEBM, "vp9", "opus")],
+        ids=lambda value: value.label if isinstance(value, Profile) else value,
+    )
     def test_a_source_with_nothing_to_lose_reports_nothing_end_to_end(
-        self, tmp_path, fake_ffmpeg, profile
+        self, tmp_path, fake_ffmpeg, profile, video_codec, audio_codec
     ):
         """Acceptance, issue #67 -- the change a user notices first, proved
         through the same `convert_one`/`fake_ffmpeg` harness the rest of this
         class uses, not just `jobs.verify_success` in isolation. No data or
         timecode stream at all, so the retired standing note's absence is the
-        only thing that could still print something here."""
+        only thing that could still print something here. Each profile's own
+        copy-mask codecs, matching the sibling `test_argv.py` tests -- vp9/opus
+        is what a real WebM cheap attempt would actually copy, not an
+        arbitrary stand-in."""
         task = self._task(tmp_path, profile.target_suffix.lstrip("."))
-        fake_ffmpeg.streams = [Stream(0, "video", "h264"), Stream(1, "audio", "aac")]
+        fake_ffmpeg.streams = [
+            Stream(0, "video", video_codec),
+            Stream(1, "audio", audio_codec),
+        ]
         fake_ffmpeg.output_streams = list(fake_ffmpeg.streams)
 
         result = convert_one(profile, task, TOOLS, overwrite=False)
