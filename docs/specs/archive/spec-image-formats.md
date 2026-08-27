@@ -504,3 +504,166 @@ New-Item -ItemType Directory -Force in
 - 2026-08-26: Close-out. The final QA gate ran against real ffmpeg 9.0 on
   Windows 11, verifying all 17 target formats end-to-end with ffprobe.
   Verdict: PASS WITH FINDINGS; the findings are filed as issues #66-#73.
+
+- 2026-08-27 (#73): Closed all four QA coverage gaps against real ffmpeg
+  9.0-full_build-www.gyan.dev on Windows 11 (this build: no `pgssub`
+  encoder, `-encoders` lists only `dvdsub`/`dvbsub` as
+  bitmap-subtitle-capable outputs). Two of four branches now have observed
+  end-to-end evidence (1 and 4); a third (the 8-bit reduction) was measured
+  only by running its argv by hand, because the normal ladder never reaches
+  it on this build; the fourth is recorded as knowingly unproven per this
+  issue's own third acceptance bullet.
+
+  **1. Bitmap-subtitle drop branch -- now proven end-to-end.** Reproduced
+  the QA gate's exact fixture-creation blocker first: `ffmpeg -f lavfi -i
+  color=... -i sample.srt -map 0:v -map 1:s -c:v mjpeg -c:s dvdsub out.mkv`
+  fails with `[sost#0:1/dvdsub @ ...] Subtitle encoding currently only
+  possible from text to text or bitmap to bitmap`; `-c:s dvbsub` from the
+  same text source fails identically. Confirms the QA gate's blocker was
+  about *building a fixture from text*, not about the drop branch itself, and
+  that this build cannot encode bitmap subtitles from a text source (and
+  has no PGS encoder at all, from any source). Rather than hand-rolling a
+  binary PGS/VobSub stream, downloaded a real bitmap-subtitle sample from
+  ffmpeg's own public FATE sample host,
+  `https://samples.ffmpeg.org/sub/PGS/supsample.mkv` (23 KB, h264 720x480 +
+  `hdmv_pgs_subtitle` 1280x720, per `ffprobe`). Renamed to
+  `pgsfixture.mkv` and ran `.venv/Scripts/python.exe -m converter --to
+  <target> --ffmpeg ... --ffprobe ... pgs_in pgs_out_<target>` for
+  `mp4`/`mov`/`webm`. All three fired the drop branch and printed the exact
+  `drop_reason` strings from `converter/profiles.py` (lines 146, 386, 470):
+  `note    pgsfixture.mkv: subtitle stream 1 (hdmv_pgs_subtitle) dropped:
+  bitmap subtitles cannot be stored in MP4` (and `MOV`, `WebM`
+  respectively; `webm` additionally re-encoded the video to vp9). Each run
+  reported `1 converted, 0 skipped, 0 failed, 0 unsupported (of 1)`.
+  `ffprobe -show_entries stream=index,codec_type,codec_name -of csv=p=0` on
+  each output lists exactly one stream row and no subtitle row --
+  `0,h264,video` for the `mp4` and `mov` outputs, `0,vp9,video` for the
+  `webm` one -- confirming the subtitle stream is genuinely gone, not just
+  unreported. This matches `README.md`'s own
+  quoted example (`note    Show.S01E02.mkv: subtitle stream 2
+  (hdmv_pgs_subtitle) dropped: bitmap subtitles cannot be stored in MP4`) in
+  shape exactly, differing only in filename and stream index. **Branch
+  fired and is correct.**
+
+  **2. `--mirror-to` onto a real second physical drive -- recorded as
+  knowingly unproven; no second physical drive exists on this machine.**
+  `Get-CimInstance Win32_DiskDrive` lists exactly one physical disk,
+  `\\.\PHYSICALDRIVE0` ("PVC10 SK hynix 1024GB"). Its four partitions (an
+  EFI system partition, a ~862 MB reserved partition, `C:`, and a
+  "DELLSUPPORT" ~1.06 GB recovery partition) are all on that one disk;
+  `[System.IO.DriveInfo]::GetDrives()` shows only `C:\` as a ready drive
+  letter. There is no second physical drive to attach or test against, and
+  none can be created without new hardware -- per this issue's own
+  acceptance ("If there is no second physical drive, do NOT park the issue
+  -- record it as knowingly unproven"), this is recorded as such rather
+  than parked. Note also, per the issue text, that issue #72 is concurrently
+  changing `--mirror-to` behaviour behind `subst`/junctions on this same
+  machine; that work is untouched here.
+
+  **3. The 10-bit/HDR "reduced to 8-bit" last-resort note -- the note's own
+  claim is confirmed true when the rung actually runs, but the rung is not
+  reachable through the normal ladder with this ffmpeg build.** This
+  build's `libx264` supports high bit depth natively (`ffmpeg -h
+  encoder=libx264`: "Supported pixel formats: yuv420p yuvj420p yuv422p
+  yuvj422p yuv444p yuvj444p nv12 nv16 nv21 yuv420p10le yuv422p10le
+  yuv444p10le nv20le gray gray10le"). Built a genuine 10-bit HDR fixture:
+  `ffmpeg -f lavfi -i "testsrc2=...,format=yuv422p10le,setparams=
+  color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc" ... -c:v
+  prores_ks -profile:v 3 -pix_fmt yuv422p10le -color_primaries bt2020
+  -color_trc smpte2084 -colorspace bt2020nc -c:a pcm_s16le
+  source_prores_hdr.mov`, verified by `ffprobe`
+  (`pix_fmt=yuv422p10le`, `bits_per_raw_sample=10`,
+  `color_primaries=bt2020`, `color_transfer=smpte2084`). MP4's muxer
+  refuses `prores` outright (`Could not find tag for codec prores in
+  stream #0, codec not currently supported in container`), so the cheap
+  attempt fails as expected and the engine falls to the selective rung. Ran
+  `--to mp4` on this fixture: the batch reported `note ...: video stream 0
+  (prores) re-encoded to h264` and `note ...: audio stream 1 (pcm_s16le)
+  re-encoded to aac` -- no bit-depth note -- and `ffprobe` on the output
+  shows `codec_name=h264`, `pix_fmt=yuv422p10le`, `bits_per_raw_sample=10`,
+  `color_primaries=bt2020`, `color_transfer=smpte2084`: the selective
+  rung's fallback (`-c:v:{n} libx264 -crf:v:{n} 18`, no forced `-pix_fmt`)
+  encoded straight through at the source's own 10-bit 4:2:2 depth and kept
+  the HDR tags, because this `libx264` build accepts that pixel format
+  directly. The `last_resort` rung -- the only place carrying the
+  "reduced to 8-bit" note, per `converter/profiles.py` lines 158, 325, 406
+  -- was never reached, because the selective rung already succeeded.
+  Reproduced the same pattern for `mov` with a second fixture (10-bit
+  `av1`, `yuv420p10le`, bt2020/smpte2084, built via `libaom-av1`, not in
+  `MOV_VIDEO_CODECS`): `--to mov` again re-encoded via the selective rung
+  only (`note ...: video stream 0 (av1) re-encoded to h264`), and the
+  output is `h264 (High 10)`, `pix_fmt=yuv420p10le`, `bits_per_raw_sample=10`,
+  HDR tags intact. `mkv`'s video fallback (`-c:v:{n} libx264 -crf:v:{n}
+  18`, read from `converter/profiles.py`) is textually identical to
+  `mp4`'s and `mov`'s, so the same mechanism is expected to apply there
+  too, but this was not independently measured. To isolate whether the
+  note's own *claim* is at least true, ran the `mp4` profile's pinned
+  `last_resort` argv directly and by hand against the ProRes/HDR fixture:
+  `ffmpeg -i source_prores_hdr.mov -map 0:v:0? -map 0:a? -c:v libx264 -crf
+  18 -preset medium -pix_fmt yuv420p -c:a aac -b:a 192k -movflags
+  +faststart last_resort_test.mp4`. `ffprobe` on that output shows
+  `pix_fmt=yuv420p`, `bits_per_raw_sample=8` -- the explicit `-pix_fmt
+  yuv420p` really does force the reduction the note describes, whenever
+  this rung actually runs. **Branch's own claim verified true by direct
+  measurement of its argv; the branch is not reachable through the normal
+  ladder with this ffmpeg build and these fixtures, because the selective
+  rung's un-pinned `-pix_fmt` lets a high-bit-depth-capable `libx264`
+  preserve depth instead of the rung ever failing.** (Not because a
+  bit-depth mismatch would otherwise fail the encode: ffmpeg auto-negotiates
+  an unsupported pixel format and inserts a conversion rather than erroring,
+  so even an 8-bit-only `libx264` would most likely have made the selective
+  rung succeed too -- just silently at 8 bits, with no note anywhere, which
+  would be a worse outcome than this build's, not a better one. That
+  narrower claim was not itself measured here.) Also worth recording alongside this
+  issue's own "Also worth recording" section: the resulting MP4 (`h264
+  (High 4:2:2)`, 10-bit, `yuv422p10le`) decodes cleanly under `ffmpeg -v
+  error -i ... -f null -` (exit 0, no stderr) -- the QA gate's own
+  "plays" check -- yet High 4:2:2 Profile at 10-bit is a professional/
+  broadcast H.264 profile that ordinary consumer software and hardware
+  decoders commonly do not support, a third live example of the same
+  "remuxed/encoded successfully into a container many players refuse"
+  caveat already illustrated by ffv1-in-MP4 (#69) and vorbis-in-`.opus`
+  (#68).
+
+  **4. Windows `MAX_PATH` long-path branch -- proven end-to-end, both as a
+  direct call and through the full CLI.** Confirmed `HKLM:\SYSTEM\
+  CurrentControlSet\Control\FileSystem!LongPathsEnabled` is `0` on this
+  machine (long-path support is off, so the classic 260-character limit
+  applies). Direct call: built a path 316 characters long under a temp
+  directory and called `converter.paths.ensure_directory` on it directly.
+  It raised `OSError` reading `[WinError 206] Der Dateiname oder die
+  Erweiterung ist zu lang: '...aaaaaaaaaaaaaaaaaaaa'` (Windows stopped
+  four segments deep, at the point the accumulating path itself first
+  exceeded the limit -- consistent with `pathlib`'s `mkdir(parents=True)`
+  creating parents one level at a time) followed on the next line by the
+  code's own appended text verbatim: `The path is 316 characters long, and
+  Windows rejects paths over 260 characters unless long-path support is
+  enabled -- a common cause of this error. Choose a shorter output root, or
+  see the README.` End-to-end: ran the real CLI, `.venv/Scripts/
+  python.exe -m converter --to mp4 --ffmpeg ... --ffprobe ...
+  longpath_cli_in <340-char-deep-output-root>`, over a one-file input
+  directory. The batch never got as far as invoking ffmpeg on that run;
+  the process printed `error: [WinError 206] ... The path is 340
+  characters long, and Windows rejects paths over 260 characters ...` to
+  stderr and exited with code 1 -- the bare `OSError` handler in
+  `converter/cli.py`'s `main()` (`except (OSError, ValueError) as exc:
+  print(f"error: {exc}", ...); return 1`), which is uncaught anywhere
+  closer to the individual file, so a single too-deep output path aborts
+  the whole run rather than being reported as one failed file among
+  others. Both deep trees were removed afterward via `shutil.rmtree` with
+  a `\\?\` long-path-prefixed literal (needed since the plain path could
+  no longer be addressed once nested past the limit); no subst drive was
+  needed since the scratch directory's own path (139 characters) left
+  enough of the 260-character budget to reach the threshold without one.
+  **Branch fired and is correct**, and the CLI-level side effect
+  (whole-run abort rather than per-file failure) is recorded as an
+  observation, not a defect: `docs/constitution.md` promises "One broken
+  input file must not abort the batch," but a too-deep *output* path is not
+  a broken *input* file, so this was not evaluated against that line, and no
+  other documented contract covers this precondition either.
+
+  No acceptance item above is ticked without the observed evidence quoted
+  next to it. Item 2 is left genuinely unproven, exactly as its own
+  acceptance bullet anticipates; item 3 is answered in the permitted second
+  form -- a precise account of why the branch could not be reached through
+  the converter itself -- rather than as end-to-end evidence.
