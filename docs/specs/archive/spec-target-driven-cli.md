@@ -508,3 +508,44 @@ reusing the fixtures the phase-1 gate synthesises:
   reverted), one proving the self-write guard still fires once that root is
   no longer pre-resolved. `README.md`'s Options section documents the chosen
   behaviour for `subst`/junction/symlinked inputs.
+- 2026-08-27 (#72, review round 1): The self-write regression test above
+  proved to be a false positive under mutation -- an independent review
+  replaced `paths._resolved_key`'s resolve call with a plain string compare
+  and the whole `tests/test_cli.py` suite still passed, because
+  `self_mirroring_root` (drive-only) plus `sub/..` puts the same lexical `..`
+  segment on *both* the derived source and the derived output, so the two
+  sides matched textually before resolution was ever needed. Replaced with
+  `test_the_self_write_guard_still_fires_across_a_virtual_drive_boundary`,
+  which fakes a `subst`-like alias with `Path.resolve` (redirecting an entire
+  subtree, not one path, and computing the "physical" location with
+  `paths.mirror_to_drive` itself rather than a hand-picked path) and a
+  `--mirror-to` target that names the alias's real location directly by a
+  *different* spelling -- confirmed to fail under the same mutation, and to
+  pass again once reverted. The same review found `mirror_command`'s
+  typed-vs-resolved change had no test at all; added
+  `TestMirrorCommand::test_uses_the_typed_root_not_the_resolved_one`, first
+  written with a substring assertion that also proved not to fail when
+  `directory.resolve()` was restored (both candidate targets share a drive
+  letter and a `physical` path segment), then corrected to assert the exact
+  expected line. The review also found `docs/design/source-selection.md`
+  (the OWN, SELF and HAZ nodes) and three `converter/paths.py` docstrings
+  (`_resolved_key`, `is_self_write`, plus the now-adjacent test docstrings in
+  `tests/test_cli.py` and `tests/test_paths.py`) still gave resolving's *why*
+  as "the output root is derived from a resolved input path" -- true before
+  this issue, false after it. Corrected throughout to the reason that
+  actually holds post-fix: a `subst`/junction/symlinked INPUT and a
+  `--mirror-to` target can each be spelled through the alias or through the
+  real path behind it, and only resolving both sides catches the two
+  spellings naming the same file. Also corrected in `README.md`: the
+  `--mirror-to`-onto-a-plain-drive counter-example named a path
+  (`E:\D\Rips\...`) `mirror_to_drive` cannot produce (it strips a drive
+  letter, never turns one into a directory component); the note attached
+  "refused" to a self-write when the design (SELF -> SKIP, HAZ -> REFUSE) and
+  the observed behaviour both make a self-write the *reported skip* and only
+  the `--overwrite` hazard the refusal; "the safety checks below" pointed at
+  a section that does not exist; and a relative `INPUT_DIR`'s own blast-radius
+  change (mirrored from the path as given, not resolved against the cwd
+  first) went unmentioned. No functional line changed in `converter/cli.py`
+  or `converter/paths.py` in this round -- the reviewer's verdict was that
+  the fix itself does not weaken the guards, only that the tests proving it
+  and the docs explaining it needed to be right.

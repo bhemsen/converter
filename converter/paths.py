@@ -24,10 +24,10 @@ def _resolved_key(path: str | os.PathLike[str]) -> str:
     """Return a case-folded string of *path*, resolved, for identity comparisons.
 
     Resolving first -- rather than comparing the paths as given -- is what
-    catches a ``--mirror-to`` self-write or hazard: the output root is derived
-    from a resolved input path while discovery returns paths built from the
-    root as typed, so two paths that name the same file can look different
-    until both sides are resolved.
+    catches a ``--mirror-to`` self-write or hazard when a `subst`/junction/
+    symlinked INPUT and the ``--mirror-to`` target can each be spelled through
+    the alias or through the real path behind it: two paths that name the same
+    file can look completely different strings until both sides are resolved.
     """
     return os.path.normcase(os.fspath(Path(path).resolve()))
 
@@ -210,9 +210,10 @@ def is_self_write(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> b
 
     Both paths are resolved before comparison, then compared case-folded --
     unlike ``find_collisions``, which case-folds the paths as given. The
-    difference is load-bearing under ``--mirror-to``: the output root is
-    derived from a resolved input path while discovery returns paths built
-    from the root as typed, so comparing as given would miss the self-write.
+    difference is load-bearing under ``--mirror-to``: a `subst`/junction/
+    symlinked INPUT and the ``--mirror-to`` target can each be named through
+    the alias or through the real path behind it, so comparing as given would
+    miss a self-write where the two spellings resolve to the same file.
     Per ``docs/design/source-selection.md``'s SELF node, a true self-write is
     reported as a counted skip, never silently dropped, and never refuses the
     run by itself.

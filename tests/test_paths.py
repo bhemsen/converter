@@ -343,9 +343,10 @@ class TestIsSelfWrite:
         assert is_self_write(tmp_path / "a.mp4", tmp_path / "b.mp4") is False
 
     def test_resolves_before_comparing(self, tmp_path):
-        """A ``..`` segment must not hide a self-write -- the --mirror-to case,
-        where discovery returns the root as typed but the output root is
-        derived from a resolved input path, so comparing as given would miss it."""
+        """A ``..`` segment must not hide a self-write -- ``--mirror-to`` can be
+        pointed at the same file two different ways (a `subst`/junction/
+        symlinked INPUT, or the real path behind it), so comparing as given
+        would miss it."""
         touch(tmp_path / "a.mp4")
         typed_src = tmp_path / "sub" / ".." / "a.mp4"
 
@@ -426,8 +427,10 @@ class TestFindOverwriteHazards:
         assert find_overwrite_hazards(pairs) == []
 
     def test_resolves_before_comparing(self, tmp_path):
-        """The --mirror-to shape: the victim's source path is typed with a
-        ``..`` segment, so only a resolved comparison catches the hazard."""
+        """A `subst`/junction/symlinked INPUT can name the same file as
+        ``--mirror-to``'s target under a different spelling: the victim's
+        source path is typed with a ``..`` segment standing in for that, so
+        only a resolved comparison catches the hazard."""
         victim_typed = tmp_path / "sub" / ".." / "a.mp4"
         pairs = [
             (victim_typed, tmp_path / "a.mp4"),
@@ -507,10 +510,11 @@ class TestSourceSelectionScenarios:
         assert [(v.name, w.name) for v, w in hazards] == [("a.mp4", "a.mkv")]
 
     def test_mirror_to_self_write_is_still_caught(self, tmp_path):
-        """Under --mirror-to the output root is derived from a *resolved*
-        input path while discovery returns paths built from the root as
-        typed -- simulated here with a `..` segment standing in for a second
-        drive, since comparing as given would miss this self-write."""
+        """A `subst`/junction/symlinked INPUT can be named through the alias
+        or through the real path behind it, and so can --mirror-to's target --
+        simulated here with a `..` segment standing in for the alias, since
+        comparing as given would miss this self-write once the two spellings
+        diverge textually."""
         real_input = tmp_path / "Media"
         touch(real_input / "a.mp4")
         typed_input = tmp_path / "Media" / "x" / ".."
@@ -521,7 +525,7 @@ class TestSourceSelectionScenarios:
         assert is_self_write(src, dst) is True
 
     def test_mirror_to_overwrite_hazard_is_still_caught(self, tmp_path):
-        """The same typed-vs-resolved mismatch, now for the hazard guard:
+        """The same alias-vs-real-path mismatch, now for the hazard guard:
         the one-directory test above cannot tell "compares as given" and
         "compares resolved" apart, this one can."""
         real_input = tmp_path / "Media"

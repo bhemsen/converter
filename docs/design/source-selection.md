@@ -61,8 +61,9 @@ flowchart TD
   the output root is a **strict descendant** of the input root, because that is
   the only shape where the walk can reach its own output. Both roots are resolved
   before the descendancy test, for the same reason the two guards below resolve:
-  `--mirror-to` derives the output root from a resolved input path while the input
-  root is whatever was typed, so comparing as given would test the wrong pair. An output root that is
+  a `subst`/junction/symlinked input root and a `--mirror-to`-derived output root
+  can each be spelled through the alias or through the real path behind it, so
+  comparing as given would test the wrong pair. An output root that is
   a *sibling*, on another drive, or an *ancestor* of the input root is already
   outside the walked tree: `--to mp4 -r D:\Media\Season1 D:\Media` writes one
   level up, run 2 walks only `Season1` and never sees it. Testing "lies under the
@@ -73,9 +74,10 @@ flowchart TD
   only when its derived output path *is* its input path. Both sides are resolved
   before they are compared, and then compared case-folded — unlike
   `paths.find_collisions`, which case-folds the paths **as given**. The difference
-  is load-bearing: `--mirror-to` derives the output root from a resolved input
-  path while discovery returns paths built from the root as typed, so comparing as
-  given would miss the self-write. The guard resolves the output path the same way
+  is load-bearing: a `subst`/junction/symlinked INPUT and the `--mirror-to` target
+  can each be spelled through the alias or through the real path behind it, so
+  comparing as given would miss a self-write where the two spellings resolve to
+  the same file. The guard resolves the output path the same way
   the write will see it; note that a bare-drive `OUTPUT` (`converter --to mp4 IN
   E:`) is drive-relative by construction, so it resolves against the current
   directory on `E:` — `--mirror-to E:` is the spelling that normalises it, which is
@@ -116,7 +118,9 @@ flowchart TD
     overwritten by `a.mkv`. Reading "selected" as "reached `TASK`" would build a
     guard that never fires for the case it exists for. Like `SELF`, it compares an
     output path against an input path, so it **resolves both sides** before
-    comparing; comparing as given would miss the hazard under `--mirror-to`.
+    comparing; comparing as given would miss the hazard when a
+    `subst`/junction/symlinked INPUT and the `--mirror-to` target name the same
+    physical file under different spellings.
 - **Skipped is a reported outcome; not-a-candidate is not.** An already-converted
   file is counted, because `0 converted, 12 skipped` is the idempotent-re-run
   evidence the vision promises. A `.txt`, or a file inside the output tree, is not,
