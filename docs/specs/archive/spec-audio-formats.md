@@ -619,7 +619,10 @@ New-Item -ItemType Directory -Force art
   `.opus` mislabel as `opus`'s one deliberate trade, but `README.md` never
   said so. Re-measured against ffmpeg 9.0 before writing anything: a
   `libvorbis`-encoded `.ogg` through `--to opus` produced a `.opus` file
-  byte-identical to the source (6913 bytes both sides) whose stream
+  identical in size to the source (6913 bytes both sides, this spec's
+  established "byte-identical in size" convention from line 130 -- a byte
+  compare (`cmp -l`) shows 32 differing bytes, the Ogg muxer's per-page
+  serial number and CRC, unrelated to the audio payload) whose stream
   `ffprobe` still reports as `codec_name=vorbis`. Added a `README.md` bullet
   to "Notes and limitations" stating the mislabel plainly, naming the RFC
   7845 codec-defined-format reason strict players may reject it, and pointing
