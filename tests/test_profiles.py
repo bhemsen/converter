@@ -628,8 +628,13 @@ class TestMkvProfile:
         source with either loses it without ffmpeg ever complaining."""
         assert MKV.partial_mapping is True
 
-    def test_cheap_attempt_carries_the_standing_note(self):
-        assert MKV.cheap_attempt.notes == ("data and timecode streams are not carried into MKV",)
+    def test_cheap_attempt_carries_no_standing_note(self):
+        """Issue #67: the standing note is retired -- `jobs.verify_success`
+        already names a real data or timecode drop per stream, and MKV's
+        muxer never regenerates one from source metadata (measured), unlike
+        MOV/MP4's `tmcd`. See `tests/test_argv.py::TestConfirmDrops` for the
+        per-stream proof."""
+        assert MKV.cheap_attempt.notes == ()
 
     def test_last_resort_excludes_container_options(self):
         assert MKV.last_resort is not None
@@ -723,10 +728,12 @@ class TestMovProfile:
 
     def test_cheap_attempt_carries_no_standing_note(self):
         """MOV's muxer regenerates a `tmcd` timecode track from source metadata
-        even though no selector maps it, so the standing note MKV still carries
-        was measurably false here (issue #66). The per-file success-side
-        verification reads the written output and names a real data drop
-        itself, so nothing is lost by dropping the blanket claim."""
+        even though no selector maps it, so a standing note here would have
+        been measurably false (issue #66) -- unlike MKV's and WebM's own
+        retired notes (issue #67), which needed no such exemption since
+        neither muxer regenerates one. The per-file success-side verification
+        reads the written output and names a real data drop itself, so
+        nothing is lost by dropping the blanket claim."""
         assert MOV.cheap_attempt.notes == ()
 
     def test_last_resort_excludes_container_options(self):
@@ -809,10 +816,14 @@ class TestWebmProfile:
     def test_cheap_attempt_is_declared_partial(self):
         assert WEBM.partial_mapping is True
 
-    def test_cheap_attempt_carries_the_standing_note(self):
-        assert WEBM.cheap_attempt.notes == (
-            "attachments, data and timecode streams are not carried into WebM",
-        )
+    def test_cheap_attempt_carries_no_standing_note(self):
+        """Issue #67: the standing note is retired -- `jobs.verify_success`
+        already names a real attachment, data or timecode drop per stream
+        (WebM declares neither rule), and WebM's muxer regenerates nothing
+        from source metadata (measured). See
+        `tests/test_argv.py::TestWebmDegradationNotes` for the per-stream
+        proof."""
+        assert WEBM.cheap_attempt.notes == ()
 
     def test_last_resort_excludes_container_options(self):
         assert WEBM.last_resort is not None
@@ -1297,6 +1308,57 @@ class TestStandingNoteRetirement:
         assert profile.last_resort.notes == _LAST_RESORT_NOTES[profile.name]
 
 
+#: The video containers whose cheap-attempt standing note is retired by issue
+#: #67 -- `mkv` and `webm`. `mov` is deliberately absent: it lost its own
+#: standing note earlier, to issue #66's finding that its muxer's `tmcd`
+#: regeneration made the blanket claim measurably false, so it has nothing
+#: left for this issue to retire.
+VIDEO_PROFILES_WITH_A_RETIRED_STANDING_NOTE = [MKV, WEBM]
+
+#: Each video container's `last_resort.notes`, exactly as declared before this
+#: issue -- unchanged, since that rung is never verified (the same "only place
+#: that information exists" reasoning `_LAST_RESORT_NOTES` above records for
+#: the audio profiles).
+_VIDEO_LAST_RESORT_NOTES = {
+    MKV.name: (
+        "re-encoded to h264/aac (lossy); subtitles and extra video streams dropped",
+        "10-bit or HDR sources are reduced to 8-bit yuv420p for player compatibility",
+    ),
+    MOV.name: (
+        "re-encoded to h264/aac (lossy); subtitles and extra video streams dropped",
+        "10-bit or HDR sources are reduced to 8-bit yuv420p for player compatibility",
+    ),
+    WEBM.name: ("re-encoded to vp9/opus (lossy); subtitles and extra video streams dropped",),
+}
+
+
+class TestVideoStandingNoteRetirement:
+    """Issue #67: the cheap-attempt standing note is gone from every video
+    container profile that used to carry one, `mov` never carried one for this
+    issue to retire, and `last_resort` -- never verified, so its note is the
+    only place that information exists -- is untouched on all three. A guard
+    against a future profile quietly re-introducing one, the same shape #78's
+    `TestStandingNoteRetirement` above already established for the audio
+    profiles."""
+
+    @pytest.mark.parametrize(
+        "profile", VIDEO_PROFILES_WITH_A_RETIRED_STANDING_NOTE, ids=lambda profile: profile.label
+    )
+    def test_no_video_profile_carries_a_cheap_attempt_standing_note(self, profile):
+        assert profile.cheap_attempt.notes == ()
+
+    def test_mov_never_carried_one_either(self):
+        """The third video container, named explicitly since it is absent from
+        `VIDEO_PROFILES_WITH_A_RETIRED_STANDING_NOTE` above -- nothing for
+        this issue to retire (issue #66 already removed it)."""
+        assert MOV.cheap_attempt.notes == ()
+
+    @pytest.mark.parametrize("profile", [MKV, MOV, WEBM], ids=lambda profile: profile.label)
+    def test_last_resort_notes_are_unchanged(self, profile):
+        assert profile.last_resort is not None
+        assert profile.last_resort.notes == _VIDEO_LAST_RESORT_NOTES[profile.name]
+
+
 #: One tuple per image2 profile this phase adds: the profile itself, the codec
 #: name its own encoder produces (so a copy-mask hit can be constructed), and
 #: whether its lossless re-encode carries a note (Verification,
@@ -1540,10 +1602,14 @@ class TestGifProfile:
 
     def test_cheap_attempt_always_wins_so_its_standing_notes_always_print(self):
         """Forces the encoder unconditionally, so this is the rung whose notes
-        actually print for the overwhelming majority of inputs."""
+        actually print for the overwhelming majority of inputs. Both notes are
+        worded as format facts (issue #67 review) -- "GIF holds at most a
+        256-colour palette", not "colours are reduced", since an already-GIF,
+        already-<=256-colour source re-encodes pixel-identically and a
+        "reduced" claim would be false for it."""
         assert GIF.cheap_attempt.notes == (
             "transparency is not carried by GIF",
-            "colours are reduced to GIF's 256-colour palette",
+            "GIF holds at most a 256-colour palette",
         )
 
     def test_video_rule_copy_mask_is_its_own_codec(self):
@@ -1564,7 +1630,7 @@ class TestGifProfile:
         transparency note for."""
         assert GIF.last_resort is not None
         assert "transparency is not carried by GIF" in GIF.last_resort.notes
-        assert any("re-quantised" in note for note in GIF.last_resort.notes)
+        assert "GIF holds at most a 256-colour palette" in GIF.last_resort.notes
 
 
 class TestWebpProfile:

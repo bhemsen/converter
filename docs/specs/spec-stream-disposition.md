@@ -419,3 +419,154 @@ New-Item -ItemType Directory -Force in
   (restoring the removed standing note, adding an `attached_pic` rule to
   `ogg`, emptying a `last_resort` note) and confirming the same assertion the
   shipped test uses fails against each mutation.
+- 2026-08-27 (issue #67): the finding this issue was filed to fix -- the
+  cheap-attempt standing note firing even when a source had nothing for the
+  target to drop, and naming neither a stream index nor a codec -- is
+  resolved differently for the six profiles it covers, depending on what the
+  note actually described.
+
+  **`mkv` and `webm` retire theirs outright**, the same resolution #78 gave
+  the five audio profiles: `jobs.verify_success`'s `_structural_drop` already
+  names any stream of a type the profile declares no rule for, per stream,
+  via its "not supported by `<LABEL>`" branch -- `mkv` declares no `data`
+  rule and `webm` declares neither `attachment` nor `data`, so an attachment,
+  data or timecode stream a partial cheap attempt could not have mapped was
+  already named individually before this issue touched anything; the
+  standing note was pure duplication, never a statement with no
+  replacement. The per-stream prediction itself is pinned by new tests
+  (`tests/test_argv.py::TestMkvDegradationNotes`/`TestWebmDegradationNotes`,
+  `tests/test_batch.py::TestDropsAreConfirmedAgainstTheOutput`), which use the
+  project's usual stubbed subprocess boundary and so prove the *logic*, not
+  ffmpeg's own behaviour. That neither `mkv`'s nor `webm`'s real muxer
+  regenerates a data or timecode stream from source metadata -- unlike
+  `mov`/`mp4` (issue #66) -- is a claim about ffmpeg 9.0 itself, and is
+  established the same way issue #66's original finding was: measured by
+  hand, recorded in this entry's ffmpeg-9.0 verification paragraph below. A
+  `.mov` source carrying a real `tmcd` timecode track converts to both
+  containers holding video and audio only, nothing put back -- so no
+  `confirm_drops` forgiveness is even in play and the per-stream prediction is
+  exact on every file, not merely on average. `mov` needed no change: it
+  already carries no standing note, having lost it to issue #66's finding
+  that its muxer's own `tmcd` regeneration made the blanket claim measurably
+  false.
+
+  **`jpg`, `gif` and `avif` keep theirs, unconditional, by decision rather
+  than oversight.** All five notes this issue's QA finding named for these
+  profiles -- JPEG's and GIF's transparency loss, GIF's colour palette,
+  AVIF's frame reduction -- describe a *within-stream* loss: the video
+  stream is still mapped and kept, only something inside it (an alpha
+  channel, a colour count, a frame count) is gone. `_structural_drop` only
+  ever reasons about whether a stream was mapped at all, so it has no
+  opinion on what survived inside one. Review round 2 of this PR flagged an
+  earlier version of this entry's own summary sentence here ("neither half
+  is fixed here") as false about its own contents -- half one *is* fixed, for
+  the one note that needed it. Restated precisely below.
+
+  *Half one -- firing when nothing was lost.* Four of the five notes are
+  worded as claims about what *this profile's pipeline always does*
+  ("transparency is not carried by JPEG" -- true of JPEG the format; AVIF's
+  own notes are true of this profile's forced `-still-picture 1`/no-alpha
+  pipeline specifically, not of the AVIF format, which does support alpha and
+  multiple frames elsewhere), true of every conversion through that profile
+  regardless of what the source held -- not a claim that *this* file's
+  transparency was dropped -- so, unlike the retired `mkv`/`webm` notes, they
+  do not over-report a specific event that did not happen; they state a
+  limit. Review of this PR's first draft found the fifth, GIF's "colours are
+  reduced to GIF's 256-colour palette", worded as an *action* rather than a
+  fact, and measured that an already-GIF, already-<=256-colour source
+  re-encodes pixel-identically (the module comment above `GIF` in
+  `converter/profiles.py` already recorded this, unconnected until the
+  review) -- so that wording, alone among the five, was a genuine false claim
+  for such a file. It is reworded here to "GIF holds at most a 256-colour
+  palette", the same fact-not-action shape as its four siblings, closing that
+  one real gap; the other four were already accurate as written and needed no
+  change.
+
+  *Half two -- naming a stream index and codec.* None of the five names one,
+  and this half is **not fixed, only recorded**. A profile's `notes` tuple is
+  static data with no access to the source's probed streams at all, so naming
+  an index and codec here would need a `pix_fmt` and a frame-count field on
+  `Stream` (`converter/ffmpegtool.py`), plus new decision logic in `jobs.py`'s
+  engine to compare a kept stream's measured properties against what its
+  target actually holds -- both out of this issue's file boundary
+  (`converter/jobs.py` was read-only for this work; `converter/ffmpegtool.py`
+  was not in scope either), and `converter/profiles.py` is data, not code
+  (`docs/constitution.md`), so the comparison logic could not live there even
+  if the field existed. Retiring these notes outright rather than leaving them
+  as an imprecise-but-true statement would violate `docs/constitution.md`'s
+  "never report success for a conversion that silently dropped something" --
+  an unmeasured within-stream loss is still a loss the constitution forbids
+  leaving unsaid -- so all five stay unconditional standing notes. **Finding,
+  not fixed in this issue:** both halves above are recorded for a follow-up
+  issue -- conditional firing needs the `pix_fmt`/frame-count probing, and
+  per-stream naming needs the engine to consult it -- rather than either being
+  attempted piecemeal against the file boundary this issue was scoped to.
+
+  Verified against real ffmpeg 9.0 with distinct-stem fixtures: a source with
+  no data or timecode stream into `mkv`/`webm` now prints nothing at all,
+  where the retired standing note used to fire unconditionally -- the change
+  a user notices first; a source carrying a real `tmcd`-tagged data stream
+  (built with `-timecode 00:00:00:00`) into `mkv` prints exactly
+  `data stream 2 (unknown) dropped: not supported by MKV`, nothing more, and
+  the output genuinely holds no data stream; a font-attachment-bearing MKV
+  source into `webm` prints exactly
+  `attachment stream 2 (ttf) dropped: not supported by WebM`; the same
+  attachment source into `mov` still fails the cheap attempt and is dropped
+  with `attachment stream 1 (unknown) dropped: not supported by MOV` at the
+  selective rung, unchanged; an alpha-bearing PNG (measured source alpha byte
+  `0x7e`) into `jpg`, `gif` and `avif` prints the transparency note and the
+  loss is real and measured -- `ffprobe` reports `yuvj444p`/no-alpha `gbrp`
+  pixel formats on the `jpg`/`avif` outputs, and the decoded alpha byte comes
+  back `0xff` (opaque) on all three, where PNG, TIFF, BMP and WebP round-trip
+  the same source at `0xfe`/`0xff` only because they keep an alpha channel at
+  all (WebP: `yuva420p`, alpha `0xfe`); a multi-frame GIF source (3 frames,
+  measured via `ffprobe -count_frames`) into `avif` prints the frame-reduction
+  note and the output genuinely holds 1 frame; a re-run of an already-`.gif`
+  source into `gif` still prints the reworded "GIF holds at most a 256-colour
+  palette" -- true and unchanged in substance, but no longer a false claim
+  that a reduction happened to that specific, already-quantised file; a
+  second run over each converted tree reports 0 converted, exit 0. Every new
+  or changed assertion was proven non-vacuous by mutating a profile copy in a
+  scratch script outside the repo (restoring `mkv`'s and `webm`'s removed
+  standing notes, giving each profile a bogus `data` rule that would make
+  `verify_success` stop predicting the drop the shipped test pins, and
+  restoring GIF's pre-review "colours are reduced to..." wording) and
+  confirming the shipped assertion's expected value no longer matches against
+  any of the three mutations.
+
+  **Review round 1** (fresh-agent gate) found four comments in
+  `converter/profiles.py` left over from before the standing note they
+  described was retired -- MKV's `partial_mapping` comment and MOV's
+  contrast with MKV still claiming a standing note that no longer exists on
+  either side, and two WebM comments still pointing at "the standing note
+  below/above" -- all four corrected to describe the code as it now reads. It
+  also found the README bullet for MP3/FLAC/M4A overstated ("nothing prints
+  for a source that never had one") against `last_resort`'s own unconditional
+  note, corrected with the same carve-out `last_resort` has always needed,
+  and found GIF's "colours are reduced to GIF's 256-colour palette" was a
+  genuine false claim -- not merely an over-broad one -- for an already-GIF
+  source, unlike its four unconditional-but-true siblings; reworded to "GIF
+  holds at most a 256-colour palette" (`cheap_attempt` and `last_resort`
+  both), the fix recorded above. It also asked whether the "second half" of
+  the QA finding's own title -- naming no stream index or codec -- was
+  addressed for `jpg`/`gif`/`avif`; it was not, and the profile comment and
+  this entry now say so explicitly rather than only discussing conditionality.
+
+  **Review round 2** (fresh-agent gate) found the round-1 sweep for stale
+  standing-note comments had missed one: `tests/test_profiles.py`'s MOV test
+  still said "the standing note MKV still carries" after MKV's own note was
+  retired earlier in this same PR -- corrected to describe both profiles'
+  current shape. It also found this entry's and `converter/profiles.py`'s own
+  "neither half is fixed here" summary sentence contradicted the GIF rewording
+  the same PR makes -- corrected above to say precisely which half is fixed
+  for which note -- and that calling all five within-stream notes "format
+  facts" mischaracterised AVIF's two, which are true of this profile's forced
+  pipeline rather than of the AVIF format (which does support alpha and
+  multiple frames elsewhere) -- corrected the same way. Non-blocking nits
+  also addressed: the muxer-regeneration claim's docstring/spec wording no
+  longer credits the (stubbed) test suite with proving something only the
+  manual ffmpeg-9.0 record can; `tests/test_batch.py`'s new end-to-end test
+  uses each profile's own real copy-mask codecs (vp9/opus for WebM) rather
+  than an arbitrary h264/aac stand-in; and AVIF's back-reference to the
+  module-level comment now points at the block actually above JPG rather than
+  claiming it sits "above GIF".
