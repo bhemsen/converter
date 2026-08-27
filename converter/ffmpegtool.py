@@ -67,6 +67,13 @@ class Stream:
     #: does not care -- every test that builds a Stream by hand -- can leave it
     #: out. Read by :func:`converter.jobs.confirm_drops`, nothing else.
     codec_tag: str = ""
+    #: Whether ffprobe's ``disposition`` object flags this stream as an
+    #: embedded picture (cover art). Not a general disposition set -- only
+    #: this one flag has a decision resting on it, because ``mjpeg`` and
+    #: ``png`` are the codec of both a cover picture and a real video and
+    #: nothing else distinguishes them (docs/specs/spec-stream-disposition.md).
+    #: Defaults to false so existing construction sites are unaffected.
+    attached_pic: bool = False
 
 
 @dataclass(frozen=True)
@@ -218,8 +225,11 @@ def probe_streams(tools: Tools, src: str | os.PathLike[str]) -> list[Stream]:
             "-show_entries",
             # One query, one process: an extra field costs nothing here, and
             # codec_tag_string is the only thing that distinguishes two data
-            # tracks ffprobe reports no codec name for.
-            "stream=index,codec_type,codec_name,codec_tag_string",
+            # tracks ffprobe reports no codec name for. stream_disposition=
+            # is a separate entry clause because disposition flags arrive
+            # nested under their own JSON object rather than alongside the
+            # plain stream fields.
+            "stream=index,codec_type,codec_name,codec_tag_string:stream_disposition=attached_pic",
             "-of",
             "json",
             cli_path(src),
@@ -238,12 +248,17 @@ def probe_streams(tools: Tools, src: str | os.PathLike[str]) -> list[Stream]:
             index = int(raw["index"])
         except (KeyError, TypeError, ValueError):
             continue
+        # A stream with no disposition flagged at all -- most of them -- omits
+        # the "disposition" object entirely rather than reporting zeros, so
+        # the fallback to {} is what makes attached_pic default to false.
+        disposition = raw.get("disposition") or {}
         streams.append(
             Stream(
                 index=index,
                 codec_type=str(raw.get("codec_type", "")),
                 codec_name=str(raw.get("codec_name", "")),
                 codec_tag=str(raw.get("codec_tag_string", "")),
+                attached_pic=bool(disposition.get("attached_pic", 0)),
             )
         )
     return streams

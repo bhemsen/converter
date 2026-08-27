@@ -140,8 +140,65 @@ class TestProbeStreams:
 
         streams = ffmpegtool.probe_streams(TOOLS, "in.mov")
 
-        assert "stream=index,codec_type,codec_name,codec_tag_string" in seen[0]
+        assert (
+            "stream=index,codec_type,codec_name,codec_tag_string:"
+            "stream_disposition=attached_pic" in seen[0]
+        )
         assert [stream.codec_tag for stream in streams] == ["tmcd", "mebx"]
+
+    def test_exactly_one_ffprobe_call_is_made_per_file(self, monkeypatch):
+        calls: list[list[str]] = []
+
+        def record(argv, **_kwargs):
+            calls.append(list(argv))
+            return CommandResult(tuple(argv), 0, "{}", "")
+
+        monkeypatch.setattr(ffmpegtool, "run", record)
+
+        ffmpegtool.probe_streams(TOOLS, "in.mkv")
+
+        assert len(calls) == 1
+
+    def test_attached_pic_is_true_for_a_picture(self, monkeypatch):
+        payload = {
+            "streams": [
+                {
+                    "index": 1,
+                    "codec_type": "video",
+                    "codec_name": "png",
+                    "disposition": {"attached_pic": 1},
+                }
+            ]
+        }
+        stub_run(monkeypatch, 0, json.dumps(payload))
+
+        streams = ffmpegtool.probe_streams(TOOLS, "in.mp3")
+
+        assert streams == [Stream(1, "video", "png", attached_pic=True)]
+
+    def test_attached_pic_is_false_for_a_plain_video(self, monkeypatch):
+        payload = {
+            "streams": [
+                {
+                    "index": 0,
+                    "codec_type": "video",
+                    "codec_name": "h264",
+                    "disposition": {"attached_pic": 0},
+                }
+            ]
+        }
+        stub_run(monkeypatch, 0, json.dumps(payload))
+
+        streams = ffmpegtool.probe_streams(TOOLS, "in.mkv")
+
+        assert streams == [Stream(0, "video", "h264", attached_pic=False)]
+
+    def test_attached_pic_defaults_to_false_when_disposition_is_absent(self, monkeypatch):
+        stub_run(monkeypatch, 0, json.dumps({"streams": [{"index": 0, "codec_type": "audio"}]}))
+
+        streams = ffmpegtool.probe_streams(TOOLS, "in.mkv")
+
+        assert streams[0].attached_pic is False
 
     def test_streams_without_a_usable_index_are_skipped(self, monkeypatch):
         payload = {
