@@ -106,6 +106,62 @@ MP4_AUDIO_CODECS = frozenset({"aac", "mp3", "ac3", "eac3", "alac", "opus", "flac
 #: Subtitle codecs that convert cleanly into MP4's own ``mov_text``.
 TEXT_SUBTITLE_CODECS = frozenset({"subrip", "srt", "ass", "ssa", "mov_text", "webvtt", "text"})
 
+#: Codecs that discard source information when they encode -- curated by hand
+#: for `docs/specs/spec-lossy-source-notes.md`'s advisory ("this lossless target
+#: cannot restore what a lossy source had already given up"), the same kind of
+#: hand-maintained artifact as the copy masks above and for the same reason:
+#: ffmpeg can be asked what a build contains, never how *this* project judges a
+#: format's behaviour.
+#:
+#: ffmpeg does ship a lossy/lossless classification (``-codecs``, columns ``L``
+#: and ``S``), and it is not simply wrong -- measured against ffmpeg 9.0, it gets
+#: every codec this set excludes exactly right: ``alac``, ``flac``,
+#: ``wmalossless``, ``truehd`` and every ``pcm_*`` decoder all report ``S`` only,
+#: no ``L``. It still cannot be the source of truth read wholesale, for three
+#: measured reasons:
+#:
+#: - Some codecs report **both** flags at once. ``webp`` does (``DEVILS``): it is
+#:   genuinely used both ways -- a lossy photograph and a lossless screenshot are
+#:   both ordinary WebP files -- so the codec name alone cannot say which *this*
+#:   stream is. The same measured ambiguity holds for ``h264``, ``hevc`` and
+#:   ``av1`` (``DEV.LS``, all three) and for ``dts`` (``DEAILS``): each format has
+#:   a real, if less common, mathematically lossless mode (x264/x265 "-qp 0",
+#:   AV1's lossless coding tools, DTS-HD Master Audio), so none of the four is in
+#:   this set either -- excluded for the identical reason as ``webp``, not merely
+#:   left out for lack of a use today.
+#: - Reading the flag at all costs a subprocess call this project does not
+#:   otherwise spend on the happy path; a curated Python literal costs nothing.
+#: - ``gif`` reports lossless (``S`` only, no ``L`` -- ffmpeg calls the format
+#:   itself lossless) and is a member of this set anyway: phase 5
+#:   (`docs/specs/archive/spec-image-formats.md`) measured a photograph through
+#:   GIF's palette encoder keeping 182 of 36 485 colours. The flag describes the
+#:   container's ceiling, not what its one encoder actually does, and this set
+#:   exists precisely to say so instead of repeating ffmpeg's classification.
+#:
+#: Otherwise scoped to the codecs this registry's own copy masks and fallback
+#: names already name (`MP4_VIDEO_CODECS` et al. above) -- every remaining one of
+#: those reports ``L`` only, with no ambiguity left to resolve by hand.
+LOSSY_CODECS = frozenset(
+    {
+        # video
+        "mjpeg",
+        "mpeg2video",
+        "mpeg4",
+        "prores",
+        "theora",
+        "vp8",
+        "vp9",
+        "gif",
+        # audio
+        "aac",
+        "ac3",
+        "eac3",
+        "mp3",
+        "opus",
+        "vorbis",
+    }
+)
+
 MP4 = Profile(
     label="MP4",
     name="mp4",

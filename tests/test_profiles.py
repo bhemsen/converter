@@ -15,6 +15,7 @@ from converter.profiles import (
     FLAC,
     GIF,
     JPG,
+    LOSSY_CODECS,
     M4A,
     MKV,
     MOV,
@@ -1667,6 +1668,64 @@ class TestRegistryTargetCoherence:
         duplicates = {suffix for suffix in suffixes if suffixes.count(suffix) > 1}
 
         assert not duplicates, f"target_suffix collision(s) in the registry: {sorted(duplicates)}"
+
+
+class TestLossyCodecs:
+    """`LOSSY_CODECS` (issue #87, `docs/specs/spec-lossy-source-notes.md`): the
+    curated set the source-codec advisory checks against, hand-maintained
+    because ffmpeg's own `-codecs` classification cannot be read wholesale --
+    see the constant's own docstring in `converter/profiles.py` for the full
+    argument and the ffmpeg 9.0 flags it was measured against.
+    """
+
+    def test_excludes_the_named_lossless_family(self):
+        """The five awkward cases the issue names: `alac`, `flac`,
+        `wmalossless` and `truehd` all report ffmpeg's own lossless flag
+        (`S`) with no `L`, and so does every `pcm_*` decoder -- none of them
+        may ever read as a lossy source."""
+        assert LOSSY_CODECS.isdisjoint({"alac", "flac", "wmalossless", "truehd"})
+        assert not any(name.startswith("pcm_") for name in LOSSY_CODECS)
+
+    def test_includes_the_motivating_and_flag_contradicting_cases(self):
+        """A set could satisfy the exclusion test above by being empty, which
+        would not be a lossy-codec set at all. `mp3` is the motivating case
+        (Verification, spec-lossy-source-notes.md: "an MP3 library into
+        FLAC"); `gif` is the case ffmpeg's own flag gets wrong (reports
+        lossless, measured lossy in `docs/specs/archive/spec-image-formats.md`).
+        Both must actually be members for this set to be doing its job.
+        """
+        assert {"mp3", "gif"} <= LOSSY_CODECS
+
+
+def lossless_target_names(registry: dict[str, Profile]) -> set[str]:
+    """Names of every profile with at least one rule matching the lossless
+    criterion the spec pins: `fallback_options is not None and fallback_name
+    is None` -- it re-encodes, and the profile declared that re-encode not
+    worth naming. The bare `fallback_name is None` test is overloaded (Prior
+    decisions, spec-lossy-source-notes.md): it also matches a rule with no
+    fallback at all, which is a *drop*, not a lossless re-encode -- exactly
+    the shape phase 6's fallback-less `attached_pic` rules have, which must
+    not be misread as lossless targets the moment they land.
+    """
+    return {
+        profile.name
+        for profile in registry.values()
+        if any(
+            rule.fallback_options is not None and rule.fallback_name is None
+            for rule in profile.rules.values()
+        )
+    }
+
+
+class TestLosslessTargetCriterion:
+    """The second, load-bearing guard rail from issue #87: pins that exactly
+    the five profiles the spec's Prior decisions table names satisfy the
+    lossless criterion, checked against the *whole* registry so a profile
+    added later -- lossless or not -- is covered without editing this test.
+    """
+
+    def test_exactly_five_profiles_satisfy_the_lossless_criterion(self):
+        assert lossless_target_names(PROFILES) == {"flac", "wav", "png", "tiff", "bmp"}
 
 
 class TestResolveTarget:

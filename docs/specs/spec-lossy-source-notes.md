@@ -309,3 +309,31 @@ New-Item -ItemType Directory -Force in
   accepted cost is an inconsistency a user can notice — the same MP3 says
   something on the way to FLAC and nothing on the way to WAV — which is recorded
   in the decision row and pinned by a QA item rather than left to be discovered.
+- 2026-08-27 (issue #87): `LOSSY_CODECS` landed as a module-level frozenset in
+  `converter/profiles.py`, beside `TEXT_SUBTITLE_CODECS`. Re-verified the
+  decision row's `-codecs` claims against ffmpeg 9.0 directly rather than
+  trusting the earlier round's numbers: `alac`, `flac`, `wmalossless`, `truehd`
+  and the `pcm_*` family all still report `S` only, `webp` still reports both
+  (`DEVILS`), and `gif` still reports `S` only despite the measured 182-of-
+  36485-colour loss. One thing the earlier rounds had not checked: `h264`,
+  `hevc` and `av1` also report both `L` and `S` (`DEV.LS`), and so does `dts`
+  (`DEAILS`) — each has a real lossless mode (x264/x265 `-qp 0`, AV1's lossless
+  tools, DTS-HD Master Audio) that the codec name alone cannot rule out, the
+  same ambiguity `webp` has. All four are excluded from `LOSSY_CODECS` for that
+  reason, alongside `webp`; none of the four is currently reachable through the
+  `flac`-only advisory this phase gates (`flac` holds audio only), so the
+  exclusion costs nothing today and avoids a false advisory on a lossless
+  archival master or a Blu-ray DTS-HD track if the set is ever reused for a
+  video or a wider-audio target. The set otherwise covers the codecs this
+  registry's own copy masks and fallback names already name, limited to the
+  ones ffmpeg reports as lossy with no ambiguity (`mjpeg`, `mpeg2video`,
+  `mpeg4`, `prores`, `theora`, `vp8`, `vp9`, `aac`, `ac3`, `eac3`, `mp3`,
+  `opus`, `vorbis`), plus `gif` by the measured exception above. The lossless
+  criterion `fallback_options is not None and fallback_name is None` was
+  checked registry-wide (`tests/test_profiles.py::TestLosslessTargetCriterion`)
+  and confirmed to select exactly `flac`, `wav`, `png`, `tiff`, `bmp` against
+  the registry as it stands on `main` at this issue's base commit — milestone
+  6's `attached_pic` rules had not yet merged into this branch, so the guard is
+  proven by construction (a bare rule with no fallback at all fails the first
+  half of the pair) rather than by a live conflict, and will hold the same way
+  once that work lands.
