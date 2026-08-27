@@ -2647,16 +2647,23 @@ class TestConfirmDrops:
     with no selector naming it (issue #66), so the mapping alone over-reports.
 
     A drop is forgiven only when the output holds a surplus by stream type
-    *and* by (type, codec name). Review killed both halves in turn, each with a
-    counter-example that turned a real loss into a silent success -- the one
-    direction `docs/constitution.md` forbids outright:
+    *and* by `(type, codec name, container tag)`, and only when that surplus
+    covers every predicted drop sharing the key. Three review rounds killed the
+    weaker forms in turn, each with a counter-example that hid a real loss --
+    the one direction `docs/constitution.md` forbids outright:
 
     * by type alone, a regenerated `tmcd` forgave the drop of a `gpmd`/ANC
       telemetry stream in the same file, since no profile declares a `data`
       rule;
-    * by key alone, WAV's re-encoding cheap attempt made source and output
-      disagree on the codec name, so its own `pcm_s16le` output forgave the
-      drop of a second, genuinely lost `pcm_s16le` source track.
+    * by type and codec name, WAV's re-encoding cheap attempt made source and
+      output disagree on the codec name, so its own `pcm_s16le` output forgave
+      the drop of a second, genuinely lost `pcm_s16le` source track;
+    * without the container tag, an Apple `mebx` metadata track -- which reports
+      no codec name either -- was forgiven in place of the `tmcd` beside it, so
+      the survivor was named as the loss and the real loss went unreported;
+    * without the all-or-nothing clause, a partial surplus had to guess which of
+      several indistinguishable streams survived, and guessing wrong breaks both
+      halves of the promise at once.
     """
 
     SOURCE: ClassVar[list[Stream]] = [
