@@ -64,7 +64,12 @@ flowchart TD
   The one note that names no stream is the ladder's *unverified-run* note, which
   exists precisely because no stream list could be obtained
   (`degradation-ladder.md`); it reports the absence of the facts this rule
-  demands, and is not a per-stream verdict at all.
+  demands, and is not a per-stream verdict at all. An advisory
+  (`docs/specs/spec-lossy-source-notes.md`) is exempt on the same footing: it
+  names the stream and its codec, but what it reports is the source's own
+  history, not this conversion's sacrifice, so it is not bound by this rule the
+  way a degradation note is (`docs/constitution.md`'s degradation-note/advisory
+  distinction).
 - **A re-encode that gives up nothing carries no note.** Decoding to a container's
   only codec is the definition of that target format, not a loss — WAV's PCM rule
   declares no note, MP4's `aac` and `h264` fallbacks do. Whether the note exists

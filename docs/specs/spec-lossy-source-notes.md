@@ -455,3 +455,20 @@ New-Item -ItemType Directory -Force in
   `TestLossySourceAdvisory.test_copied_through_cover_art_carries_no_advisory`.
   Landed as a fast-follow PR rather than amending #96, since #96 was already
   squash-merged before the gap was found.
+- 2026-08-27 (issue #89): the two foundation-doc amendments landed.
+  `docs/constitution.md` gained one Conventions bullet distinguishing a
+  **degradation note** (what this conversion gave up) from an **advisory**
+  (what the source had already given up before the tool saw it).
+  `docs/design/stream-decision.md` gained a carve-out sentence on its "every
+  note names three things" bullet, in the same form as the existing precedent
+  for the ladder's unverified-run note: an advisory names the stream and its
+  codec, but what it reports is the source's own history rather than this
+  conversion's sacrifice, so it is not bound by that rule the way a
+  degradation note is. `docs/architecture.md` Key flow 1,
+  `docs/design/degradation-ladder.md` and the engine docstring were left
+  untouched, per this issue's scope. Verified against a real run: `--to flac`
+  over a 128 kbit/s MP3 fixture (ffmpeg 9.0) printed exactly `audio stream 0
+  (mp3) was already lossy before this file reached FLAC; FLAC cannot restore
+  what mp3 discarded`, matching `converter/jobs.py::_lossy_source_note`
+  verbatim -- the wording the new doc lines describe was read off the shipped
+  code, not reinvented.

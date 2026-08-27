@@ -52,6 +52,10 @@
 - ffmpeg options are written through `flags("...")`, so a recipe reads like the
   command line you would type.
 - Windows is a first-class target, not an afterthought.
+- A **degradation note** says what *this conversion* gave up; an **advisory**
+  says what *the source* had already given up before the tool ever saw it — the
+  tool takes nothing away, so an advisory is not a claim that this run destroyed
+  anything.
 
 ## Quality gates
 
