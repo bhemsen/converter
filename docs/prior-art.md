@@ -235,16 +235,25 @@ evidenced, not assumed — see the image-conversion concern.
 - Date: 2026-08-26
 - Notes:
   - ADOPT: a lossy-codec set is the same kind of artifact as a copy mask —
-    curated by hand, because `ffmpeg -codecs` reports what a build contains and
-    never a judgement about it. The Phase 1 concern already argues this and the
-    argument transfers unchanged.
-  - AVOID: deriving lossiness from ffmpeg. There is no flag that answers it, and
-    guessing from the codec name would misfile the awkward cases (`alac` and
-    `flac` are lossless, `wmalossless` and `truehd` are too).
-  - **Not researched.** The sparring deliberately chose research mode `none` for
-    this idea, on the grounds that the method is already settled by the concern
-    above. What was therefore *not* checked is whether any comparable converter
-    warns about generation loss at all, and whether a maintained lossy-codec list
-    exists to adopt instead of curating one. That gap is this entry's known
-    weakness; the phase's `/loopkit:plan` cycle may close it before committing to
-    a hand-curated set.
+    curated by hand, for the reasons in AVOID below. The Phase 1 concern supplies
+    the *shape*, not the reason: its claim is about which codec a muxer legally
+    accepts, which is a different question from whether a codec is lossy.
+  - AVOID: deriving lossiness from ffmpeg — but **not** for the reason first
+    recorded here. ffmpeg does ship the classification (`-codecs`, column `L` for
+    lossy and `S` for lossless), and it gets every awkward case right: `alac`,
+    `flac`, `wmalossless`, `truehd` and `pcm_s16le` all report `S`. It is still
+    not usable as the source of truth: `webp` reports **both**, so the descriptor
+    cannot say whether *this* instance was lossy; reading it costs a subprocess
+    this project does not otherwise spend; and it answers a different question
+    than this tool asks — `gif` reports lossless, while phase 5 measured a
+    photograph through `-c:v gif` keeping 182 of 36 485 colours.
+  - **The gap this entry recorded is now closed, and one half of it resolved
+    differently than expected.** The sparring chose research mode `none`, leaving
+    it unchecked whether any comparable converter warns about generation loss, and
+    whether a maintained lossy-codec list exists to adopt. Checked during the
+    phase's `/loopkit:plan` cycle on 2026-08-27: the *principle* is stated
+    everywhere — converting an MP3 to FLAC restores nothing, it stores what is
+    left in a new wrapper — but no converter surfaced that acts on it, so the
+    differentiation is real. A classification, however, *does* exist — in ffmpeg
+    itself — and the reason to curate anyway is the AVOID above rather than its
+    absence.

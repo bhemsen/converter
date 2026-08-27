@@ -17,17 +17,19 @@
 | 4 | video-formats | [spec-video-formats.md](specs/archive/spec-video-formats.md) | [#4](https://github.com/bhemsen/converter/milestone/4) |
 | 5 | image-formats | [spec-image-formats.md](specs/archive/spec-image-formats.md) | [#5](https://github.com/bhemsen/converter/milestone/5) |
 | 6 | stream-disposition | [spec-stream-disposition.md](specs/spec-stream-disposition.md) | [#6](https://github.com/bhemsen/converter/milestone/6) |
-| 7 | lossy-source-notes | — | — |
+| 7 | lossy-source-notes | [spec-lossy-source-notes.md](specs/spec-lossy-source-notes.md) | [#7](https://github.com/bhemsen/converter/milestone/7) |
 
 A phase gets a Spec link once `/plan` drafts it, and a Milestone link once the
 spec is merged. The milestone (open/closed + issue progress) is where status
 lives.
 
 Foundation impact, recorded at seeding and authored in that phase's `/plan` spec
-PR — never edited here:
+PR. What never happens here is the foundation-doc *edit*; the verdict itself is
+corrected in place when planning measures it wrong, as phases 6 and 7 both
+record -- phase 6 corrected a verdict's reason, phase 7 flipped one:
 
 - Phase 6 — Foundation impact: vision — none; constitution — **yes** (corrected at planning: the disposition selector arrived in ffmpeg 7.1, which the tech-stack row now records as the floor for the fast path); architecture — yes: Key flow 2's per-stream match gains a disposition branch, `docs/design/stream-decision.md` gains the node that distinguishes a picture from a video stream, and `docs/design/degradation-ladder.md` gains a third selector kind.
-- Phase 7 — Foundation impact: vision — none; constitution — yes: the notes convention and its test gate assume a note describes what *this* conversion gave up, and an advisory about loss the source already carried is a second kind that has to be defined; architecture — yes: a lossy-codec set is cross-cutting data, and `converter/profiles.py` is currently described as holding one profile per target format.
+- Phase 7 — Foundation impact: vision — none; constitution — yes: the notes convention and its test gate assume a note describes what *this* conversion gave up, and an advisory about loss the source already carried is a second kind that has to be defined; architecture — **none** (corrected at planning: cross-cutting codec data already lives in `converter/profiles.py` as a module-level frozenset — `TEXT_SUBTITLE_CODECS` is shared by `mp4`, `mov` and `webm` — so a lossy-codec set beside it needs no architectural change).
 
 ## What each phase covers
 
