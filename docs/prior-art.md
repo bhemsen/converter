@@ -241,10 +241,12 @@ evidenced, not assumed — see the image-conversion concern.
   - AVOID: deriving lossiness from ffmpeg. There is no flag that answers it, and
     guessing from the codec name would misfile the awkward cases (`alac` and
     `flac` are lossless, `wmalossless` and `truehd` are too).
-  - **Not researched.** The sparring deliberately chose research mode `none` for
-    this idea, on the grounds that the method is already settled by the concern
-    above. What was therefore *not* checked is whether any comparable converter
-    warns about generation loss at all, and whether a maintained lossy-codec list
-    exists to adopt instead of curating one. That gap is this entry's known
-    weakness; the phase's `/loopkit:plan` cycle may close it before committing to
-    a hand-curated set.
+  - **The gap this entry recorded is now closed.** The sparring chose research
+    mode `none`, leaving it unchecked whether any comparable converter warns about
+    generation loss at all, and whether a maintained lossy-codec list exists to
+    adopt instead of curating one. Checked during the phase's `/loopkit:plan`
+    cycle on 2026-08-27: the *principle* is stated everywhere — converting an MP3
+    to FLAC restores nothing, it stores what is left in a new wrapper — but no
+    converter surfaced that warns about it, and no maintained lossy-codec list
+    surfaced to adopt. So the differentiation is real and the curation is
+    unavoidable; both halves of the uncertainty resolved in favour of building it.
