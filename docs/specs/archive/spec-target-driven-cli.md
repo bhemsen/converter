@@ -549,3 +549,22 @@ reusing the fixtures the phase-1 gate synthesises:
   or `converter/paths.py` in this round -- the reviewer's verdict was that
   the fix itself does not weaken the guards, only that the tests proving it
   and the docs explaining it needed to be right.
+- 2026-08-27 (#71): `README.md` claimed `-j`/`--jobs` is "capped by CPU count";
+  `--help` only said "(default: 4)". Traced both code paths in `batch.py`
+  (read-only for this issue -- it belongs to #66): `default_jobs()` returns
+  `min(4, os.cpu_count() or 4)`, but that function only runs inside
+  `run_batch`'s `workers = max(1, jobs or default_jobs())` when no `--jobs`
+  value was given at all (`jobs` is `None`, since `cli.py` already rejects
+  `< 1`). An explicit `--jobs` value -- however large -- reaches
+  `ThreadPoolExecutor(max_workers=...)` unchanged. Confirmed by hand:
+  `-j 999` against a real one-file batch converts and exits 0 with no
+  observable throttling, `-j 1` and `-j 0` behave as already documented. So
+  the CPU count only bounds the *default* shown when `--jobs` is omitted,
+  never a value the user actually passes -- the README claim was false as
+  read. No cap was implemented (would mean editing `batch.py`, out of scope
+  for this issue and not required by `docs/vision.md`'s "bounded
+  parallelism", which the existing pool bound already satisfies). Both
+  `README.md`'s options table and `cli.py`'s `--jobs` help text now say
+  "not capped (default: 4, ...)", matching what the code does. A follow-up
+  issue for actually capping `--jobs` at the CPU count, if desired, belongs
+  to whoever owns `batch.py`.

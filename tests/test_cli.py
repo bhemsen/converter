@@ -100,6 +100,15 @@ class TestConvertParser:
         assert args.jobs == 8
         assert args.quiet is True
 
+    def test_jobs_is_not_capped_by_cpu_count(self):
+        """`--jobs` reaches `run_batch` unmodified (see `converter/batch.py`);
+        only the *default* used when `--jobs` is omitted is derived from the
+        CPU count. `cli.py` must not add a cap of its own -- issue #71 found
+        the docs claiming one existed when the code never enforced it."""
+        args = parse(convert_argv("in", "out", "-j", "999"))
+
+        assert args.jobs == 999
+
     def test_the_epilog_leads_to_mirror_and_the_format_list(self):
         """Asserted on the epilog itself, not on the rendered help: `--mirror-to`
         contains the mirror token and `--list-formats` is an option on this very
