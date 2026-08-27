@@ -211,7 +211,7 @@ implementation issue.
 
 ## Tracking
 
-- Milestone: stream-disposition (created at the spec-acceptance gate)
+- Milestone: [stream-disposition](https://github.com/bhemsen/converter/milestone/6) (#6)
 - Issues: created from this spec once it is merged (one per implementable step)
 
 ## Verification
