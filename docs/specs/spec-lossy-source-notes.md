@@ -313,27 +313,36 @@ New-Item -ItemType Directory -Force in
   `converter/profiles.py`, beside `TEXT_SUBTITLE_CODECS`. Re-verified the
   decision row's `-codecs` claims against ffmpeg 9.0 directly rather than
   trusting the earlier round's numbers: `alac`, `flac`, `wmalossless`, `truehd`
-  and the `pcm_*` family all still report `S` only, `webp` still reports both
-  (`DEVILS`), and `gif` still reports `S` only despite the measured 182-of-
-  36485-colour loss. One thing the earlier rounds had not checked: `h264`,
-  `hevc` and `av1` also report both `L` and `S` (`DEV.LS`), and so does `dts`
-  (`DEAILS`) — each has a real lossless mode (x264/x265 `-qp 0`, AV1's lossless
-  tools, DTS-HD Master Audio) that the codec name alone cannot rule out, the
-  same ambiguity `webp` has. All four are excluded from `LOSSY_CODECS` for that
-  reason, alongside `webp`; none of the four is currently reachable through the
-  `flac`-only advisory this phase gates (`flac` holds audio only), so the
-  exclusion costs nothing today and avoids a false advisory on a lossless
-  archival master or a Blu-ray DTS-HD track if the set is ever reused for a
-  video or a wider-audio target. The set otherwise covers the codecs this
-  registry's own copy masks and fallback names already name, limited to the
-  ones ffmpeg reports as lossy with no ambiguity (`mjpeg`, `mpeg2video`,
-  `mpeg4`, `prores`, `theora`, `vp8`, `vp9`, `aac`, `ac3`, `eac3`, `mp3`,
-  `opus`, `vorbis`), plus `gif` by the measured exception above. The lossless
-  criterion `fallback_options is not None and fallback_name is None` was
-  checked registry-wide (`tests/test_profiles.py::TestLosslessTargetCriterion`)
-  and confirmed to select exactly `flac`, `wav`, `png`, `tiff`, `bmp` against
-  the registry as it stands on `main` at this issue's base commit — milestone
-  6's `attached_pic` rules had not yet merged into this branch, so the guard is
-  proven by construction (a bare rule with no fallback at all fails the first
-  half of the pair) rather than by a live conflict, and will hold the same way
-  once that work lands.
+  and every *linear* `pcm_*` decoder still report `S` only, `webp` still
+  reports both (`DEVILS`), and `gif` still reports `S` only despite the
+  measured 182-of-36485-colour loss. One thing the earlier rounds had not
+  checked: `h264`, `hevc` and `av1` also report both `L` and `S` (`DEV.LS`),
+  and so does `dts` (`DEAILS`) — each has a real lossless mode (x264/x265
+  `-qp 0`, AV1's lossless tools, DTS-HD Master Audio) that the codec name
+  alone cannot rule out, the same ambiguity `webp` has. All four are excluded
+  from `LOSSY_CODECS` for that reason.
+- 2026-08-27 (issue #87 review round 1): two claims in the entry above did not
+  survive verification and are corrected here rather than left standing.
+  First, "the `pcm_*` family all report `S` only" is false as a universal
+  claim: `pcm_alaw`/`pcm_mulaw` (G.711 companding) and `pcm_vidc` report `L`
+  only, since companding genuinely discards information — the true claim is
+  scoped to the *linear* PCM decoders (`pcm_s16le`, `pcm_s24le`, and the rest
+  of that family), the only ones this registry ever names. Second,
+  "`h264`/`hevc`/`av1`/`dts` cost nothing to exclude, since none is reachable
+  through the `flac`-only advisory" is false for `dts`: `flac`'s only rule is
+  `audio`, so a DTS source genuinely reaches the selective rung the advisory
+  would live on, unlike `h264`/`hevc`/`av1`, which are video and `flac` never
+  maps a video stream at all. Excluding `dts` is a real accuracy-over-coverage
+  trade — a lossy DTS core into `flac` stays silent — not a free hedge; kept
+  anyway, on the same footing as `webp`, because a false "this was already
+  lossy" advisory on a genuinely lossless DTS-HD Master Audio source is the
+  worse failure mode of the two.
+  The lossless criterion `fallback_options is not None and fallback_name is
+  None` was checked registry-wide
+  (`tests/test_profiles.py::TestLosslessTargetCriterion`) and confirmed to
+  select exactly `flac`, `wav`, `png`, `tiff`, `bmp` against the registry as it
+  stands on `main` at this issue's base commit — milestone 6's `attached_pic`
+  rules had not yet merged into this branch, so the guard is proven by
+  construction (a bare rule with no fallback at all fails the first half of
+  the pair) rather than by a live conflict, and will hold the same way once
+  that work lands.

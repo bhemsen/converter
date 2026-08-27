@@ -114,11 +114,15 @@ TEXT_SUBTITLE_CODECS = frozenset({"subrip", "srt", "ass", "ssa", "mov_text", "we
 #: format's behaviour.
 #:
 #: ffmpeg does ship a lossy/lossless classification (``-codecs``, columns ``L``
-#: and ``S``), and it is not simply wrong -- measured against ffmpeg 9.0, it gets
-#: every codec this set excludes exactly right: ``alac``, ``flac``,
-#: ``wmalossless``, ``truehd`` and every ``pcm_*`` decoder all report ``S`` only,
-#: no ``L``. It still cannot be the source of truth read wholesale, for three
-#: measured reasons:
+#: and ``S``), and for the five codecs this issue names it is not wrong -- measured
+#: against ffmpeg 9.0: ``alac``, ``flac``, ``wmalossless``, ``truehd`` and every
+#: *linear* ``pcm_*`` decoder (``pcm_s16le``, ``pcm_s24le`` and the rest of that
+#: family) report ``S`` only, no ``L``. (Three ``pcm_*`` decoders are themselves
+#: lossy and report ``L`` only -- ``pcm_alaw``/``pcm_mulaw``, G.711 companding, and
+#: ``pcm_vidc`` -- but this registry never produces or accepts any of the three, so
+#: their absence from this set, like their absence from every copy mask above,
+#: costs nothing.) The flag still cannot be read wholesale as a general rule,
+#: for three measured reasons:
 #:
 #: - Some codecs report **both** flags at once. ``webp`` does (``DEVILS``): it is
 #:   genuinely used both ways -- a lossy photograph and a lossless screenshot are
@@ -127,8 +131,13 @@ TEXT_SUBTITLE_CODECS = frozenset({"subrip", "srt", "ass", "ssa", "mov_text", "we
 #:   ``av1`` (``DEV.LS``, all three) and for ``dts`` (``DEAILS``): each format has
 #:   a real, if less common, mathematically lossless mode (x264/x265 "-qp 0",
 #:   AV1's lossless coding tools, DTS-HD Master Audio), so none of the four is in
-#:   this set either -- excluded for the identical reason as ``webp``, not merely
-#:   left out for lack of a use today.
+#:   this set either -- excluded for the identical reason as ``webp``. Unlike
+#:   ``h264``/``hevc``/``av1``, which this phase's only consumer (`flac`, an
+#:   audio-only rule) can never even map, ``dts`` is audio and genuinely reaches
+#:   that rule -- a lossy DTS core into `flac` lands on the selective rung with
+#:   no advisory, a real accepted gap rather than a free exclusion, the same
+#:   accuracy-over-coverage trade this phase's gate already made for `wav` versus
+#:   `flac` (`docs/specs/spec-lossy-source-notes.md`, Prior decisions).
 #: - Reading the flag at all costs a subprocess call this project does not
 #:   otherwise spend on the happy path; a curated Python literal costs nothing.
 #: - ``gif`` reports lossless (``S`` only, no ``L`` -- ffmpeg calls the format
