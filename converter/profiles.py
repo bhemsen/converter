@@ -510,14 +510,26 @@ MP3 = Profile(
     # out; that is what lets stream_limit=1 coexist with a blind "-map 0:a?"
     # below, the muxer-enforced exemption docs/design/degradation-ladder.md
     # names, rather than WAV's index-named one.
+    #
+    # "-map 0:disp:attached_pic?" (docs/specs/spec-stream-disposition.md): the
+    # disposition specifier maps an embedded cover picture and nothing else --
+    # measured, it never matches a real video stream, so this cheap attempt
+    # still never sees one. "-c copy" replaces "-c:a copy" deliberately: with
+    # no codec option covering the picture, ffmpeg would re-encode it to the
+    # muxer's default instead of copying it, an undeclared loss the mask would
+    # hide; "-c copy" behaves identically to "-c:a copy" for the audio stream
+    # since the map now selects only audio and pictures.
     cheap_attempt=Attempt(
         label="remux",
-        options=flags("-map 0:a? -c:a copy"),
+        options=flags("-map 0:a? -map 0:disp:attached_pic? -c copy"),
         # partial_mapping's success-side verification (docs/design/degradation-
         # ladder.md) already names a dropped stream precisely when the ladder
         # actually drops one; this line is the standing note the audio-formats
         # spec's gate chose to keep alongside it -- always true, so it costs
         # nothing to state even for the many files that had nothing to lose.
+        # (Now stale for cover art specifically -- issue #78, a dependent of
+        # this one, retires it once the verifier's per-stream note is the only
+        # place that claim needs to live.)
         notes=("non-audio streams, including cover art, are not carried into MP3",),
     ),
     explicit_streams=False,
@@ -534,6 +546,17 @@ MP3 = Profile(
             fallback_options=flags("-c:a libmp3lame -q:a 2"),
             fallback_name="mp3",
             stream_limit=1,
+        ),
+        # Accept-anything mask, the same mechanism MKV's attachment rule uses
+        # (_AcceptAnyCodec above): the decision resting on this rule is the
+        # disposition, not the codec, so enumerating codec names would repeat
+        # the phase-4 mistake the MP4 attachment rule corrected. No
+        # stream_limit: one "-map 0:disp:attached_pic?" carries *every*
+        # picture a source holds (measured), so a limit of 1 would report a
+        # carried picture as dropped (Prior decisions, spec-stream-disposition.md).
+        "attached_pic": StreamRule(
+            copy_mask=_AcceptAnyCodec(),
+            accept_options=flags("-c:v:{n} copy"),
         ),
     },
     last_resort=Attempt(
@@ -557,9 +580,13 @@ FLAC = Profile(
     container_options=(),
     # Same blind-by-type shape and the same reason as MP3's above: the flac
     # muxer enforces "at most one audio stream" itself.
+    #
+    # Same disposition addition as MP3's, and the same "-c copy" reasoning --
+    # see its comment (docs/specs/spec-stream-disposition.md).
     cheap_attempt=Attempt(
         label="remux",
-        options=flags("-map 0:a? -c:a copy"),
+        options=flags("-map 0:a? -map 0:disp:attached_pic? -c copy"),
+        # Stale for cover art -- see MP3's identical note and its comment.
         notes=("non-audio streams, including cover art, are not carried into FLAC",),
     ),
     explicit_streams=False,
@@ -572,6 +599,11 @@ FLAC = Profile(
             # No fallback_name: encoding into a container's own lossless codec
             # gives up nothing, the same rule WAV's PCM fallback carries.
             stream_limit=1,
+        ),
+        # Same accept-anything shape as MP3's -- see its comment.
+        "attached_pic": StreamRule(
+            copy_mask=_AcceptAnyCodec(),
+            accept_options=flags("-c:v:{n} copy"),
         ),
     },
     last_resort=Attempt(
@@ -596,9 +628,17 @@ M4A = Profile(
     # standard MP4's -- it rejects mp3, opus and flac stream copies -- so the
     # mask below is curated by hand rather than reused from MP4_AUDIO_CODECS
     # (docs/specs/archive/spec-audio-formats.md).
+    #
+    # Same disposition addition as MP3's cheap attempt, and the same reason
+    # "-c:a copy" becomes "-c copy": trap 1 in
+    # docs/specs/spec-stream-disposition.md. Measured, this one matters most --
+    # the ipod muxer's *default* video encoder is h264, which ipod then
+    # rejects, so leaving "-c:a copy" in place would fail every artwork-bearing
+    # "--to m4a" at rung 1 rather than silently mis-encoding as mp3/flac would.
     cheap_attempt=Attempt(
         label="remux",
-        options=flags("-map 0:a? -c:a copy"),
+        options=flags("-map 0:a? -map 0:disp:attached_pic? -c copy"),
+        # Stale for cover art -- see MP3's identical note and its comment.
         notes=("non-audio streams, including cover art, are not carried into M4A",),
     ),
     explicit_streams=False,
@@ -620,6 +660,11 @@ M4A = Profile(
             accept_options=flags("-c:a:{n} copy"),
             fallback_options=flags("-c:a:{n} aac -b:a:{n} 192k"),
             fallback_name="aac",
+        ),
+        # Same accept-anything shape as MP3's -- see its comment.
+        "attached_pic": StreamRule(
+            copy_mask=_AcceptAnyCodec(),
+            accept_options=flags("-c:v:{n} copy"),
         ),
     },
     last_resort=Attempt(

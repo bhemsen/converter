@@ -42,6 +42,16 @@ from converter.profiles import (
 #: unlisted letter is exactly what `mapped_types`'s own assertion below is for.
 MAP_LETTERS = {"v": "video", "a": "audio", "s": "subtitle", "t": "attachment", "d": "data"}
 
+#: Disposition qualifiers a "0:disp:<qualifier>?" selector can carry, mapped to
+#: the rule key they resolve to -- the third selector kind
+#: `docs/design/degradation-ladder.md` names: it carries a colon-separated
+#: qualifier the way an index-named selector does, but behaves like a blind
+#: one (measured, one such map carries *every* matching stream, not one).
+#: Extend this the same way `MAP_LETTERS` is extended, when a profile
+#: introduces another disposition selector. Only `attached_pic` exists today
+#: (docs/specs/spec-stream-disposition.md).
+DISPOSITION_QUALIFIERS = {"attached_pic": "attached_pic"}
+
 #: Every profile the registry ships. A new one joins the invariant checks here.
 SHIPPED = [
     MP4,
@@ -164,6 +174,18 @@ def mapped_types(profile: Profile) -> dict[str, bool]:
         assert value.startswith("0:"), f"{profile.label}: -map selector not recognised: {value!r}"
         selector = value[2:].removesuffix("?")
         letter = selector.split(":")[0]
+        if letter == "disp":
+            # "0:disp:attached_pic?" reads like an index-named selector -- it
+            # carries a colon-separated qualifier -- but behaves like a blind
+            # one (degradation-ladder.md's third selector kind), so it is
+            # resolved by the qualifier rather than by MAP_LETTERS and always
+            # recorded as blind.
+            qualifier = selector.split(":", 1)[1] if ":" in selector else ""
+            assert qualifier in DISPOSITION_QUALIFIERS, (
+                f"{profile.label}: -map disposition selector not recognised: {value!r}"
+            )
+            mapped[DISPOSITION_QUALIFIERS[qualifier]] = True
+            continue
         assert letter in MAP_LETTERS, f"{profile.label}: -map selector not recognised: {value!r}"
         # "0:a?" selects every audio stream; "0:a:0" names exactly one.
         mapped[MAP_LETTERS[letter]] = ":" not in selector
@@ -193,6 +215,11 @@ def named_index_counts(profile: Profile) -> dict[str, int]:
         selector = value[2:].removesuffix("?")
         parts = selector.split(":")
         letter = parts[0]
+        if letter == "disp":
+            # A disposition selector carries a colon-separated qualifier but
+            # is blind, not index-named (see mapped_types) -- skipped here so
+            # it is never mistaken for a named index.
+            continue
         if letter in MAP_LETTERS and len(parts) > 1:
             kind = MAP_LETTERS[letter]
             counts[kind] = counts.get(kind, 0) + 1
@@ -885,9 +912,22 @@ class TestMp3Profile:
     def test_no_container_options(self):
         assert MP3.container_options == ()
 
-    def test_cheap_attempt_maps_audio_blindly(self):
+    def test_cheap_attempt_maps_audio_and_attached_pictures_blindly(self):
+        """Issue #77, `docs/specs/spec-stream-disposition.md`:
+        `-map 0:disp:attached_pic?` maps an embedded cover picture and nothing
+        else -- measured, it never matches a real video stream. `-c copy`
+        replaces `-c:a copy` deliberately: with no codec option covering the
+        picture, ffmpeg would re-encode it to the muxer's default instead of
+        copying it, an undeclared loss the mask would hide."""
         assert MP3.explicit_streams is False
-        assert MP3.cheap_attempt.options == ("-map", "0:a?", "-c:a", "copy")
+        assert MP3.cheap_attempt.options == (
+            "-map",
+            "0:a?",
+            "-map",
+            "0:disp:attached_pic?",
+            "-c",
+            "copy",
+        )
 
     def test_cheap_attempt_carries_the_standing_non_audio_note(self):
         assert MP3.cheap_attempt.notes == (
@@ -897,8 +937,8 @@ class TestMp3Profile:
     def test_cheap_attempt_is_declared_partial(self):
         assert MP3.partial_mapping is True
 
-    def test_declares_only_an_audio_rule(self):
-        assert set(MP3.rules) == {"audio"}
+    def test_declares_an_audio_rule_and_an_attached_pic_rule(self):
+        assert set(MP3.rules) == {"audio", "attached_pic"}
 
     def test_audio_rule_mask_and_fallback(self):
         rule = MP3.rules["audio"]
@@ -912,6 +952,22 @@ class TestMp3Profile:
         """The mp3 muxer, not this mapping, enforces it -- the muxer-enforced
         `stream_limit` exemption `docs/design/degradation-ladder.md` names."""
         assert MP3.rules["audio"].stream_limit == 1
+
+    def test_attached_pic_rule_accepts_any_codec_with_no_stream_limit(self):
+        """Accept-anything mask, the same mechanism MKV's attachment rule
+        uses: the decision resting on this rule is the disposition, not the
+        codec. No `stream_limit`: one `-map 0:disp:attached_pic?` carries
+        *every* picture a source holds (measured), so a limit of 1 would
+        report a carried picture as dropped (Prior decisions,
+        spec-stream-disposition.md)."""
+        rule = MP3.rules["attached_pic"]
+
+        assert "png" in rule.copy_mask
+        assert "mjpeg" in rule.copy_mask
+        assert len(rule.copy_mask) == 0
+        assert rule.accept_options == ("-c:v:{n}", "copy")
+        assert rule.fallback_options is None
+        assert rule.stream_limit is None
 
     def test_declares_the_pinned_last_resort(self):
         assert MP3.last_resort is not None
@@ -933,9 +989,17 @@ class TestFlacProfile:
     def test_no_container_options(self):
         assert FLAC.container_options == ()
 
-    def test_cheap_attempt_maps_audio_blindly(self):
+    def test_cheap_attempt_maps_audio_and_attached_pictures_blindly(self):
+        """Same disposition addition as MP3's -- see its comment."""
         assert FLAC.explicit_streams is False
-        assert FLAC.cheap_attempt.options == ("-map", "0:a?", "-c:a", "copy")
+        assert FLAC.cheap_attempt.options == (
+            "-map",
+            "0:a?",
+            "-map",
+            "0:disp:attached_pic?",
+            "-c",
+            "copy",
+        )
 
     def test_cheap_attempt_carries_the_standing_non_audio_note(self):
         assert FLAC.cheap_attempt.notes == (
@@ -945,8 +1009,8 @@ class TestFlacProfile:
     def test_cheap_attempt_is_declared_partial(self):
         assert FLAC.partial_mapping is True
 
-    def test_declares_only_an_audio_rule(self):
-        assert set(FLAC.rules) == {"audio"}
+    def test_declares_an_audio_rule_and_an_attached_pic_rule(self):
+        assert set(FLAC.rules) == {"audio", "attached_pic"}
 
     def test_audio_rule_mask_and_fallback(self):
         rule = FLAC.rules["audio"]
@@ -963,6 +1027,17 @@ class TestFlacProfile:
     def test_audio_rule_stream_limit_is_one(self):
         """The flac muxer, not this mapping, enforces it, same as mp3's."""
         assert FLAC.rules["audio"].stream_limit == 1
+
+    def test_attached_pic_rule_accepts_any_codec_with_no_stream_limit(self):
+        """Same accept-anything shape as MP3's -- see its comment."""
+        rule = FLAC.rules["attached_pic"]
+
+        assert "png" in rule.copy_mask
+        assert "mjpeg" in rule.copy_mask
+        assert len(rule.copy_mask) == 0
+        assert rule.accept_options == ("-c:v:{n}", "copy")
+        assert rule.fallback_options is None
+        assert rule.stream_limit is None
 
     def test_declares_the_pinned_last_resort(self):
         assert FLAC.last_resort is not None
@@ -984,9 +1059,23 @@ class TestM4aProfile:
     def test_no_container_options(self):
         assert M4A.container_options == ()
 
-    def test_cheap_attempt_maps_audio_blindly(self):
+    def test_cheap_attempt_maps_audio_and_attached_pictures_blindly(self):
+        """Same disposition addition as MP3's, and the same reason
+        "-c:a copy" becomes "-c copy" -- trap 1 in
+        `docs/specs/spec-stream-disposition.md`. Measured, this one matters
+        most: the ipod muxer's *default* video encoder is h264, which ipod
+        then rejects, so leaving "-c:a copy" in place would fail every
+        artwork-bearing `--to m4a` at rung 1 rather than silently
+        mis-encoding as mp3/flac would."""
         assert M4A.explicit_streams is False
-        assert M4A.cheap_attempt.options == ("-map", "0:a?", "-c:a", "copy")
+        assert M4A.cheap_attempt.options == (
+            "-map",
+            "0:a?",
+            "-map",
+            "0:disp:attached_pic?",
+            "-c",
+            "copy",
+        )
 
     def test_cheap_attempt_carries_the_standing_non_audio_note(self):
         assert M4A.cheap_attempt.notes == (
@@ -996,8 +1085,19 @@ class TestM4aProfile:
     def test_cheap_attempt_is_declared_partial(self):
         assert M4A.partial_mapping is True
 
-    def test_declares_only_an_audio_rule(self):
-        assert set(M4A.rules) == {"audio"}
+    def test_declares_an_audio_rule_and_an_attached_pic_rule(self):
+        assert set(M4A.rules) == {"audio", "attached_pic"}
+
+    def test_attached_pic_rule_accepts_any_codec_with_no_stream_limit(self):
+        """Same accept-anything shape as MP3's -- see its comment."""
+        rule = M4A.rules["attached_pic"]
+
+        assert "png" in rule.copy_mask
+        assert "mjpeg" in rule.copy_mask
+        assert len(rule.copy_mask) == 0
+        assert rule.accept_options == ("-c:v:{n}", "copy")
+        assert rule.fallback_options is None
+        assert rule.stream_limit is None
 
     def test_audio_rule_mask_and_fallback(self):
         """The mask is `{aac, alac}`, not `MP4_AUDIO_CODECS`: `.m4a` selects

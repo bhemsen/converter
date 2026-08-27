@@ -356,3 +356,33 @@ New-Item -ItemType Directory -Force in
   `False`) and proven correct with a duck-typed stand-in exercising the real,
   unmodified `converter.jobs` code, then re-proven against the real `Stream`
   type once #75 merged.
+- 2026-08-27 (issue #77): `mp3`, `m4a` and `flac` gained the carry-through.
+  Each cheap attempt is now exactly
+  `flags("-map 0:a? -map 0:disp:attached_pic? -c copy")` — pinned in full per
+  the Prior decisions row, including the `-c:a copy` → `-c copy` change that
+  matters most for `m4a` (trap 1: the ipod muxer's default video encoder is
+  h264, which ipod then rejects). Each profile gained an `attached_pic` rule
+  reusing `_AcceptAnyCodec` (added for MKV's attachments, issue #38) rather
+  than a second accept-anything mechanism: `copy_mask=_AcceptAnyCodec()`,
+  `accept_options=flags("-c:v:{n} copy")`, no `stream_limit`. Cheap-attempt
+  standing notes are left untouched — their removal is issue #78, which
+  depends on this one, so they read as an over-broad statement between the
+  two merges rather than a false one this issue is scoped to fix.
+  `tests/test_profiles.py`'s `mapped_types` and `named_index_counts` learned
+  the `0:disp:<qualifier>?` selector form via a new `DISPOSITION_QUALIFIERS`
+  table, resolving it to the blind branch of both invariants per
+  `degradation-ladder.md`'s third-selector-kind decision above; all three
+  shipped invariants pass over all 17 profiles with the new selector
+  recognised. Verified against real ffmpeg 9.0 with distinct-stem fixtures:
+  artwork survives `--to mp3`, `--to m4a` and `--to flac`, including the
+  selective-rung case (a flac-with-art source into `--to mp3`, which forces an
+  audio re-encode); a real h264 and a real mjpeg video stream are both dropped
+  with a note on `--to mp3` and `--to m4a` rather than carried; a two-picture
+  source is carried whole with no loss note on both the cheap-attempt and
+  selective-rung paths; `--to ogg` and `--to wav` over an artwork-bearing
+  source are unaffected; a second run over a converted tree reports 0
+  converted, exit 0. Every new assertion was proven non-vacuous by mutating a
+  profile copy in a scratch script outside the repo (dropping the
+  `attached_pic` rule, or giving it `stream_limit=1`) and confirming both the
+  scratch check and the shipped `tests/test_profiles.py` invariants fail
+  against the mutation.
