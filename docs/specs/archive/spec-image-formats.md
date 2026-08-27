@@ -508,8 +508,10 @@ New-Item -ItemType Directory -Force in
 - 2026-08-27 (#73): Closed all four QA coverage gaps against real ffmpeg
   9.0-full_build-www.gyan.dev on Windows 11 (this build: no `pgssub`
   encoder, `-encoders` lists only `dvdsub`/`dvbsub` as
-  bitmap-subtitle-capable outputs). Three of four branches now have observed
-  end-to-end evidence; the fourth is recorded as knowingly unproven per this
+  bitmap-subtitle-capable outputs). Two of four branches now have observed
+  end-to-end evidence (1 and 4); a third (the 8-bit reduction) was measured
+  only by running its argv by hand, because the normal ladder never reaches
+  it on this build; the fourth is recorded as knowingly unproven per this
   issue's own third acceptance bullet.
 
   **1. Bitmap-subtitle drop branch -- now proven end-to-end.** Reproduced
@@ -533,8 +535,11 @@ New-Item -ItemType Directory -Force in
   bitmap subtitles cannot be stored in MP4` (and `MOV`, `WebM`
   respectively; `webm` additionally re-encoded the video to vp9). Each run
   reported `1 converted, 0 skipped, 0 failed, 0 unsupported (of 1)`.
-  `ffprobe` on all three outputs confirms the subtitle stream is genuinely
-  absent, only the video stream remains. This matches `README.md`'s own
+  `ffprobe -show_entries stream=index,codec_type,codec_name -of csv=p=0` on
+  each output lists exactly one stream row and no subtitle row --
+  `0,h264,video` for the `mp4` and `mov` outputs, `0,vp9,video` for the
+  `webm` one -- confirming the subtitle stream is genuinely gone, not just
+  unreported. This matches `README.md`'s own
   quoted example (`note    Show.S01E02.mkv: subtitle stream 2
   (hdmv_pgs_subtitle) dropped: bitmap subtitles cannot be stored in MP4`) in
   shape exactly, differing only in filename and stream index. **Branch
@@ -603,7 +608,13 @@ New-Item -ItemType Directory -Force in
   measurement of its argv; the branch is not reachable through the normal
   ladder with this ffmpeg build and these fixtures, because the selective
   rung's un-pinned `-pix_fmt` lets a high-bit-depth-capable `libx264`
-  preserve depth instead of failing.** Also worth recording alongside this
+  preserve depth instead of the rung ever failing.** (Not because a
+  bit-depth mismatch would otherwise fail the encode: ffmpeg auto-negotiates
+  an unsupported pixel format and inserts a conversion rather than erroring,
+  so even an 8-bit-only `libx264` would most likely have made the selective
+  rung succeed too -- just silently at 8 bits, with no note anywhere, which
+  would be a worse outcome than this build's, not a better one. That
+  narrower claim was not itself measured here.) Also worth recording alongside this
   issue's own "Also worth recording" section: the resulting MP4 (`h264
   (High 4:2:2)`, 10-bit, `yuv422p10le`) decodes cleanly under `ffmpeg -v
   error -i ... -f null -` (exit 0, no stderr) -- the QA gate's own
@@ -646,9 +657,13 @@ New-Item -ItemType Directory -Force in
   enough of the 260-character budget to reach the threshold without one.
   **Branch fired and is correct**, and the CLI-level side effect
   (whole-run abort rather than per-file failure) is recorded as an
-  observation, not a defect -- it was not evaluated against any documented
-  contract for per-file isolation at this specific precondition.
+  observation, not a defect: `docs/constitution.md` promises "One broken
+  input file must not abort the batch," but a too-deep *output* path is not
+  a broken *input* file, so this was not evaluated against that line, and no
+  other documented contract covers this precondition either.
 
   No acceptance item above is ticked without the observed evidence quoted
-  next to it. Item 2 is the one gap this round leaves genuinely unproven,
-  exactly as its own acceptance bullet anticipates.
+  next to it. Item 2 is left genuinely unproven, exactly as its own
+  acceptance bullet anticipates; item 3 is answered in the permitted second
+  form -- a precise account of why the branch could not be reached through
+  the converter itself -- rather than as end-to-end evidence.
