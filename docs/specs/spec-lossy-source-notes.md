@@ -341,11 +341,13 @@ New-Item -ItemType Directory -Force in
   None` was checked registry-wide
   (`tests/test_profiles.py::TestLosslessTargetCriterion`) and confirmed to
   select exactly `flac`, `wav`, `png`, `tiff`, `bmp` against the registry as it
-  stands on `main` at this issue's base commit — milestone 6's `attached_pic`
-  rules had not yet merged into this branch, so the guard is proven by
-  construction (a bare rule with no fallback at all fails the first half of
-  the pair) rather than by a live conflict, and will hold the same way once
-  that work lands.
+  stands on `main` at this issue's base commit. The pair is already exercised
+  by live fallback-less rules today — `mkv`'s `attachment` rule and the bare
+  subtitle-drop rules on `mp4`/`mov`/`webm` all fail the pair's first half
+  (`fallback_options is None`) and are correctly excluded — so this is not an
+  untested guard; milestone 6's incoming `attached_pic` rules on `mp3`/`m4a`/
+  `flac` had not yet merged into this branch specifically, and will exercise
+  the identical, already-proven mechanism once that work lands.
 - 2026-08-27 (issue #87 review round 2): the round-1 fix above relocated the
   same overreach it was meant to remove rather than closing it. "This registry
   never produces or accepts any of the three [`pcm_alaw`/`pcm_mulaw`/
@@ -362,3 +364,33 @@ New-Item -ItemType Directory -Force in
   `test_excludes_the_named_lossless_family` from a blanket `pcm_` prefix ban
   to the specific linear-PCM codecs the exclusion actually covers, with a new
   `test_includes_the_lossy_pcm_companding_variants` pinning the three in.
+- 2026-08-27 (issue #87 review round 3): the round-2 fix closed the PCM gap
+  correctly but the comment's closing sentence still carried the exact
+  non sequitur round 2 had just rejected -- "otherwise scoped to the codecs
+  this registry's own copy masks and fallback names already name" treats
+  what a target profile happens to use as if it bounded what a source file
+  may carry, which it does not. `LOSSY_CODECS` matches a source codec
+  reachable through `SOURCE_SUFFIXES`, independent of any profile. Concretely:
+  `.wma` is a source suffix, so `wmav1`/`wmav2`/`wmapro` reach `flac`'s
+  audio-only rule and fail its copy the same way an MP3 does — and this set
+  already guards against misreading `wmalossless`, so staying silent on the
+  far commoner lossy WMA family was backwards. Fixed by adding the common
+  single-codec lossy audio formats a media library plausibly carries as a
+  source, each checked individually against ffmpeg 9.0 and confirmed `L`
+  only: the WMA family, `mp2`, `amr_nb`/`amr_wb`, `nellymoser`, `speex`,
+  `gsm`, `ilbc`. The ADPCM family (62 decoders, all uniformly `L` only) is
+  deliberately left unenumerated and named as a disclosed gap rather than
+  curated around: it is an order of magnitude larger than every other set in
+  this module and almost entirely obscure game/broadcast-specific variants,
+  so naming the two a real source could plausibly carry would misleadingly
+  promise coverage of the other sixty. Also corrected: the closing sentence
+  no longer implies "ambiguous per any format spec" is the exclusion test --
+  it is anchored to what this ffmpeg build's flags report, which is why
+  `vp9` (a documented but here-unreported lossless mode) stays a member on
+  the same footing as every other codec this build reports unambiguously.
+  Also corrected the round-1 log entry above: it claimed the lossless
+  criterion was "proven by construction … rather than by a live conflict",
+  which undersold it -- `mkv`'s `attachment` rule and the subtitle-drop rules
+  on `mp4`/`mov`/`webm` are live fallback-less rules today that the pair
+  already discriminates correctly against, not merely a hypothetical
+  construction.

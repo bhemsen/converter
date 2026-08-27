@@ -151,9 +151,41 @@ TEXT_SUBTITLE_CODECS = frozenset({"subrip", "srt", "ass", "ssa", "mov_text", "we
 #:   container's ceiling, not what its one encoder actually does, and this set
 #:   exists precisely to say so instead of repeating ffmpeg's classification.
 #:
-#: Otherwise scoped to the codecs this registry's own copy masks and fallback
-#: names already name (`MP4_VIDEO_CODECS` et al. above) -- every remaining one of
-#: those reports ``L`` only, with no ambiguity left to resolve by hand.
+#: "Ambiguous, so excluded" is anchored to what this ffmpeg build's flags
+#: actually report, not to an independent survey of every format's spec --
+#: ``vp9`` has a documented lossless mode too, but this build reports it
+#: ``L`` only (``DEV.L.``, no ``S``), so it is included on the same basis
+#: every other unambiguous member is, consistent with how this set already
+#: treats ``gif`` (curated against the tool's own measured output, not
+#: against every fact a format's specification could support).
+#:
+#: A codec's membership never depends on whether this registry's own copy
+#: masks or fallback encoders name it -- `LOSSY_CODECS` matches a *source*
+#: codec, which can be anything `SOURCE_SUFFIXES` admits, regardless of what
+#: any target profile does with it (the same correction that added the
+#: companded PCM trio above applies here too). Beyond the codecs already
+#: named above, this set covers the common single-codec lossy formats a
+#: media library plausibly carries as a source, each checked individually
+#: against ffmpeg 9.0 and confirmed ``L`` only: the WMA family (``wmav1``,
+#: ``wmav2``, ``wmapro`` -- reachable via the `.wma` source suffix, and the
+#: sharpest case this set would otherwise get backwards: guarding against
+#: misreading ``wmalossless`` while staying silent on the far commoner lossy
+#: WMA), ``mp2`` (`.mpg`/`.ts`/`.vob` sources), ``amr_nb``/``amr_wb``
+#: (`.3gp`), and ``nellymoser``/``speex``/``gsm``/``ilbc`` (legacy voice and
+#: streaming codecs `.flv`/`.caf`/`.wav` sources can carry).
+#:
+#: Deliberately **not** enumerated: the ADPCM family. All 62 ``adpcm_*``
+#: decoders this ffmpeg build ships report ``L`` only, no ``S`` -- uniformly
+#: lossy, unlike PCM's mixed family above -- but the family is an order of
+#: magnitude larger than every other curated set in this module and almost
+#: entirely made of obscure, game- or broadcast-specific variants
+#: (``adpcm_ea_maxis_xa``, ``adpcm_psx``, ``adpcm_thp``) a real media library
+#: is unlikely to carry under those names. Naming the two a `.wav`/`.avi`
+#: source can plausibly carry -- ``adpcm_ima_wav``, ``adpcm_ms`` -- would
+#: silently promise coverage of the other sixty; this comment names the gap
+#: instead of curating around it, the same choice this project makes rather
+#: than a false claim of completeness (`docs/vision.md`: losses are named,
+#: not hidden).
 LOSSY_CODECS = frozenset(
     {
         # video
@@ -175,6 +207,16 @@ LOSSY_CODECS = frozenset(
         "pcm_alaw",
         "pcm_mulaw",
         "pcm_vidc",
+        "wmav1",
+        "wmav2",
+        "wmapro",
+        "mp2",
+        "amr_nb",
+        "amr_wb",
+        "nellymoser",
+        "speex",
+        "gsm",
+        "ilbc",
     }
 )
 

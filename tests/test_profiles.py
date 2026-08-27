@@ -1710,6 +1710,28 @@ class TestLossyCodecs:
         have been a silent gap rather than a judgement call."""
         assert {"pcm_alaw", "pcm_mulaw", "pcm_vidc"} <= LOSSY_CODECS
 
+    def test_includes_the_common_lossy_audio_codecs_reachable_as_a_source(self):
+        """Membership cannot be scoped to "whatever this registry's own copy
+        masks and fallback names already use": `LOSSY_CODECS` matches a
+        *source* codec, reachable via `SOURCE_SUFFIXES` regardless of what
+        any target profile does with it -- the same correction that added
+        the companded PCM trio applies to every codec below. `wmav1`/
+        `wmav2`/`wmapro` are the sharpest case: this set already guards
+        against misreading `wmalossless`, so staying silent on the far
+        commoner lossy WMA family would have been backwards. All eight
+        report ffmpeg's `L` flag only, no `S` -- no ambiguity to trade
+        against, unlike `dts`."""
+        assert {
+            "wmav1",
+            "wmav2",
+            "wmapro",
+            "mp2",
+            "amr_nb",
+            "amr_wb",
+            "nellymoser",
+            "speex",
+        } <= LOSSY_CODECS
+
     def test_includes_the_motivating_and_flag_contradicting_cases(self):
         """A set could satisfy the exclusion test above by being empty, which
         would not be a lossy-codec set at all. `mp3` is the motivating case
