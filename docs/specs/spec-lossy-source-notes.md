@@ -403,3 +403,55 @@ New-Item -ItemType Directory -Force in
   the ADPCM paragraph already demonstrates the shape of, not an
   undiscovered instance of the round-3 reachability bug. No membership
   change; comment only.
+- 2026-08-27 (issue #88): the advisory itself landed in `converter/jobs.py`,
+  scoped to `flac` alone as the gate resolved. Implementation note beyond what
+  the Prior decisions table already records: the advisory is computed by a new
+  `_lossy_source_notes` pass, called from `retries()` only after
+  `_build_selective` has already returned a non-`None` attempt, and appended
+  onto that attempt's existing `notes` tuple via `dataclasses.replace` --
+  never folded into `_build_selective`'s own `notes` list, which the
+  `if profile.explicit_streams and not notes: return None` short-circuit reads
+  to decide whether the rung exists at all. Proven by a scratch simulation
+  (not committed) that folding the advisory inside the plan does resurrect
+  `wav`'s skipped rung for an MP3 source, while the shipped implementation
+  leaves `jobs.retries(WAV, ...)` at `[]` exactly as before. The pass is gated
+  by a private `_LOSSY_SOURCE_ADVISORY_TARGETS = frozenset({"flac"})` rather
+  than the registry-wide lossless criterion `lossless_target_names` computes
+  in `tests/test_profiles.py` -- the gate's decision was `flac` only, not
+  every profile satisfying that criterion, and `converter/profiles.py` is
+  issue #77's concurrent territory for this issue, so no field was added to
+  `Profile` to carry the restriction. Tests landed in `tests/test_batch.py`
+  (`TestLossySourceAdvisory`), not `tests/test_argv.py`, per this issue's file
+  ownership; `tests/test_argv.py`'s existing pinned `flac`/`mp3`/`m4a`/`wav`
+  cases were re-run unmodified and still pass, since none of their fixture
+  streams carry a `LOSSY_CODECS` member into `flac`. The two foundation-doc
+  amendments the spec's In-scope list also names (`docs/constitution.md`,
+  `docs/design/stream-decision.md`) are issue #89's scope, not this one's --
+  confirmed against the actual issue text, which depends on #88 and owns
+  exactly those two files -- so they are left untouched here.
+- 2026-08-27 (fix, post-#88 merge): issue #77's `feat(profiles): carry cover
+  art into mp3, m4a and flac` (#95) landed in `main` between #88's review and
+  its merge, giving `flac` an `attached_pic` rule whose copy mask
+  (`_AcceptAnyCodec`) accepts every codec and declares no fallback, so a cover
+  picture is always copied byte-for-byte, never re-encoded. `_lossy_source_notes`
+  had gated only on `_structural_drop` plus `LOSSY_CODECS` membership, which
+  was sound for the audio rule (its copy mask is `{"flac"}` alone, so reaching
+  a `LOSSY_CODECS` member there was only possible via the re-encode branch) but
+  not for the new `attached_pic` rule, where a `LOSSY_CODECS` member (`mjpeg`
+  cover art is the common case) reaches the check via the copy branch instead.
+  Measured against real ffmpeg 9.0: an mp3-with-cover-art source produced
+  `"video stream 1 (mjpeg) was already lossy before this file reached FLAC;
+  FLAC cannot restore what mjpeg discarded"` for a stream copied unchanged --
+  a false claim, since nothing was discarded. Exactly the "latent divergence"
+  the review round on #88 flagged as "not reachable today"; it became reachable
+  the moment #95 merged first. Fixed by checking the *matched rule*, not just
+  structural survival: a stream now qualifies only when
+  `stream.codec_name not in rule.copy_mask and rule.fallback_options is not
+  None` -- i.e. it actually took the fallback/re-encode branch
+  (`stream-decision.md`'s ENC node) -- mirroring `_decide_stream`'s own branch
+  logic exactly, so a copied-through stream (or a codec-level D3 drop, not
+  currently reachable for `flac` but excluded on the same footing) can never
+  draw the advisory. Regression test added:
+  `TestLossySourceAdvisory.test_copied_through_cover_art_carries_no_advisory`.
+  Landed as a fast-follow PR rather than amending #96, since #96 was already
+  squash-merged before the gap was found.

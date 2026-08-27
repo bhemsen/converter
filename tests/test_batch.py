@@ -4,10 +4,25 @@ from pathlib import Path
 
 import pytest
 
-from converter import batch
+from converter import batch, jobs
 from converter.batch import Outcome, Result, Task, convert_one, run_batch, summarise
 from converter.ffmpegtool import CommandResult, ProbeError, Stream, Tools
-from converter.profiles import FLAC, MKV, MOV, MP4, WAV, WEBM, Attempt, Profile, StreamRule, flags
+from converter.profiles import (
+    BMP,
+    FLAC,
+    MKV,
+    MOV,
+    MP3,
+    MP4,
+    PNG,
+    TIFF,
+    WAV,
+    WEBM,
+    Attempt,
+    Profile,
+    StreamRule,
+    flags,
+)
 
 TOOLS = Tools(ffmpeg="ffmpeg", ffprobe="ffprobe")
 
@@ -807,6 +822,144 @@ class TestRunBatch:
             run_batch(MP4, tasks, TOOLS, jobs=1, progress=False)
 
         assert len(calls) == 3
+
+
+class TestLossySourceAdvisory:
+    """Issue #88, `docs/specs/spec-lossy-source-notes.md`: the advisory that
+    fires when a lossy source reaches FLAC's selective (failure-side) rung --
+    "your FLAC came from a 128 kbit/s MP3." Scoped to `jobs.retries` /
+    `convert_one` behaviour; profile definitions and `test_argv.py` are #77's
+    concurrent territory and stay untouched.
+    """
+
+    def test_lossy_source_into_flac_names_index_and_codec(self):
+        """The motivating case: an MP3 fails FLAC's `-c:a copy` cheap attempt,
+        lands on the selective rung, and today (pre-#88) that rung carries no
+        note at all -- verified unaffected for `test_argv.py`'s own pinned
+        cases, none of which name a lossy codec.
+        """
+        streams = [Stream(0, "audio", "mp3")]
+
+        selective = jobs.retries(FLAC, streams)[0]
+
+        assert selective.options == ("-map", "0:0", "-c:a", "flac")
+        assert selective.notes == (
+            "audio stream 0 (mp3) was already lossy before this file reached "
+            "FLAC; FLAC cannot restore what mp3 discarded",
+        )
+
+    def test_lossless_alac_into_flac_carries_no_advisory(self):
+        """The negative that actually exercises the guard (spec Verification):
+        ALAC fails FLAC's `-c:a copy` cheap attempt exactly like an MP3 does and
+        reaches the identical selective rung, so only `LOSSY_CODECS` membership
+        -- not merely "reached the rung" -- decides whether the advisory fires.
+        """
+        streams = [Stream(0, "audio", "alac")]
+
+        selective = jobs.retries(FLAC, streams)[0]
+
+        assert selective.notes == ()
+
+    def test_flac_into_flac_is_a_rung_1_control_and_never_reaches_the_rung(self):
+        """flac-into-flac copies and wins at rung 1 (`first_attempt`); it never
+        reaches the selective rung the advisory lives on, so it is kept only as
+        the control the spec's Verification section names, proving nothing
+        about the guard on its own.
+        """
+        assert jobs.first_attempt(FLAC).notes == (
+            "non-audio streams, including cover art, are not carried into FLAC",
+        )
+
+    def test_lossy_source_into_a_lossy_target_keeps_the_ordinary_note_only(self):
+        """Lossy-to-lossy is out of scope by decision: the engine's own
+        re-encode note is the honest report there, and the advisory -- scoped
+        to `flac` alone -- must not add a second line.
+        """
+        streams = [Stream(0, "audio", "opus")]
+
+        selective = jobs.retries(MP3, streams)[0]
+
+        assert selective.notes == ("audio stream 0 (opus) re-encoded to mp3",)
+
+    def test_wav_selective_rung_stays_skipped_trap_1(self):
+        """Trap 1, named first in the issue: folding the advisory *inside*
+        `_build_selective`'s plan would give its notes list a non-empty entry
+        for a lossy source and defeat
+        ``if profile.explicit_streams and not notes: return None`` --
+        resurrecting the rung WAV's `explicit_streams=True` deliberately skips
+        today. Appending the advisory only in `retries`, after that check has
+        already run, keeps this `[]` exactly as it was before #88.
+        """
+        assert jobs.retries(WAV, [Stream(0, "audio", "mp3")]) == []
+
+    @pytest.mark.parametrize("profile", [PNG, TIFF, BMP], ids=lambda p: p.name)
+    def test_the_other_lossless_targets_stay_silent(self, profile):
+        """The accepted inconsistency (spec Prior decisions, resolved at the
+        gate): only `flac` carries the advisory. `wav`, `png`, `tiff` and `bmp`
+        always succeed their cheap attempt in practice, but even called
+        directly their selective rung must still report nothing for a lossy
+        video source -- pinned per profile so a change scoped too widely to
+        `jobs.py` cannot silently start naming any of the other four.
+        """
+        streams = [Stream(0, "video", "mjpeg")]
+
+        selective = jobs.retries(profile, streams)[0]
+
+        assert selective.notes == ()
+
+    def test_copied_through_cover_art_carries_no_advisory(self):
+        """Regression: `main` gained FLAC's `attached_pic` rule (issue #77,
+        `docs/specs/spec-stream-disposition.md`) between this issue's review
+        and its merge. That rule's copy mask (`_AcceptAnyCodec`) accepts every
+        codec and the rule declares no fallback, so a cover picture is always
+        copied byte-for-byte, never re-encoded into FLAC's own codec -- unlike
+        the audio rule, where reaching `LOSSY_CODECS` membership implies the
+        fallback branch ran. A common `mjpeg` cover image is a `LOSSY_CODECS`
+        member, so without this guard the copy-through would wrongly read as
+        "FLAC cannot restore what mjpeg discarded" for a stream nothing was
+        discarded from.
+        """
+        streams = [
+            Stream(0, "audio", "mp3"),
+            Stream(1, "video", "mjpeg", attached_pic=True),
+        ]
+
+        selective = jobs.retries(FLAC, streams)[0]
+
+        assert selective.options == (
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:a",
+            "flac",
+            "-c:v:0",
+            "copy",
+        )
+        assert selective.notes == (
+            "audio stream 0 (mp3) was already lossy before this file reached "
+            "FLAC; FLAC cannot restore what mp3 discarded",
+        )
+
+    def test_end_to_end_advisory_and_probe_count(self, tmp_path, fake_ffmpeg, monkeypatch):
+        """Full `convert_one` path, not just `jobs.retries` in isolation: the
+        advisory must survive into `Result.notes`, and
+        `docs/constitution.md`'s probe budget -- at most one probe on this
+        failure-then-succeed path -- must stay exactly what it was before #88.
+        The advisory reads only the stream list `retries` already receives, so
+        it must not be the thing that adds a second probe.
+        """
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        fake_ffmpeg.exit_codes = [1, 0]
+        fake_ffmpeg.streams = [Stream(0, "audio", "mp3")]
+        probes = spy_on_probe(monkeypatch, [Stream(0, "audio", "mp3")])
+
+        result = convert_one(FLAC, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert any("was already lossy" in note for note in result.notes)
+        assert probes == [task.src]
 
 
 class TestSummarise:
