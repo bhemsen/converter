@@ -101,7 +101,7 @@ the codec-level restriction they carry stays exactly as it is.)
 
 ## Prior art
 
-- [Generation-loss advisories (Phase 7)](../prior-art.md#generation-loss-advisories-phase-7)
+- [Generation-loss advisories (Phase 7)](../../prior-art.md#generation-loss-advisories-phase-7)
   — the concern seeded for this phase, whose recorded weakness this cycle closes.
   The seed noted that research mode `none` had been chosen and that nobody had
   checked whether any comparable converter warns at all. Checked now: the
@@ -111,7 +111,7 @@ the codec-level restriction they carry stays exactly as it is.)
   The second half is narrower than the seed hoped: ffmpeg **does** classify codecs
   as lossy or lossless (`-codecs`, columns `L` and `S`), so a list does exist --
   it is simply not usable here, for the three reasons the decision row gives.
-- [Container/codec capability modelling (Phase 1)](../prior-art.md#containercodec-capability-modelling-phase-1)
+- [Container/codec capability modelling (Phase 1)](../../prior-art.md#containercodec-capability-modelling-phase-1)
   -- the method: a curated set, hand-maintained. Note the phase-1 argument does
   **not** transfer unchanged: its claim is that `-codecs` lists what a build
   contains, "never which codec is LEGAL in which muxer" -- a statement about
@@ -472,3 +472,11 @@ New-Item -ItemType Directory -Force in
   what mp3 discarded`, matching `converter/jobs.py::_lossy_source_note`
   verbatim -- the wording the new doc lines describe was read off the shipped
   code, not reinvented.
+- 2026-08-27: Close-out. The final QA gate ran against real ffmpeg 9.0 on
+  Windows 11, reproducing every behavioural promise of this milestone and of
+  milestone 6 (stream-disposition) end-to-end. Verdict: PASS WITH FINDINGS, no
+  code defect. The gate's one documentation finding and two coverage gaps are
+  recorded in `docs/specs/archive/spec-stream-disposition.md`'s Decision log,
+  since both concern that milestone's material. Issue #101 (the
+  `jpg`/`gif`/`avif` within-stream notes still firing unconditionally and
+  naming no stream, tracked against milestone 6) remains open by design.

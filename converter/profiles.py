@@ -107,7 +107,7 @@ MP4_AUDIO_CODECS = frozenset({"aac", "mp3", "ac3", "eac3", "alac", "opus", "flac
 TEXT_SUBTITLE_CODECS = frozenset({"subrip", "srt", "ass", "ssa", "mov_text", "webvtt", "text"})
 
 #: Codecs that discard source information when they encode -- curated by hand
-#: for `docs/specs/spec-lossy-source-notes.md`'s advisory ("this lossless target
+#: for `docs/specs/archive/spec-lossy-source-notes.md`'s advisory ("this lossless target
 #: cannot restore what a lossy source had already given up"), the same kind of
 #: hand-maintained artifact as the copy masks above and for the same reason:
 #: ffmpeg can be asked what a build contains, never how *this* project judges a
@@ -395,7 +395,7 @@ MKV = Profile(
     # streams, which no "v/a/s/t" map -- MKV's included -- carries at all
     # (measured).
     #
-    # Issue #67, docs/specs/spec-stream-disposition.md: the standing note this
+    # Issue #67, docs/specs/archive/spec-stream-disposition.md: the standing note this
     # cheap attempt used to carry alongside the map is retired. jobs.verify_success
     # already names a real data or timecode drop per stream via _structural_drop's
     # "not supported by MKV" branch -- MKV declares no "data" rule, so any such
@@ -570,7 +570,7 @@ WEBM = Profile(
     # timecode streams, which no "v/a/s" map -- WebM's included -- carries at
     # all (measured).
     #
-    # Issue #67, docs/specs/spec-stream-disposition.md: the standing note this
+    # Issue #67, docs/specs/archive/spec-stream-disposition.md: the standing note this
     # cheap attempt used to carry alongside the map is retired. WebM declares
     # no "attachment" or "data" rule, so jobs.verify_success's
     # _structural_drop already names any attachment, data or timecode stream
@@ -648,7 +648,7 @@ MP3 = Profile(
     # below, the muxer-enforced exemption docs/design/degradation-ladder.md
     # names, rather than WAV's index-named one.
     #
-    # "-map 0:disp:attached_pic?" (docs/specs/spec-stream-disposition.md): the
+    # "-map 0:disp:attached_pic?" (docs/specs/archive/spec-stream-disposition.md): the
     # disposition specifier maps an embedded cover picture and nothing else --
     # measured, it never matches a real video stream, so this cheap attempt
     # still never sees one. "-c copy" replaces "-c:a copy" deliberately: with
@@ -656,7 +656,7 @@ MP3 = Profile(
     # muxer's default instead of copying it, an undeclared loss the mask would
     # hide; "-c copy" behaves identically to "-c:a copy" for the audio stream
     # since the map now selects only audio and pictures.
-    # Issue #78, docs/specs/spec-stream-disposition.md: the standing note this
+    # Issue #78, docs/specs/archive/spec-stream-disposition.md: the standing note this
     # cheap attempt used to carry alongside the map is retired.
     # partial_mapping's success-side verification (jobs.verify_success) already
     # names every dropped stream -- index, codec and reason -- so the blanket
@@ -717,7 +717,7 @@ FLAC = Profile(
     # muxer enforces "at most one audio stream" itself.
     #
     # Same disposition addition as MP3's, and the same "-c copy" reasoning --
-    # see its comment (docs/specs/spec-stream-disposition.md).
+    # see its comment (docs/specs/archive/spec-stream-disposition.md).
     # Standing note retired -- issue #78, see MP3's identical comment.
     cheap_attempt=Attempt(
         label="remux",
@@ -765,7 +765,7 @@ M4A = Profile(
     #
     # Same disposition addition as MP3's cheap attempt, and the same reason
     # "-c:a copy" becomes "-c copy": trap 1 in
-    # docs/specs/spec-stream-disposition.md. Measured, this one matters most --
+    # docs/specs/archive/spec-stream-disposition.md. Measured, this one matters most --
     # the ipod muxer's *default* video encoder is h264, which ipod then
     # rejects, so leaving "-c:a copy" in place would fail every artwork-bearing
     # "--to m4a" at rung 1 rather than silently mis-encoding as mp3/flac would.
@@ -820,7 +820,7 @@ OGG = Profile(
     # through as a whole video file renamed ".ogg" -- the same defect that
     # rules m4a out. The cheap attempt maps audio only, so the two spellings
     # behave identically; "-c copy" is what the spec pins.
-    # Issue #78, docs/specs/spec-stream-disposition.md: the standing note this
+    # Issue #78, docs/specs/archive/spec-stream-disposition.md: the standing note this
     # cheap attempt used to carry alongside the map is retired -- ogg gains no
     # artwork rule (Out of scope), so a cover-art stream here is an ordinary
     # video stream and partial_mapping's success-side verification
@@ -957,7 +957,7 @@ PNG = Profile(
     ),
 )
 
-# Issue #67, docs/specs/spec-stream-disposition.md: the QA finding this issue
+# Issue #67, docs/specs/archive/spec-stream-disposition.md: the QA finding this issue
 # was filed against reads "standing notes fire when nothing was lost **and
 # name no stream**" -- this covers JPG's, GIF's and AVIF's standing notes
 # below (transparency, colour palette, frame reduction). Review round 2 of

@@ -43,7 +43,10 @@ The fix is not to sort it out afterwards but never to map it: ffmpeg has a
       still is.
 - [ ] The five audio profiles' cheap-attempt standing notes are gone, and nothing
       they said is lost: every claim is made per stream by `jobs.verify_success`,
-      or is no longer true. `last_resort` notes are untouched.
+      or is no longer true. `last_resort` notes are retained on every profile —
+      none is retired or newly added; issue #67 reworded exactly one, `gif`'s,
+      from an action claim to a fact claim (the same fix it gave that profile's
+      `cheap_attempt` note), which is not a regression against this bullet.
 - [ ] `ogg`, `opus` and `wav` are byte-for-byte unchanged in argv, and unchanged
       in notes except for the standing note this phase removes from `ogg` and
       `opus`.
@@ -100,7 +103,7 @@ The fix is not to sort it out afterwards but never to map it: ffmpeg has a
 
 ## Prior art
 
-- [Cover art and stream disposition (Phase 6)](../prior-art.md#cover-art-and-stream-disposition-phase-6)
+- [Cover art and stream disposition (Phase 6)](../../prior-art.md#cover-art-and-stream-disposition-phase-6)
   — the concern seeded for this phase. beets' `convert` plugin is the **stance**
   to adopt: artwork is a first-class, default-on concern of a conversion pipeline
   (`embed: yes`), not an incidental stream. Its **mechanism** is the AVOID — it
@@ -570,3 +573,30 @@ New-Item -ItemType Directory -Force in
   than an arbitrary h264/aac stand-in; and AVIF's back-reference to the
   module-level comment now points at the block actually above JPG rather than
   claiming it sits "above GIF".
+- 2026-08-27: Close-out QA gate, coverage gap. The sub-ffmpeg-7.1 degradation
+  path (Prior decisions row: below 7.1, `-map 0:disp:attached_pic?` aborts the
+  cheap attempt with `Invalid disposition specifier`, exit 127, and the ladder
+  reaches the same result via the selective rung at one wasted process per
+  file) was checked as **text** against the shipped code and confirmed
+  unenforced -- the three cheap attempts of `mp3`, `m4a` and `flac` are
+  unconditional, matching the Verification bullet's claim -- but was not
+  **exercised**: the QA machine has only ffmpeg 9.0 installed. Testing it for
+  real needs a 6.x or 5.x binary. Recorded as an unverified coverage gap, not a
+  defect.
+- 2026-08-27: Close-out QA gate, coverage gap. The `last_resort` rung of the
+  five audio profiles (`mp3`, `m4a`, `flac`, `ogg`, `opus`) was not reached
+  end-to-end during the gate: reaching it needs both the cheap attempt and the
+  selective rung to fail on an audio target, and no realistic fixture produced
+  that. Their note text was instead verified by direct registry comparison
+  against the pre-milestone commit, not by a real conversion. (`jpg`'s
+  `last_resort` note, from the same issue #67 work, *was* exercised
+  end-to-end -- the gap is specific to the five audio profiles, not to
+  `last_resort` notes in general.)
+- 2026-08-27: Close-out. The final QA gate ran against real ffmpeg 9.0 on
+  Windows 11, reproducing every behavioural promise of this milestone and of
+  milestone 7 (lossy-source-notes) end-to-end. Verdict: PASS WITH FINDINGS, no
+  code defect. The one documentation finding -- this spec's Outcome section
+  saying `last_resort` notes were "untouched" where "retained" was meant -- is
+  fixed above. The two coverage gaps above are recorded rather than mistaken
+  for coverage. Issue #101 (the `jpg`/`gif`/`avif` within-stream notes still
+  firing unconditionally and naming no stream) remains open by design.

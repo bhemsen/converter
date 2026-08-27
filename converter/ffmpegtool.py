@@ -71,7 +71,7 @@ class Stream:
     #: embedded picture (cover art). Not a general disposition set -- only
     #: this one flag has a decision resting on it, because ``mjpeg`` and
     #: ``png`` are the codec of both a cover picture and a real video and
-    #: nothing else distinguishes them (docs/specs/spec-stream-disposition.md).
+    #: nothing else distinguishes them (docs/specs/archive/spec-stream-disposition.md).
     #: Defaults to false so existing construction sites are unaffected.
     attached_pic: bool = False
 

@@ -231,7 +231,7 @@ class TestMp3Job:
         assert selective.notes == ("video stream 1 (h264) dropped: not supported by MP3",)
 
     def test_a_carried_picture_is_not_reported_as_dropped_while_a_real_video_still_is(self):
-        """Issue #77, `docs/specs/spec-stream-disposition.md`: the distinction
+        """Issue #77, `docs/specs/archive/spec-stream-disposition.md`: the distinction
         the whole phase is for, proven against the real `MP3` profile rather
         than a stand-in. Both streams share the codec `mjpeg` -- the codec of
         both a cover picture and a real video (Prior art) -- so the note this
@@ -1067,7 +1067,7 @@ class TestMkvDegradationNotes:
         muxer; that MKV's *real* muxer (unlike MOV/MP4's) never regenerates one
         to forgive is a claim about ffmpeg, not about this suite, and is
         recorded against real ffmpeg 9.0 in
-        docs/specs/spec-stream-disposition.md's decision log instead."""
+        docs/specs/archive/spec-stream-disposition.md's decision log instead."""
         streams = [
             Stream(0, "video", "h264"),
             Stream(1, "audio", "aac"),
@@ -1735,7 +1735,7 @@ class TestProfileArgvPinning:
         ]
 
     def test_mp3_cheap_attempt(self):
-        """Issue #77, `docs/specs/spec-stream-disposition.md`: the disposition
+        """Issue #77, `docs/specs/archive/spec-stream-disposition.md`: the disposition
         map and "-c copy" replace the plain audio-only "-c:a copy" form."""
         argv = build_argv("ffmpeg", "in.wav", jobs.first_attempt(MP3).options, "out.mp3")
 
@@ -1867,7 +1867,7 @@ class TestProfileArgvPinning:
         ]
 
     def test_m4a_cheap_attempt(self):
-        """Trap 1 (`docs/specs/spec-stream-disposition.md`): "-c:a copy" would
+        """Trap 1 (`docs/specs/archive/spec-stream-disposition.md`): "-c:a copy" would
         leave the picture uncovered, and the ipod muxer re-encodes it to h264
         by default and then rejects it -- "-c copy" is load-bearing here, not
         cosmetic like it is for mp3/flac."""

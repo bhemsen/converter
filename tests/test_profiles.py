@@ -50,7 +50,7 @@ MAP_LETTERS = {"v": "video", "a": "audio", "s": "subtitle", "t": "attachment", "
 #: one (measured, one such map carries *every* matching stream, not one).
 #: Extend this the same way `MAP_LETTERS` is extended, when a profile
 #: introduces another disposition selector. Only `attached_pic` exists today
-#: (docs/specs/spec-stream-disposition.md).
+#: (docs/specs/archive/spec-stream-disposition.md).
 DISPOSITION_QUALIFIERS = {"attached_pic": "attached_pic"}
 
 #: Every profile the registry ships. A new one joins the invariant checks here.
@@ -925,7 +925,7 @@ class TestMp3Profile:
         assert MP3.container_options == ()
 
     def test_cheap_attempt_maps_audio_and_attached_pictures_blindly(self):
-        """Issue #77, `docs/specs/spec-stream-disposition.md`:
+        """Issue #77, `docs/specs/archive/spec-stream-disposition.md`:
         `-map 0:disp:attached_pic?` maps an embedded cover picture and nothing
         else -- measured, it never matches a real video stream. `-c copy`
         replaces `-c:a copy` deliberately: with no codec option covering the
@@ -1075,7 +1075,7 @@ class TestM4aProfile:
     def test_cheap_attempt_maps_audio_and_attached_pictures_blindly(self):
         """Same disposition addition as MP3's, and the same reason
         "-c:a copy" becomes "-c copy" -- trap 1 in
-        `docs/specs/spec-stream-disposition.md`. Measured, this one matters
+        `docs/specs/archive/spec-stream-disposition.md`. Measured, this one matters
         most: the ipod muxer's *default* video encoder is h264, which ipod
         then rejects, so leaving "-c:a copy" in place would fail every
         artwork-bearing `--to m4a` at rung 1 rather than silently
@@ -1257,13 +1257,13 @@ class TestOpusProfile:
 
 
 #: The five audio profiles a cheap-attempt standing note used to sit on
-#: (Acceptance, issue #78, docs/specs/spec-stream-disposition.md). `wav` is
+#: (Acceptance, issue #78, docs/specs/archive/spec-stream-disposition.md). `wav` is
 #: deliberately absent: it carries none, so there is nothing for it to retire.
 AUDIO_PROFILES_WITH_A_RETIRED_NOTE = [MP3, FLAC, M4A, OGG, OPUS]
 
 #: Each profile's `last_resort.notes`, exactly as declared before this issue --
 #: unchanged, since that rung maps `-map 0:a:0` explicitly and is never
-#: verified (Out of scope, docs/specs/spec-stream-disposition.md: "`last_resort`
+#: verified (Out of scope, docs/specs/archive/spec-stream-disposition.md: "`last_resort`
 #: notes ... the only place that information exists").
 _LAST_RESORT_NOTES = {
     MP3.name: (
@@ -1890,7 +1890,7 @@ class TestRegistryTargetCoherence:
 
 
 class TestLossyCodecs:
-    """`LOSSY_CODECS` (issue #87, `docs/specs/spec-lossy-source-notes.md`): the
+    """`LOSSY_CODECS` (issue #87, `docs/specs/archive/spec-lossy-source-notes.md`): the
     curated set the source-codec advisory checks against, hand-maintained
     because ffmpeg's own `-codecs` classification cannot be read wholesale --
     see the constant's own docstring in `converter/profiles.py` for the full
