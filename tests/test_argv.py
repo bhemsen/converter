@@ -174,7 +174,14 @@ class TestMp3Job:
     def test_first_attempt_carries_the_standing_note(self):
         attempt = jobs.first_attempt(MP3)
 
-        assert attempt.options == ("-map", "0:a?", "-c:a", "copy")
+        assert attempt.options == (
+            "-map",
+            "0:a?",
+            "-map",
+            "0:disp:attached_pic?",
+            "-c",
+            "copy",
+        )
         assert attempt.notes == (
             "non-audio streams, including cover art, are not carried into MP3",
         )
@@ -223,6 +230,34 @@ class TestMp3Job:
 
         assert selective.notes == ("video stream 1 (h264) dropped: not supported by MP3",)
 
+    def test_a_carried_picture_is_not_reported_as_dropped_while_a_real_video_still_is(self):
+        """Issue #77, `docs/specs/spec-stream-disposition.md`: the distinction
+        the whole phase is for, proven against the real `MP3` profile rather
+        than a stand-in. Both streams share the codec `mjpeg` -- the codec of
+        both a cover picture and a real video (Prior art) -- so the note this
+        asserts can only come from the disposition, never from the codec name."""
+        streams = [
+            Stream(0, "audio", "mp3"),
+            Stream(1, "video", "mjpeg", attached_pic=True),
+            Stream(2, "video", "mjpeg", attached_pic=False),
+        ]
+
+        notes = jobs.verify_success(MP3, streams)
+
+        assert notes == ("video stream 2 (mjpeg) dropped: not supported by MP3",)
+
+    def test_a_two_picture_source_is_carried_whole_with_no_loss(self):
+        """The `attached_pic` rule declares no `stream_limit` (Prior
+        decisions): one `-map 0:disp:attached_pic?` carries every picture a
+        source holds, so neither is reported as dropped for want of room."""
+        streams = [
+            Stream(0, "audio", "mp3"),
+            Stream(1, "video", "png", attached_pic=True),
+            Stream(2, "video", "mjpeg", attached_pic=True),
+        ]
+
+        assert jobs.verify_success(MP3, streams) == ()
+
     def test_last_resort_notes_are_pinned(self):
         """The explicit-index last resort cannot name a per-stream drop itself
         (unlike the selective rung), so what it gives up has to be its own
@@ -245,7 +280,14 @@ class TestFlacJob:
     def test_first_attempt_carries_the_standing_note(self):
         attempt = jobs.first_attempt(FLAC)
 
-        assert attempt.options == ("-map", "0:a?", "-c:a", "copy")
+        assert attempt.options == (
+            "-map",
+            "0:a?",
+            "-map",
+            "0:disp:attached_pic?",
+            "-c",
+            "copy",
+        )
         assert attempt.notes == (
             "non-audio streams, including cover art, are not carried into FLAC",
         )
@@ -290,6 +332,27 @@ class TestFlacJob:
 
         assert selective.notes == ("video stream 1 (h264) dropped: not supported by FLAC",)
 
+    def test_a_carried_picture_is_not_reported_as_dropped_while_a_real_video_still_is(self):
+        """Same distinction as `TestMp3Job`'s equivalent -- see its comment."""
+        streams = [
+            Stream(0, "audio", "flac"),
+            Stream(1, "video", "mjpeg", attached_pic=True),
+            Stream(2, "video", "mjpeg", attached_pic=False),
+        ]
+
+        notes = jobs.verify_success(FLAC, streams)
+
+        assert notes == ("video stream 2 (mjpeg) dropped: not supported by FLAC",)
+
+    def test_a_two_picture_source_is_carried_whole_with_no_loss(self):
+        streams = [
+            Stream(0, "audio", "flac"),
+            Stream(1, "video", "png", attached_pic=True),
+            Stream(2, "video", "mjpeg", attached_pic=True),
+        ]
+
+        assert jobs.verify_success(FLAC, streams) == ()
+
     def test_last_resort_notes_are_pinned(self):
         """Unlike its `StreamRule.fallback_name=None`, the last resort still
         needs its own note: it is an explicit-index attempt, so it cannot name
@@ -312,7 +375,14 @@ class TestM4aJob:
     def test_first_attempt_carries_the_standing_note(self):
         attempt = jobs.first_attempt(M4A)
 
-        assert attempt.options == ("-map", "0:a?", "-c:a", "copy")
+        assert attempt.options == (
+            "-map",
+            "0:a?",
+            "-map",
+            "0:disp:attached_pic?",
+            "-c",
+            "copy",
+        )
         assert attempt.notes == (
             "non-audio streams, including cover art, are not carried into M4A",
         )
@@ -387,6 +457,30 @@ class TestM4aJob:
         selective = jobs.retries(M4A, streams)[0]
 
         assert selective.notes == ("video stream 1 (h264) dropped: not supported by M4A",)
+
+    def test_a_carried_picture_is_not_reported_as_dropped_while_a_real_video_still_is(self):
+        """Same distinction as `TestMp3Job`'s equivalent -- see its comment.
+        The trap this guards is trap 1: were `-c:a copy` still in place, the
+        picture would be re-encoded to h264 and the ipod muxer would reject
+        it, so this test would never even reach the notes it asserts."""
+        streams = [
+            Stream(0, "audio", "aac"),
+            Stream(1, "video", "mjpeg", attached_pic=True),
+            Stream(2, "video", "mjpeg", attached_pic=False),
+        ]
+
+        notes = jobs.verify_success(M4A, streams)
+
+        assert notes == ("video stream 2 (mjpeg) dropped: not supported by M4A",)
+
+    def test_a_two_picture_source_is_carried_whole_with_no_loss(self):
+        streams = [
+            Stream(0, "audio", "aac"),
+            Stream(1, "video", "png", attached_pic=True),
+            Stream(2, "video", "mjpeg", attached_pic=True),
+        ]
+
+        assert jobs.verify_success(M4A, streams) == ()
 
     def test_last_resort_notes_are_pinned(self):
         reencode = jobs.retries(M4A, [])[-1]
@@ -1523,6 +1617,8 @@ class TestProfileArgvPinning:
         ]
 
     def test_mp3_cheap_attempt(self):
+        """Issue #77, `docs/specs/spec-stream-disposition.md`: the disposition
+        map and "-c copy" replace the plain audio-only "-c:a copy" form."""
         argv = build_argv("ffmpeg", "in.wav", jobs.first_attempt(MP3).options, "out.mp3")
 
         assert argv == [
@@ -1536,7 +1632,9 @@ class TestProfileArgvPinning:
             "in.wav",
             "-map",
             "0:a?",
-            "-c:a",
+            "-map",
+            "0:disp:attached_pic?",
+            "-c",
             "copy",
             "out.mp3",
         ]
@@ -1555,7 +1653,9 @@ class TestProfileArgvPinning:
             "in.wav",
             "-map",
             "0:a?",
-            "-c:a",
+            "-map",
+            "0:disp:attached_pic?",
+            "-c",
             "copy",
             "out.flac",
         ]
@@ -1649,6 +1749,10 @@ class TestProfileArgvPinning:
         ]
 
     def test_m4a_cheap_attempt(self):
+        """Trap 1 (`docs/specs/spec-stream-disposition.md`): "-c:a copy" would
+        leave the picture uncovered, and the ipod muxer re-encodes it to h264
+        by default and then rejects it -- "-c copy" is load-bearing here, not
+        cosmetic like it is for mp3/flac."""
         argv = build_argv("ffmpeg", "in.wav", jobs.first_attempt(M4A).options, "out.m4a")
 
         assert argv == [
@@ -1662,7 +1766,9 @@ class TestProfileArgvPinning:
             "in.wav",
             "-map",
             "0:a?",
-            "-c:a",
+            "-map",
+            "0:disp:attached_pic?",
+            "-c",
             "copy",
             "out.m4a",
         ]
