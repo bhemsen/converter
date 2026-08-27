@@ -67,34 +67,42 @@ flowchart TD
   mapping alone reports a loss that did not happen — the false-positive half of
   the loss accounting `docs/vision.md` names as the USP (issue #66). `C` counts
   the source's streams and the written file's **twice** — once per stream type,
-  once per type-and-codec-name pair — and forgives a predicted drop only where
-  *both* counts show a surplus, spending one of each budget per forgiveness. An
-  index cannot be a match key at all: a stream the muxer put back carries
-  whatever index the output gives it.
+  once per `(codec_type, codec_name, codec_tag_string)` key — and forgives a
+  predicted drop only where *both* counts show a surplus **and** that surplus
+  covers every predicted drop sharing the key. An index cannot be a match key at
+  all: a stream the muxer put back carries whatever index the output gives it,
+  and an iPhone MOV's regenerated timecode arrives two indices below its source.
 
-  Each count alone is unsound, in the direction the constitution forbids, and
-  each covers the other's blind spot. **By type alone**, no profile declares a
-  `data` rule, so every data stream in the output forgives one predicted data
-  drop, whichever it actually was — a regenerated `tmcd` would silence the loss
-  of `gpmd`/ANC telemetry in the same file. **By pair alone**, a cheap attempt
-  that *re-encodes* makes the two sides disagree by construction, since the
-  source carries the decoder's codec name and the output the encoder's: WAV's
-  `-map 0:a:0 -c:a pcm_s16le` over an `[aac, pcm_s16le]` source writes one
-  `pcm_s16le` stream, which reads as a surplus under that pair and would forgive
-  the loss of the source's second, genuinely dropped, `pcm_s16le` track. A
-  re-encode preserves a stream's type but not its codec name, which is exactly
-  why the type count is immune to that phantom; the codec name is what stops
-  cross-attribution within a type, since a regenerated `tmcd` reports no codec
-  name and neither does its source counterpart, while telemetry reports
-  `bin_data` on both sides.
+  Each condition exists because dropping it was measured to hide a real loss —
+  the direction the constitution forbids — and each covers the others' blind
+  spot:
 
-  Two further properties keep the same direction closed: a drop with no surplus
-  under either count keeps its note, and a probe that fails leaves the whole
-  prediction standing rather than falling silent. The residual cost is that with
-  several predicted drops sharing one pair and only some of them surviving, the
-  *count* of reported losses is right while the index named may not be —
-  deliberately preferred over reporting a loss that did not happen, and never
-  over the silence the constitution forbids.
+  - **The type count** stops the phantom a *re-encoding* cheap attempt creates.
+    Source and output disagree on the codec name by construction there, since
+    one carries the decoder's name and the other the encoder's: WAV's
+    `-map 0:a:0 -c:a pcm_s16le` over an `[aac, pcm_s16le]` source writes one
+    `pcm_s16le` stream, which reads as a key surplus and would forgive the loss
+    of the source's second, genuinely dropped, `pcm_s16le` track. A re-encode
+    preserves a stream's type but not its codec name, so the type count is
+    immune to it.
+  - **The key** stops cross-attribution inside one type. No profile declares a
+    `data` rule, so by type alone every data stream in the output forgives one
+    predicted data drop, whichever it actually was — a regenerated `tmcd` would
+    silence the loss of `gpmd`/ANC telemetry in the same file. The codec name
+    separates those two (telemetry reports `bin_data`, a timecode reports
+    nothing), and the container tag separates the cases the codec name cannot:
+    *any* MOV/MP4 track whose 4CC maps to no codec id reports no codec name
+    either, so an Apple `mebx` metadata track — every iPhone `.mov` has one —
+    is otherwise indistinguishable from the `tmcd` beside it.
+  - **Covering every drop of the key** is what removes the need to guess. Where
+    two streams really are indistinguishable to the probe and only one comes
+    back, all of them keep their note. Over-reporting is the cost; picking one
+    at random would claim a loss that did not happen *and* fall silent about one
+    that did — both halves of the promise broken at once.
+
+  A drop with no surplus keeps its note, and a probe that fails leaves the whole
+  prediction standing rather than falling silent, so every path out of `C` either
+  names a loss or has positive evidence there was none.
 - **A partial cheap attempt's success is verified, not assumed.** A mapping is
   partial by construction when it can leave source streams unmapped whatever the
   source turns out to contain: MP4's `-map 0:v? -map 0:a? -map 0:s?` selects no

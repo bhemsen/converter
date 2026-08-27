@@ -95,8 +95,13 @@ def spy_on_probe(
 
     Source and output are told apart by *path*, the same way the `fake_ffmpeg`
     fixture does it, so a test cannot pass on the strength of the order the two
-    probes happen to run in. Pass `task` to answer differently for the output.
+    probes happen to run in. Pass `task` to answer differently for the output;
+    passing `output_streams` without it is refused rather than silently ignored,
+    so a test cannot look like it exercises the output probe while in fact
+    answering the source list twice.
     """
+    if output_streams is not None and task is None:
+        raise TypeError("output_streams needs task, to tell the output path apart")
     seen: list[Path] = []
 
     def probe(_tools, src):
@@ -356,17 +361,26 @@ class TestPartialCheapAttemptVerification:
         assert result.outcome is Outcome.CONVERTED
         assert result.notes == ("could not verify which source streams were kept: unreadable",)
 
+    @pytest.mark.parametrize(
+        "failure",
+        [ProbeError("output vanished"), OSError("output vanished")],
+        ids=["ProbeError", "OSError"],
+    )
     def test_a_probe_of_the_output_that_fails_leaves_the_prediction_standing(
-        self, tmp_path, fake_ffmpeg, monkeypatch
+        self, tmp_path, fake_ffmpeg, monkeypatch, failure
     ):
         """The confirmation is what can *remove* a note, so losing it must fall
-        back to over-reporting, never to silence (``docs/constitution.md``)."""
+        back to over-reporting, never to silence (``docs/constitution.md``).
+
+        `OSError` as well: the probe is a spawn, and this one happens after
+        ffmpeg already wrote a good file, so a failure to start it must not turn
+        that conversion into a reported failure."""
         task = make_task(tmp_path)
         task.dst.parent.mkdir(parents=True)
 
         def probe(_tools, src):
             if Path(src) == task.dst:
-                raise ProbeError("output vanished")
+                raise failure
             return [Stream(0, "video", "h264"), Stream(1, "attachment", "ttf")]
 
         monkeypatch.setattr(batch.ffmpegtool, "probe_streams", probe)
@@ -377,6 +391,27 @@ class TestPartialCheapAttemptVerification:
         assert result.notes == (
             "attachment stream 1 (ttf) dropped: not supported by MP4",
             "could not confirm this against the output: output vanished",
+        )
+
+    def test_a_source_probe_that_cannot_even_spawn_is_not_a_failed_conversion(
+        self, tmp_path, fake_ffmpeg, monkeypatch
+    ):
+        """Same argument one function up: the success-side source probe also runs
+        after ffmpeg produced a good file, so an `OSError` there degrades the
+        bookkeeping rather than the conversion."""
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+
+        def probe(_tools, _src):
+            raise OSError("ffprobe could not be started")
+
+        monkeypatch.setattr(batch.ffmpegtool, "probe_streams", probe)
+
+        result = convert_one(MP4, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert result.notes == (
+            "could not verify which source streams were kept: ffprobe could not be started",
         )
 
     def test_a_later_rung_is_not_verified_a_second_time(self, tmp_path, fake_ffmpeg, monkeypatch):
@@ -447,17 +482,56 @@ class TestDropsAreConfirmedAgainstTheOutput:
             f"data stream 2 (unknown) dropped: not supported by {profile.label}",
         )
 
-    def test_only_the_surviving_share_of_a_predicted_drop_is_forgiven(self, tmp_path, fake_ffmpeg):
-        """Two data streams of the same key predicted dropped, one of them in
-        the output: the count of reported losses follows the output, not the
-        mapping. The index named may be either -- the count is what is pinned."""
+    def test_an_ambiguous_surplus_forgives_nothing(self, tmp_path, fake_ffmpeg):
+        """Two streams the probe cannot tell apart are predicted dropped and one
+        comes back. Which one survived is unknowable, so both keep their note --
+        guessing would claim a loss that did not happen *and* hide one that
+        did."""
         task = self._task(tmp_path, "mp4")
-        fake_ffmpeg.streams = [Stream(0, "video", "h264"), Stream(1, "data", ""), self.TIMECODE]
-        fake_ffmpeg.output_streams = [Stream(0, "video", "h264"), Stream(1, "data", "")]
+        fake_ffmpeg.streams = [
+            Stream(0, "video", "h264", "avc1"),
+            Stream(1, "data", "", "tmcd"),
+            Stream(2, "data", "", "tmcd"),
+        ]
+        fake_ffmpeg.output_streams = [
+            Stream(0, "video", "h264", "avc1"),
+            Stream(1, "data", "", "tmcd"),
+        ]
 
         result = convert_one(MP4, task, TOOLS, overwrite=False)
 
-        assert result.notes == ("data stream 2 (unknown) dropped: not supported by MP4",)
+        assert result.notes == (
+            "data stream 1 (unknown) dropped: not supported by MP4",
+            "data stream 2 (unknown) dropped: not supported by MP4",
+        )
+
+    @pytest.mark.parametrize("profile", [MP4, MOV], ids=lambda profile: profile.label)
+    def test_a_metadata_track_is_not_hidden_behind_the_timecode_that_survived(
+        self, tmp_path, fake_ffmpeg, profile
+    ):
+        """The iPhone `.mov` shape review measured: an Apple `mebx` metadata
+        track and a `tmcd` beside it, neither reporting a codec name. Only the
+        timecode comes back, at a *different index*. The container tag is what
+        keeps the engine from forgiving the metadata track and reporting the
+        survivor in its place."""
+        task = self._task(tmp_path, profile.target_suffix.lstrip("."))
+        fake_ffmpeg.streams = [
+            Stream(0, "video", "h264", "avc1"),
+            Stream(1, "audio", "aac", "mp4a"),
+            Stream(2, "data", "", "mebx"),
+            Stream(3, "data", "", "tmcd"),
+        ]
+        fake_ffmpeg.output_streams = [
+            Stream(0, "video", "h264", "avc1"),
+            Stream(1, "audio", "aac", "mp4a"),
+            Stream(2, "data", "", "tmcd"),
+        ]
+
+        result = convert_one(profile, task, TOOLS, overwrite=False)
+
+        assert result.notes == (
+            f"data stream 2 (unknown) dropped: not supported by {profile.label}",
+        )
 
     def test_a_real_drop_is_not_forgiven_by_the_re_encode_that_replaced_it(
         self, tmp_path, fake_ffmpeg

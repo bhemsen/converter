@@ -21,7 +21,7 @@ from typing import TypeVar
 from converter.ffmpegtool import Stream
 from converter.profiles import Attempt, Profile
 
-#: What a stream is counted under -- either its (type, codec name) key or its
+#: What a stream is counted under -- either its full :func:`_stream_key` or its
 #: bare type. :func:`_surplus` does the same arithmetic for both.
 _K = TypeVar("_K")
 
@@ -79,23 +79,33 @@ def _structural_drop(profile: Profile, stream: Stream, counts: dict[str, int]) -
     return None
 
 
-def _stream_key(stream: Stream) -> tuple[str, str]:
+def _stream_key(stream: Stream) -> tuple[str, str, str]:
     """What a source stream and its counterpart in an output are matched by.
 
-    Type *and* codec name. An index cannot serve: a stream the muxer put back
-    on its own carries whatever index the output happens to give it. The codec
-    name can, and it is what keeps :func:`confirm_drops` from forgiving the
-    wrong drop -- a regenerated `tmcd` timecode track reports no ``codec_name``
-    at all and so does its source counterpart (measured, ffmpeg 9.0), while a
-    `gpmd`/ANC data stream reports ``bin_data`` on both sides. Matching on type
-    alone would let the first forgive the second.
+    Type, codec name *and* container tag. An index cannot serve: a stream the
+    muxer put back on its own carries whatever index the output happens to give
+    it -- the regenerated timecode of an iPhone MOV arrives at index 2 where its
+    source sat at index 3.
+
+    All three fields earn their place, each against a measured case (ffmpeg 9.0)
+    where dropping it let :func:`confirm_drops` forgive the wrong drop:
+
+    * codec name, because no profile declares a ``data`` rule, so by type alone
+      a regenerated `tmcd` forgives the loss of `gpmd`/ANC telemetry in the same
+      file -- telemetry reports ``bin_data``, a timecode reports no codec name;
+    * container tag, because *any* MOV/MP4 track whose 4CC maps to no codec id
+      demuxes with ``codec_id = NONE`` and so reports no codec name either. An
+      Apple `mebx` metadata track -- every iPhone `.mov` carries one -- is then
+      indistinguishable from the `tmcd` beside it, and the timecode's survival
+      forgives the metadata track's genuine loss. Their tags differ, and a
+      regenerated `tmcd` carries the same `tmcd` tag as its source.
     """
-    return (stream.codec_type, stream.codec_name)
+    return (stream.codec_type, stream.codec_name, stream.codec_tag)
 
 
 def _predict_unmapped(
     profile: Profile, streams: Sequence[Stream]
-) -> tuple[dict[tuple[str, str], int], tuple[tuple[tuple[str, str], str], ...]]:
+) -> tuple[dict[tuple[str, str, str], int], tuple[tuple[tuple[str, str, str], str], ...]]:
     """What a structurally partial cheap attempt's *mapping* cannot have carried.
 
     Returns how many streams of each :func:`_stream_key` the mapping is expected
@@ -108,9 +118,9 @@ def _predict_unmapped(
     it did with a stream's codec worked, and announcing a re-encode it never
     performed would just swap one dishonest report for another.
     """
-    predicted: list[tuple[tuple[str, str], str]] = []
+    predicted: list[tuple[tuple[str, str, str], str]] = []
     positions: dict[str, int] = {}
-    kept: dict[tuple[str, str], int] = {}
+    kept: dict[tuple[str, str, str], int] = {}
     for stream in streams:
         note = _structural_drop(profile, stream, positions)
         if note is None:
@@ -121,9 +131,9 @@ def _predict_unmapped(
     return kept, tuple(predicted)
 
 
-def _count_keys(streams: Sequence[Stream]) -> dict[tuple[str, str], int]:
+def _count_keys(streams: Sequence[Stream]) -> dict[tuple[str, str, str], int]:
     """How many streams of each :func:`_stream_key` a probed stream list holds."""
-    counts: dict[tuple[str, str], int] = {}
+    counts: dict[tuple[str, str, str], int] = {}
     for stream in streams:
         counts[_stream_key(stream)] = counts.get(_stream_key(stream), 0) + 1
     return counts
@@ -134,20 +144,16 @@ def _surplus(kept: dict[_K, int], produced: dict[_K, int]) -> dict[_K, int]:
     return {unit: max(count - kept.get(unit, 0), 0) for unit, count in produced.items()}
 
 
-def _by_type(counts: dict[tuple[str, str], int]) -> dict[str, int]:
-    """Collapse per-key counts onto the stream type alone."""
+def _by_type(counts: dict[tuple[str, str, str], int]) -> dict[str, int]:
+    """Collapse per-key counts onto the stream type alone.
+
+    Derived from the per-key counts rather than counted a second time from the
+    stream list, so the two readings :func:`confirm_drops` compares cannot drift.
+    """
     totals: dict[str, int] = {}
-    for (kind, _codec), count in counts.items():
+    for (kind, _codec, _tag), count in counts.items():
         totals[kind] = totals.get(kind, 0) + count
     return totals
-
-
-def _count_types(streams: Sequence[Stream]) -> dict[str, int]:
-    """How many streams of each ``codec_type`` a probed stream list holds."""
-    counts: dict[str, int] = {}
-    for stream in streams:
-        counts[stream.codec_type] = counts.get(stream.codec_type, 0) + 1
-    return counts
 
 
 def _decide_stream(
@@ -273,25 +279,24 @@ def confirm_drops(
       preserves a stream's *type* but not its codec name, which is exactly why
       the type count is immune to that phantom.
 
-    Both readings therefore have to agree before a note is dropped. Within a
-    type, a surplus is attributed to the predicted drops sharing its key in
-    source order: with more than one predicted drop of one key and only some of
-    them surviving, the *count* of reported drops stays right while the index
-    named may not be -- deliberately preferred over the alternative of reporting
-    a loss that did not happen, and never over-suppressing.
+    Both readings therefore have to agree before a note is dropped, and the
+    surplus must cover *every* predicted drop sharing a key before any of them
+    is forgiven. That last clause is what keeps the arithmetic from having to
+    guess which of several indistinguishable streams survived: where the
+    evidence is ambiguous, every candidate keeps its note. Over-reporting is a
+    cost; picking the wrong one would mean claiming a loss that did not happen
+    *and* falling silent about one that did (``docs/constitution.md``).
     """
     kept, predicted = _predict_unmapped(profile, streams)
     by_key = _surplus(kept, _count_keys(produced))
-    by_type = _surplus(_by_type(kept), _count_types(produced))
-    notes: list[str] = []
-    for key, note in predicted:
-        kind = key[0]
-        if by_key.get(key, 0) > 0 and by_type.get(kind, 0) > 0:
-            by_key[key] -= 1
-            by_type[kind] -= 1
-            continue
-        notes.append(note)
-    return tuple(notes)
+    by_type = _surplus(_by_type(kept), _by_type(_count_keys(produced)))
+    forgiven: set[tuple[str, str, str]] = set()
+    for key in dict.fromkeys(key for key, _note in predicted):
+        wanted = sum(1 for other, _note in predicted if other == key)
+        if by_key.get(key, 0) >= wanted and by_type.get(key[0], 0) >= wanted:
+            by_type[key[0]] -= wanted
+            forgiven.add(key)
+    return tuple(note for key, note in predicted if key not in forgiven)
 
 
 def describe_unsupported(profile: Profile, streams: Sequence[Stream]) -> tuple[str, ...] | None:

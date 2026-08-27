@@ -2680,16 +2680,61 @@ class TestConfirmDrops:
         over-reports rather than falling silent."""
         assert jobs.confirm_drops(MP4, self.SOURCE, []) == jobs.verify_success(MP4, self.SOURCE)
 
-    def test_a_surplus_forgives_one_predicted_drop_per_surviving_stream(self):
-        """Two of a type predicted dropped, one of them back in the output: the
-        reported count follows the output, and the note that remains is still
-        the profile's own wording."""
-        source = [Stream(0, "video", "h264"), Stream(1, "data", ""), Stream(2, "data", "")]
-        produced = [Stream(0, "video", "h264"), Stream(1, "data", "")]
+    def test_an_ambiguous_surplus_forgives_nothing(self):
+        """Two streams that are indistinguishable to the probe are predicted
+        dropped and exactly one comes back. Which one survived is unknowable, so
+        both keep their note: forgiving one at a guess would claim a loss that
+        did not happen *and* fall silent about one that did."""
+        source = [
+            Stream(0, "video", "h264", "avc1"),
+            Stream(1, "data", "", "tmcd"),
+            Stream(2, "data", "", "tmcd"),
+        ]
+        produced = [Stream(0, "video", "h264", "avc1"), Stream(1, "data", "", "tmcd")]
 
-        notes = jobs.confirm_drops(MP4, source, produced)
+        assert jobs.confirm_drops(MP4, source, produced) == (
+            "data stream 1 (unknown) dropped: not supported by MP4",
+            "data stream 2 (unknown) dropped: not supported by MP4",
+        )
 
-        assert notes == ("data stream 2 (unknown) dropped: not supported by MP4",)
+    def test_the_same_streams_all_surviving_are_all_forgiven(self):
+        """The counterpart: the surplus covers every predicted drop of the key,
+        so there is nothing to guess and none of them is reported."""
+        source = [
+            Stream(0, "video", "h264", "avc1"),
+            Stream(1, "data", "", "tmcd"),
+            Stream(2, "data", "", "tmcd"),
+        ]
+
+        assert jobs.confirm_drops(MP4, source, source) == ()
+
+    @pytest.mark.parametrize("profile", [MP4, MOV], ids=lambda profile: profile.label)
+    def test_a_regenerated_timecode_never_forgives_a_metadata_drop(self, profile):
+        """The counter-example that added the container tag to the key.
+
+        Apple `mebx` metadata -- every iPhone `.mov` has one -- demuxes with no
+        codec id, so ffprobe omits `codec_name` for it exactly as it does for a
+        `tmcd`. Source stream 2 is genuinely gone and stream 3 is the one the
+        muxer put back at a *different index*; without the tag the two were
+        indistinguishable, the first was forgiven and the survivor was reported
+        as the loss -- issue #66's own failure mode, with the real loss hidden
+        behind it.
+        """
+        source = [
+            Stream(0, "video", "h264", "avc1"),
+            Stream(1, "audio", "aac", "mp4a"),
+            Stream(2, "data", "", "mebx"),
+            Stream(3, "data", "", "tmcd"),
+        ]
+        produced = [
+            Stream(0, "video", "h264", "avc1"),
+            Stream(1, "audio", "aac", "mp4a"),
+            Stream(2, "data", "", "tmcd"),
+        ]
+
+        assert jobs.confirm_drops(profile, source, produced) == (
+            f"data stream 2 (unknown) dropped: not supported by {profile.label}",
+        )
 
     @pytest.mark.parametrize("profile", [MP4, MOV], ids=lambda profile: profile.label)
     def test_a_regenerated_timecode_never_forgives_a_telemetry_drop(self, profile):
@@ -2708,13 +2753,15 @@ class TestConfirmDrops:
     @pytest.mark.parametrize("profile", [MP4, MOV], ids=lambda profile: profile.label)
     def test_both_verdicts_are_reached_when_both_data_streams_are_present(self, profile):
         """The same file carrying both: the timecode is forgiven, the telemetry
-        is not. One key forgiving another would collapse the two."""
+        is not. One key forgiving another would collapse the two. Note the
+        surviving stream's output index differs from its source index, so an
+        index-based match would fail this even though every field agrees."""
         source = [
-            Stream(0, "video", "h264"),
-            Stream(1, "data", "bin_data"),
-            Stream(2, "data", ""),
+            Stream(0, "video", "h264", "avc1"),
+            Stream(1, "data", "bin_data", "gpmd"),
+            Stream(2, "data", "", "tmcd"),
         ]
-        produced = [Stream(0, "video", "h264"), Stream(1, "data", "")]
+        produced = [Stream(0, "video", "h264", "avc1"), Stream(1, "data", "", "tmcd")]
 
         assert jobs.confirm_drops(profile, source, produced) == (
             f"data stream 1 (bin_data) dropped: not supported by {profile.label}",

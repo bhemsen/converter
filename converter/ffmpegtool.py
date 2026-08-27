@@ -58,6 +58,15 @@ class Stream:
     index: int
     codec_type: str
     codec_name: str
+    #: The container's own four-character code (``avc1``, ``tmcd``, ``mebx``).
+    #: Carried because it is the only thing that tells two data tracks apart:
+    #: any MOV/MP4 track whose 4CC ffmpeg maps to no codec id demuxes with
+    #: ``codec_id = NONE`` and ffprobe then omits ``codec_name`` entirely, so a
+    #: regenerated timecode and an iPhone metadata track are indistinguishable
+    #: without it (measured, ffmpeg 9.0). Defaults to empty so a caller that
+    #: does not care -- every test that builds a Stream by hand -- can leave it
+    #: out. Read by :func:`converter.jobs.confirm_drops`, nothing else.
+    codec_tag: str = ""
 
 
 @dataclass(frozen=True)
@@ -207,7 +216,10 @@ def probe_streams(tools: Tools, src: str | os.PathLike[str]) -> list[Stream]:
             "-v",
             "error",
             "-show_entries",
-            "stream=index,codec_type,codec_name",
+            # One query, one process: an extra field costs nothing here, and
+            # codec_tag_string is the only thing that distinguishes two data
+            # tracks ffprobe reports no codec name for.
+            "stream=index,codec_type,codec_name,codec_tag_string",
             "-of",
             "json",
             cli_path(src),
@@ -231,6 +243,7 @@ def probe_streams(tools: Tools, src: str | os.PathLike[str]) -> list[Stream]:
                 index=index,
                 codec_type=str(raw.get("codec_type", "")),
                 codec_name=str(raw.get("codec_name", "")),
+                codec_tag=str(raw.get("codec_tag_string", "")),
             )
         )
     return streams

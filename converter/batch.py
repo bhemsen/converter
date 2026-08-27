@@ -92,9 +92,6 @@ def _confirm_against_output(
     """
     try:
         produced = ffmpegtool.probe_streams(tools, task.dst)
-    # OSError as well as ProbeError, unlike the source probe above: this call
-    # sits *after* a conversion ffmpeg already completed, so letting a spawn
-    # failure escape would turn a good output into a reported failure.
     except (ProbeError, OSError) as exc:
         # Over-reporting is the safe side of "never report success for a
         # conversion that silently dropped something" (``docs/constitution.md``):
@@ -116,7 +113,11 @@ def _verify_cheap_attempt(profile: Profile, task: Task, tools: Tools) -> tuple[s
         return ()
     try:
         streams = ffmpegtool.probe_streams(tools, task.src)
-    except ProbeError as exc:
+    # Both probes on this side run *after* ffmpeg already produced a good file,
+    # so a spawn failure must degrade the bookkeeping, never the conversion:
+    # letting an OSError escape would report FAILED for a file that converted
+    # fine and leave the output behind for the next run to skip.
+    except (ProbeError, OSError) as exc:
         # A run whose completeness could not be established must not read as a
         # plain success either (``docs/constitution.md``).
         return (f"could not verify which source streams were kept: {exc}",)

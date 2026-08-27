@@ -583,15 +583,19 @@ New-Item -ItemType Directory -Force in
   is now explicitly a *prediction* from the mapping, and `jobs.confirm_drops`
   weighs it against the file that was actually written, keeping only the drops
   the output does not contain. The comparison counts both files' streams
-  **twice** -- once per stream type, once per type-and-codec-name pair -- and
-  forgives a predicted drop only where *both* counts show a surplus, spending one
-  of each budget per forgiveness. An index cannot be a match key at all: a stream
-  the muxer put back carries whatever index the output gives it.
+  **twice** -- once per stream type, once per `(codec_type, codec_name,
+  codec_tag_string)` key -- and forgives a predicted drop only where *both*
+  counts show a surplus **and** that surplus covers every predicted drop sharing
+  the key. An index cannot be a match key at all: a stream the muxer put back
+  carries whatever index the output gives it.
 
-  It took two review rounds to arrive at both halves, and each half exists
-  because review built a counter-example that turned a real loss into a silent
-  success -- the direction `docs/constitution.md` forbids outright, and the one
-  this fix must not open while closing its mirror image.
+  It took three review rounds to arrive at those conditions, and every one of
+  them exists because review built a counter-example that hid a real loss -- the
+  direction `docs/constitution.md` forbids outright, and the one this fix must
+  not open while closing its mirror image. Recorded in full because the sequence
+  is the argument: each round's fix was locally correct and opened the next hole,
+  so the final rule is not a stack of patches but the shape the three failures
+  jointly describe.
 
   **Round 1 killed matching by type alone.** No profile declares a `data` rule,
   so `kept["data"]` is always 0 and *any* data stream in the output forgave one
@@ -618,15 +622,36 @@ New-Item -ItemType Directory -Force in
   but the hazard is structural: it arms itself for any future profile that
   combines a re-encoding cheap attempt with a `stream_limit`.
 
-  Within a type, a surplus is attributed to the predicted drops sharing its key
-  in source order, so with several predicted drops sharing one pair and only some
-  surviving the *count* of reported losses is right while the index named may not
-  be -- accepted deliberately, since the alternative is reporting a loss that did
-  not happen. The forbidden direction is closed on three further sides: a drop
-  with no surplus under either count keeps its note, a probe that fails leaves the
-  whole prediction standing with an added note saying it could not be confirmed,
-  and the output probe catches `OSError` as well as `ProbeError` rather than
-  turning a conversion ffmpeg already completed into a reported failure.
+  **Round 3 killed attributing a partial surplus in source order.** The rule as
+  of round 2 forgave one predicted drop per surviving stream, and disclosed the
+  residual as "the *count* of reported losses is right while the index named may
+  not be" -- which read as cosmetic mis-numbering and was not. Review measured
+  the case that makes it substantive: an Apple `mebx` metadata track, which every
+  iPhone `.mov` carries, demuxes with `codec_id = NONE` because its 4CC maps to
+  no codec id, so ffprobe omits `codec_name` for it exactly as it does for a
+  `tmcd`. A source carrying both, converted to `mov` or `mp4`, keeps only the
+  regenerated timecode -- and source order put the genuinely lost metadata track
+  first, so it was forgiven while the *survivor* was reported as the loss. That
+  is issue #66's own failure mode with a real loss hidden behind it, and on
+  `main` both streams had at least been named.
+
+  Two changes close it. `codec_tag_string` joins the probe's `-show_entries` and
+  the match key -- one extra field on a query that was already being made, no
+  extra process -- so `mebx` and `tmcd` are distinguishable and a regenerated
+  timecode still matches its source, both carrying the tag `tmcd` (measured).
+  And a key's predicted drops are now forgiven **all or none**: where the probe
+  genuinely cannot tell two streams apart and only one returns, every candidate
+  keeps its note. Guessing would break both halves of the promise at once, so
+  the residual is now over-reporting on real ambiguity rather than a
+  possibly-wrong index -- and the disclosure says so.
+
+  The forbidden direction is closed on three further sides: a drop with no
+  surplus under either count keeps its note, a probe that fails leaves the whole
+  prediction standing with an added note saying it could not be confirmed, and
+  *both* success-side probes catch `OSError` as well as `ProbeError` rather than
+  turning a conversion ffmpeg already completed into a reported failure -- the
+  source probe included, since review pointed out it runs after a successful
+  conversion for the same reason the output probe does.
 
   **ffprobe frequency changed, deliberately.** The success side now spends a
   second probe -- on the *output* -- but only on a run that has already predicted
