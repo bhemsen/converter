@@ -556,6 +556,24 @@ class TestDropsAreConfirmedAgainstTheOutput:
             f"data stream 2 (unknown) dropped: not supported by {profile.label}",
         )
 
+    @pytest.mark.parametrize("profile", [MKV, WEBM], ids=lambda profile: profile.label)
+    def test_a_source_with_nothing_to_lose_reports_nothing_end_to_end(
+        self, tmp_path, fake_ffmpeg, profile
+    ):
+        """Acceptance, issue #67 -- the change a user notices first, proved
+        through the same `convert_one`/`fake_ffmpeg` harness the rest of this
+        class uses, not just `jobs.verify_success` in isolation. No data or
+        timecode stream at all, so the retired standing note's absence is the
+        only thing that could still print something here."""
+        task = self._task(tmp_path, profile.target_suffix.lstrip("."))
+        fake_ffmpeg.streams = [Stream(0, "video", "h264"), Stream(1, "audio", "aac")]
+        fake_ffmpeg.output_streams = list(fake_ffmpeg.streams)
+
+        result = convert_one(profile, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert result.notes == ()
+
     def test_an_ambiguous_surplus_forgives_nothing(self, tmp_path, fake_ffmpeg):
         """Two streams the probe cannot tell apart are predicted dropped and one
         comes back. Which one survived is unknowable, so both keep their note --

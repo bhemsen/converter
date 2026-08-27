@@ -411,9 +411,8 @@ MKV = Profile(
     ),
     explicit_streams=False,
     # The blind "?" selectors carry every video, audio, subtitle and attachment
-    # stream MKV's muxer can hold, but never a data or timecode one -- exactly
-    # the standing note's claim, verified once per successful cheap attempt
-    # rather than assumed.
+    # stream MKV's muxer can hold, but never a data or timecode one -- a real
+    # one is still named by the success-side verification, per stream.
     partial_mapping=True,
     rules={
         "video": StreamRule(
@@ -484,11 +483,11 @@ MOV = Profile(
     # "-map 0": that would also select data and timecode streams, which no
     # "v/a/s/t" map -- MOV's included -- selects at all (measured).
     #
-    # No standing note about data and timecode streams, unlike MKV's otherwise
-    # identical shape: MOV's muxer *regenerates* a tmcd timecode track from the
-    # source's metadata even though no selector maps it, so the blanket claim
-    # was measurably false for the commonest data stream a MOV source carries
-    # (issue #66). What actually reaches the output is settled per file by the
+    # Unlike MKV's and WebM's otherwise identical shape (issue #67), MOV's
+    # muxer *regenerates* a tmcd timecode track from the source's metadata even
+    # though no selector maps it -- a data drop a blanket claim would have
+    # gotten wrong for the commonest data stream a MOV source carries (issue
+    # #66). What actually reaches the output is settled per file by the
     # success-side verification, which reads the written file rather than the
     # mapping -- a real data drop still gets its own per-stream note there.
     cheap_attempt=Attempt(
@@ -565,10 +564,11 @@ WEBM = Profile(
     # Unlike MKV and MOV, deliberately does NOT map "0:t?": WebM does not reject
     # a mapped attachment, it silently discards it at exit 0 (measured), so
     # mapping it would buy nothing -- the "map to force a failure" trick MOV
-    # uses does not work here. A source with an attachment still loses it, but
-    # only the standing note below can say so, since nothing ever fails on one.
-    # Still not "-map 0": that would also select data and timecode streams,
-    # which no "v/a/s" map -- WebM's included -- carries at all (measured).
+    # uses does not work here. A source with an attachment still loses it, and
+    # the success-side verification is what says so, per stream, since nothing
+    # ever fails on one. Still not "-map 0": that would also select data and
+    # timecode streams, which no "v/a/s" map -- WebM's included -- carries at
+    # all (measured).
     #
     # Issue #67, docs/specs/spec-stream-disposition.md: the standing note this
     # cheap attempt used to carry alongside the map is retired. WebM declares
@@ -620,8 +620,8 @@ WEBM = Profile(
         # equality, the same way MP4 declares no "attachment" rule. A source
         # that has one still succeeds the cheap attempt, and the success-side
         # verification (jobs.verify_success) names the drop per stream because
-        # no rule matches "attachment" -- the standing note above restates it
-        # unconditionally alongside that per-stream note.
+        # no rule matches "attachment" -- the only place that drop is ever
+        # reported (issue #67).
     },
     last_resort=Attempt(
         label="re-encode",
@@ -957,23 +957,41 @@ PNG = Profile(
     ),
 )
 
-#: Issue #67, docs/specs/spec-stream-disposition.md: JPG's, GIF's and AVIF's
-#: standing notes below (transparency, colour quantisation, frame reduction)
-#: were found to fire even on a source with nothing to lose -- a plain opaque
-#: `yuvj420p` JPEG still claims transparency was dropped. Unlike MKV's and
-#: WEBM's retired notes, none of these has a per-stream replacement:
-#: `jobs.verify_success` only ever names a stream the mapping left *out*
-#: entirely (D1/D2 of stream-decision.md), and every one of these three is a
-#: *within-stream* loss -- the video stream itself is still mapped and kept,
-#: only something inside it (an alpha channel, a colour count, a frame count)
-#: is gone. `Stream` (converter/ffmpegtool.py) carries no `pix_fmt` or frame
-#: count today, and the decision of whether a given source actually had the
-#: property would have to live in `jobs.py`'s engine (data, not code, is what
-#: `profiles.py` is for) -- both out of this issue's scope. Retiring the notes
-#: anyway would violate docs/constitution.md's "never report success for a
-#: conversion that silently dropped something", so all three stay unconditional
-#: standing notes; making them conditional on the source's actual pixel format
-#: and frame count is recorded as a finding for a follow-up issue instead.
+#: Issue #67, docs/specs/spec-stream-disposition.md: the QA finding this issue
+#: was filed against reads "standing notes fire when nothing was lost **and
+#: name no stream**" -- JPG's, GIF's and AVIF's standing notes below
+#: (transparency, colour palette, frame reduction) still have both halves of
+#: that problem, for different reasons, and neither is fixed here:
+#:
+#: * They are worded as *format facts* ("transparency is not carried by
+#:   JPEG"), true of every conversion to that target regardless of what the
+#:   source held -- not a claim that *this* file's transparency was dropped, so
+#:   they do not over-report the way the retired MKV/WEBM notes did. The one
+#:   exception was GIF's "colours are reduced to GIF's 256-colour palette",
+#:   worded as an action rather than a fact; measured, an already-GIF,
+#:   already-<=256-colour source re-encodes pixel-identically, so that wording
+#:   was a genuine false claim for that file (unlike its four siblings) and is
+#:   reworded below to the same fact-not-action shape as the rest.
+#: * None of the five names a stream index or codec, unlike a per-stream drop
+#:   note -- because none of these is a per-stream drop: the video stream
+#:   itself is still mapped and kept, only something inside it (an alpha
+#:   channel, a colour count, a frame count) is gone.
+#:   `jobs.verify_success`/`_structural_drop` only ever reasons about whether a
+#:   stream was mapped at all (D1/D2 of stream-decision.md), so it has no
+#:   opinion on what survived inside one, and a profile's `notes` tuple is
+#:   static data with no access to the source's probed streams at all -- naming
+#:   an index and codec here would need both a `pix_fmt`/frame-count field on
+#:   `Stream` (converter/ffmpegtool.py) and new decision logic in `jobs.py`'s
+#:   engine to compare a kept stream's measured properties against what its
+#:   target actually holds. Both are out of this issue's file boundary
+#:   (`jobs.py` was read-only for this work), so the gap is recorded as a
+#:   finding for a follow-up issue rather than attempted piecemeal.
+#:
+#: Retiring these notes outright, leaving the within-stream loss unsaid
+#: entirely, would violate docs/constitution.md's "never report success for a
+#: conversion that silently dropped something" -- an unmeasured loss is still
+#: a loss the constitution forbids leaving unsaid -- so all five stay
+#: unconditional standing notes rather than being deleted.
 JPG = Profile(
     label="JPG",
     name="jpg",
@@ -1112,11 +1130,16 @@ GIF = Profile(
         # of inputs -- the same shape JPG's cheap-attempt note is. Retained
         # unconditionally -- issue #67, see JPG's module-level comment above
         # for why: both are a within-stream loss no per-stream drop note can
-        # replace. Measured: a source that is itself already a GIF (already
-        # <=256 colours, already alpha-less) still prints both notes.
+        # replace. Both wordings are format facts, true of every conversion to
+        # GIF regardless of what the source held -- not a claim that *this*
+        # file's transparency or colour count was actually reduced (issue #67
+        # review: an already-GIF, already <=256-colour source re-encodes
+        # pixel-identically, measured, so "colours are reduced" would have
+        # been a false claim of an action that did not happen for that file;
+        # "holds at most" makes the same point as a limit instead).
         notes=(
             "transparency is not carried by GIF",
-            "colours are reduced to GIF's 256-colour palette",
+            "GIF holds at most a 256-colour palette",
         ),
     ),
     explicit_streams=False,
@@ -1142,7 +1165,7 @@ GIF = Profile(
             # the same reasoning JPG's last_resort carries its transparency
             # note for.
             "transparency is not carried by GIF",
-            "the image was re-quantised to GIF's 256-colour palette",
+            "GIF holds at most a 256-colour palette",
             "non-video streams, and any video stream beyond the first, are not carried into GIF",
         ),
     ),

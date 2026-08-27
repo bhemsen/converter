@@ -445,33 +445,49 @@ New-Item -ItemType Directory -Force in
   `tmcd` regeneration made the blanket claim measurably false.
 
   **`jpg`, `gif` and `avif` keep theirs, unconditional, by decision rather
-  than oversight.** All three notes this issue's QA finding named for these
-  profiles -- JPEG's and GIF's transparency loss, GIF's colour quantisation,
+  than oversight -- and neither half of the QA finding's title is actually
+  fixed for these three.** All five notes this issue's QA finding named for
+  these profiles -- JPEG's and GIF's transparency loss, GIF's colour palette,
   AVIF's frame reduction -- describe a *within-stream* loss: the video
   stream is still mapped and kept, only something inside it (an alpha
   channel, a colour count, a frame count) is gone. `_structural_drop` only
   ever reasons about whether a stream was mapped at all, so it has no
-  opinion on what survived inside one, and confirmed by measurement rather
-  than assumed: a source already in the target format (a GIF converted to
-  GIF, already alpha-less and already <=256 colours; a single-frame source
-  into AVIF) still prints every one of these notes, exactly the QA finding's
-  own example of a plain opaque `yuvj420p` JPEG still claiming a
-  transparency loss. Making them conditional -- firing only when the source
-  actually had the property -- would need `Stream` (`converter/ffmpegtool.py`)
-  to carry a pixel format and a frame count, neither of which it does today,
-  and the decision of whether a given source had one would have to live in
-  `jobs.py`'s engine, since `converter/profiles.py` is data, not code (`docs/
-  constitution.md`) -- both changes are out of this issue's file boundary
+  opinion on what survived inside one.
+
+  *Half one -- firing when nothing was lost.* Four of the five notes are
+  worded as **format facts** ("transparency is not carried by JPEG"), true of
+  every conversion to that target regardless of what the source held, not a
+  claim that *this* file's transparency was dropped -- so, unlike the retired
+  `mkv`/`webm` notes, they do not over-report a specific event that did not
+  happen; they state a limit. Review of this PR's first draft found the
+  fifth, GIF's "colours are reduced to GIF's 256-colour palette", worded as
+  an *action* rather than a fact, and measured that an already-GIF,
+  already-<=256-colour source re-encodes pixel-identically (the module
+  comment above `GIF` in `converter/profiles.py` already recorded this,
+  unconnected until the review) -- so that wording, alone among the five, was
+  a genuine false claim for such a file. It is reworded here to "GIF holds at
+  most a 256-colour palette", the same fact-not-action shape as its four
+  siblings, closing that one real gap; the other four were already
+  accurate as written and needed no change.
+
+  *Half two -- naming a stream index and codec.* None of the five names one,
+  and this half is **not fixed, only recorded**. A profile's `notes` tuple is
+  static data with no access to the source's probed streams at all, so naming
+  an index and codec here would need a `pix_fmt` and a frame-count field on
+  `Stream` (`converter/ffmpegtool.py`), plus new decision logic in `jobs.py`'s
+  engine to compare a kept stream's measured properties against what its
+  target actually holds -- both out of this issue's file boundary
   (`converter/jobs.py` was read-only for this work; `converter/ffmpegtool.py`
-  was not in scope either). Retiring the notes without that replacement would
-  violate `docs/constitution.md`'s "never report success for a conversion
-  that silently dropped something" -- an unmeasured within-stream loss is
-  still a loss the constitution forbids leaving unsaid, so over-reporting
-  stays the safer failure mode until the probing exists. **Finding, not
-  fixed in this issue:** conditional firing for `jpg`/`gif`/`avif` needs a
-  `pix_fmt` and a frame-count field on `Stream`, plus new engine logic in
-  `jobs.py` to compare a kept stream's measured properties against what its
-  target actually holds -- recorded here for a follow-up issue rather than
+  was not in scope either), and `converter/profiles.py` is data, not code
+  (`docs/constitution.md`), so the comparison logic could not live there even
+  if the field existed. Retiring these notes outright rather than leaving them
+  as an imprecise-but-true statement would violate `docs/constitution.md`'s
+  "never report success for a conversion that silently dropped something" --
+  an unmeasured within-stream loss is still a loss the constitution forbids
+  leaving unsaid -- so all five stay unconditional standing notes. **Finding,
+  not fixed in this issue:** both halves above are recorded for a follow-up
+  issue -- conditional firing needs the `pix_fmt`/frame-count probing, and
+  per-stream naming needs the engine to consult it -- rather than either being
   attempted piecemeal against the file boundary this issue was scoped to.
 
   Verified against real ffmpeg 9.0 with distinct-stem fixtures: a source with
@@ -493,11 +509,33 @@ New-Item -ItemType Directory -Force in
   the same source at `0xfe`/`0xff` only because they keep an alpha channel at
   all (WebP: `yuva420p`, alpha `0xfe`); a multi-frame GIF source (3 frames,
   measured via `ffprobe -count_frames`) into `avif` prints the frame-reduction
-  note and the output genuinely holds 1 frame; a second run over each
-  converted tree reports 0 converted, exit 0. Every new or changed assertion
-  was proven non-vacuous by mutating a profile copy in a scratch script
-  outside the repo (restoring `mkv`'s and `webm`'s removed standing notes,
-  and separately giving each profile a bogus `data` rule that would make
-  `verify_success` stop predicting the drop the shipped test pins) and
+  note and the output genuinely holds 1 frame; a re-run of an already-`.gif`
+  source into `gif` still prints the reworded "GIF holds at most a 256-colour
+  palette" -- true and unchanged in substance, but no longer a false claim
+  that a reduction happened to that specific, already-quantised file; a
+  second run over each converted tree reports 0 converted, exit 0. Every new
+  or changed assertion was proven non-vacuous by mutating a profile copy in a
+  scratch script outside the repo (restoring `mkv`'s and `webm`'s removed
+  standing notes, giving each profile a bogus `data` rule that would make
+  `verify_success` stop predicting the drop the shipped test pins, and
+  restoring GIF's pre-review "colours are reduced to..." wording) and
   confirming the shipped assertion's expected value no longer matches against
-  either mutation.
+  any of the three mutations.
+
+  **Review round 1** (fresh-agent gate) found four comments in
+  `converter/profiles.py` left over from before the standing note they
+  described was retired -- MKV's `partial_mapping` comment and MOV's
+  contrast with MKV still claiming a standing note that no longer exists on
+  either side, and two WebM comments still pointing at "the standing note
+  below/above" -- all four corrected to describe the code as it now reads. It
+  also found the README bullet for MP3/FLAC/M4A overstated ("nothing prints
+  for a source that never had one") against `last_resort`'s own unconditional
+  note, corrected with the same carve-out `last_resort` has always needed,
+  and found GIF's "colours are reduced to GIF's 256-colour palette" was a
+  genuine false claim -- not merely an over-broad one -- for an already-GIF
+  source, unlike its four unconditional-but-true siblings; reworded to "GIF
+  holds at most a 256-colour palette" (`cheap_attempt` and `last_resort`
+  both), the fix recorded above. It also asked whether the "second half" of
+  the QA finding's own title -- naming no stream index or codec -- was
+  addressed for `jpg`/`gif`/`avif`; it was not, and the profile comment and
+  this entry now say so explicitly rather than only discussing conditionality.

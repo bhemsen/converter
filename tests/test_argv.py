@@ -1062,9 +1062,12 @@ class TestMkvDegradationNotes:
     def test_a_real_data_or_timecode_drop_is_still_named_per_stream(self):
         """What the retired standing note used to claim, now the only place it
         is said -- with the index and codec the blanket line never carried.
-        `tests/test_argv.py::TestConfirmDrops` proves this against the written
-        output too, and that MKV's muxer (unlike MOV/MP4's) never regenerates
-        one to forgive."""
+        `tests/test_batch.py::TestDropsAreConfirmedAgainstTheOutput` proves the
+        same prediction survives `confirm_drops`' output check with a stubbed
+        muxer; that MKV's *real* muxer (unlike MOV/MP4's) never regenerates one
+        to forgive is a claim about ffmpeg, not about this suite, and is
+        recorded against real ffmpeg 9.0 in
+        docs/specs/spec-stream-disposition.md's decision log instead."""
         streams = [
             Stream(0, "video", "h264"),
             Stream(1, "audio", "aac"),
@@ -2553,7 +2556,7 @@ class TestAnimatedProfileArgvPinning:
         ]
         assert last_resort.notes == (
             "transparency is not carried by GIF",
-            "the image was re-quantised to GIF's 256-colour palette",
+            "GIF holds at most a 256-colour palette",
             "non-video streams, and any video stream beyond the first, are not carried into GIF",
         )
 

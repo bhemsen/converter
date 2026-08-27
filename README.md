@@ -189,9 +189,13 @@ note    Show.S01E02.mkv: subtitle stream 2 (hdmv_pgs_subtitle) dropped: bitmap s
   makes.
 * **MP3, FLAC and M4A carry embedded cover art, but nothing else non-audio.**
   A picture stream survives a straight copy untouched, byte for byte. Any
-  other video, subtitle or attachment stream is left out, and — like every
-  other target — is only reported when one was actually present to drop;
-  nothing prints for a source that never had one.
+  other video, subtitle or attachment stream a straight copy leaves out is
+  reported only when one was actually present to drop; nothing prints for a
+  source that never had one. The one place that is not true is each format's
+  re-encode rung, reached only when a matching codec's copy is refused
+  outright: its note names what that rung structurally cannot carry
+  regardless of whether this particular source had any to give up, the same
+  as it always has.
 * **MKV, MOV and WebM name a dropped attachment, data or timecode stream
   individually, by index and codec, rather than with a blanket warning.** MKV
   keeps font attachments and drops data or timecode streams; MOV rejects a
