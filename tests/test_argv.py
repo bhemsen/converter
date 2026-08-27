@@ -2,6 +2,7 @@
 
 import subprocess
 from dataclasses import replace
+from typing import ClassVar
 
 import pytest
 
@@ -2636,6 +2637,75 @@ class TestSuccessSideVerification:
         streams = [Stream(0, "video", "vp8"), Stream(1, "subtitle", "dvd_subtitle")]
 
         assert jobs.verify_success(MP4, streams) == ()
+
+
+class TestConfirmDrops:
+    """`jobs.confirm_drops`: the prediction weighed against the written file.
+
+    `verify_success` reads the mapping, which says what ffmpeg was *asked* to
+    carry. MP4 and MOV regenerate a `tmcd` timecode track from source metadata
+    with no selector naming it (issue #66), so the mapping alone over-reports.
+    """
+
+    SOURCE: ClassVar[list[Stream]] = [
+        Stream(0, "video", "h264"),
+        Stream(1, "audio", "aac"),
+        Stream(2, "data", ""),
+    ]
+
+    def test_a_stream_the_output_still_holds_is_not_reported_as_dropped(self):
+        assert jobs.confirm_drops(MP4, self.SOURCE, self.SOURCE) == ()
+
+    def test_a_stream_the_output_does_not_hold_keeps_its_note(self):
+        produced = [Stream(0, "video", "h264"), Stream(1, "audio", "aac")]
+
+        assert jobs.confirm_drops(MKV, self.SOURCE, produced) == (
+            "data stream 2 (unknown) dropped: not supported by MKV",
+        )
+
+    def test_an_output_that_holds_nothing_keeps_every_note(self):
+        """Nothing survived, so nothing is forgiven -- the direction that
+        over-reports rather than falling silent."""
+        assert jobs.confirm_drops(MP4, self.SOURCE, []) == jobs.verify_success(MP4, self.SOURCE)
+
+    def test_a_surplus_forgives_one_predicted_drop_per_surviving_stream(self):
+        """Two of a type predicted dropped, one of them back in the output: the
+        reported count follows the output, and the note that remains is still
+        the profile's own wording."""
+        source = [Stream(0, "video", "h264"), Stream(1, "data", ""), Stream(2, "data", "")]
+        produced = [Stream(0, "video", "h264"), Stream(1, "data", "")]
+
+        notes = jobs.confirm_drops(MP4, source, produced)
+
+        assert notes == ("data stream 2 (unknown) dropped: not supported by MP4",)
+
+    def test_a_stream_of_another_type_never_forgives_a_drop(self):
+        """The surplus is counted per stream type, so an extra audio stream in
+        the output cannot silence a dropped attachment."""
+        source = [Stream(0, "video", "h264"), Stream(1, "attachment", "ttf")]
+        produced = [Stream(0, "video", "h264"), Stream(1, "audio", "aac")]
+
+        assert jobs.confirm_drops(MP4, source, produced) == (
+            "attachment stream 1 (ttf) dropped: not supported by MP4",
+        )
+
+    def test_a_surplus_of_a_type_with_no_predicted_drop_changes_nothing(self):
+        source = [Stream(0, "video", "h264"), Stream(1, "attachment", "ttf")]
+        produced = [Stream(0, "video", "h264"), Stream(1, "video", "h264")]
+
+        assert jobs.confirm_drops(MP4, source, produced) == (
+            "attachment stream 1 (ttf) dropped: not supported by MP4",
+        )
+
+    def test_a_stream_limit_drop_the_output_disproves_is_forgiven(self):
+        """Not a `tmcd` special case: the same confirmation covers D2, where the
+        prediction is "the container holds only so many of this type"."""
+        source = [Stream(0, "audio", "opus"), Stream(1, "audio", "opus")]
+
+        assert jobs.confirm_drops(WAV, source, source) == ()
+        assert jobs.confirm_drops(WAV, source, source[:1]) == (
+            "audio stream 1 (opus) dropped: WAV holds 1 audio stream",
+        )
 
 
 @pytest.mark.parametrize(

@@ -566,3 +566,52 @@ New-Item -ItemType Directory -Force in
 - 2026-08-26: Close-out. The final QA gate ran against real ffmpeg 9.0 on
   Windows 11, verifying all 17 target formats end-to-end with ffprobe.
   Verdict: PASS WITH FINDINGS; the findings are filed as issues #66-#73.
+
+- 2026-08-27 (issue #66): the muxer fact this phase measured -- "neither MKV nor
+  a `v/a/s/t` map carries data or timecode streams" (Prior decisions, row 3) --
+  is right about the *mapping* and wrong about the *output* for `mp4` and `mov`.
+  Re-measured against ffmpeg 9.0 on Windows 11 with a `-timecode`-bearing source:
+  the `tmcd` stream is absent from an `.mkv` and a `.webm` output, exactly as the
+  table says, but present in both an `.mp4` and a `.mov` one, because MOV/MP4's
+  muxer regenerates a timecode track from the source's metadata although no
+  selector maps it. The phase therefore shipped a note claiming a loss that did
+  not happen -- the false-positive half of the loss accounting `docs/vision.md`
+  names as the USP, and the reason this was treated as a correctness bug rather
+  than cosmetics.
+
+  Fixed **generally rather than by special-casing `tmcd`**: `jobs.verify_success`
+  is now explicitly a *prediction* from the mapping, and `jobs.confirm_drops`
+  weighs it against the file that was actually written, keeping only the drops
+  the output does not contain. The comparison is *counts per stream type*,
+  because a regenerated stream shares neither index nor codec name with its
+  source (ffprobe reports no `codec_name` at all for either side of a `tmcd`
+  pair). Any surplus is attributed to that type's predicted drops in source
+  order, so with several predicted drops of one type and only some surviving the
+  *count* of reported losses is right while the index named may not be --
+  accepted deliberately, since the alternative is reporting a loss that did not
+  happen. The direction `docs/constitution.md` forbids is closed on both sides: a
+  type with no surplus keeps every note it was given, and a probe that fails
+  leaves the whole prediction standing, with an added note saying it could not be
+  confirmed.
+
+  **ffprobe frequency changed, deliberately.** The success side now spends a
+  second probe -- on the *output* -- but only on a run that has already predicted
+  at least one drop, so a conversion that gives nothing up costs exactly the one
+  probe it cost before. This is the same trade issue #18 made and
+  `spec-profile-registry.md`'s Decision log records (the loss-accounting USP over
+  a probe on a minority of runs), applied to the mirror-image bug, so it was
+  resolved as settled by precedent rather than escalated as a design fork. The
+  restatements moved with it in this PR: `docs/constitution.md` (Architecture
+  principles), `docs/design/degradation-ladder.md` (the diagram gains node `C`
+  and a rule for it), `docs/design.md` (Cost markers), `docs/architecture.md`
+  (Key flows section 1), `docs/prior-art.md`'s ADOPT note, and
+  `converter/ffmpegtool.probe_streams`'s docstring.
+
+  `mov`'s standing note (`"data and timecode streams are not carried into MOV"`,
+  Prior decisions row 3 and the Verification item pinning its wording) is
+  **removed**, and its test now pins the absence. It was a blanket claim, printed
+  on every MOV conversion, that the measurement above shows to be false for the
+  commonest data stream a MOV source carries; the per-file confirmation names a
+  real data drop per stream instead, so nothing is lost by dropping it. `mkv`'s
+  and `webm`'s standing notes are untouched -- there the loss is real, and the
+  issue's acceptance asked for that behaviour to stay unchanged.

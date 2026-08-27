@@ -84,7 +84,9 @@ evidenced, not assumed — see the image-conversion concern.
     (`mp4_remux` to `_mp4_selective` to `mp4_reencode`). ffprobe never runs on
     the happy path of an *exhaustive* cheap attempt — issue #18 narrowed this
     to admit one probe on the success of a mapping that is partial by
-    construction, which is what keeps the loss accounting honest.
+    construction, and issue #66 a further one on the written output whenever
+    that probe is about to report a loss, which is what keeps the loss
+    accounting honest in both directions.
     Combined with HandBrake's copy mask this gets both: the mask
     PREDICTS a doomed attempt, trial-and-fallback remains the safety net for what
     the mask gets wrong.

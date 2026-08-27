@@ -61,7 +61,7 @@ def _structural_drop(profile: Profile, stream: Stream, counts: dict[str, int]) -
 
     Split out because both verdicts are reached from the declared rules alone,
     without ever looking at the stream's codec. That is what lets the
-    success-side verification in :func:`_unmapped_notes` reuse them without
+    success-side verification in :func:`_predict_unmapped` reuse them without
     asserting anything about what an already-successful attempt encoded.
     """
     rule = profile.rules.get(stream.codec_type)
@@ -74,23 +74,38 @@ def _structural_drop(profile: Profile, stream: Stream, counts: dict[str, int]) -
     return None
 
 
-def _unmapped_notes(profile: Profile, streams: Sequence[Stream]) -> tuple[str, ...]:
-    """Name what a structurally partial cheap attempt cannot have carried over.
+def _predict_unmapped(
+    profile: Profile, streams: Sequence[Stream]
+) -> tuple[dict[str, int], tuple[tuple[str, str], ...]]:
+    """What a structurally partial cheap attempt's *mapping* cannot have carried.
+
+    Returns how many streams of each type the mapping is expected to keep, and
+    one ``(codec_type, note)`` pair per stream it is expected to leave behind --
+    the type travels alongside the note so :func:`confirm_drops` can weigh the
+    prediction against the file that was actually written.
 
     Only the structural verdicts above are consulted. Codec-level ones are
     deliberately left out: the cheap attempt has already exited 0, so whatever
     it did with a stream's codec worked, and announcing a re-encode it never
     performed would just swap one dishonest report for another.
     """
-    notes: list[str] = []
+    predicted: list[tuple[str, str]] = []
     counts: dict[str, int] = {}
     for stream in streams:
         note = _structural_drop(profile, stream, counts)
         if note is None:
             counts[stream.codec_type] = counts.get(stream.codec_type, 0) + 1
         else:
-            notes.append(note)
-    return tuple(notes)
+            predicted.append((stream.codec_type, note))
+    return counts, tuple(predicted)
+
+
+def _count_types(streams: Sequence[Stream]) -> dict[str, int]:
+    """How many streams of each ``codec_type`` a probed stream list holds."""
+    counts: dict[str, int] = {}
+    for stream in streams:
+        counts[stream.codec_type] = counts.get(stream.codec_type, 0) + 1
+    return counts
 
 
 def _decide_stream(
@@ -178,8 +193,47 @@ def needs_verification(profile: Profile) -> bool:
 
 def verify_success(profile: Profile, streams: Sequence[Stream]) -> tuple[str, ...]:
     """The success-side verifier of degradation-ladder.md: what a partial cheap
-    attempt's mapping could not have carried over, named per stream."""
-    return _unmapped_notes(profile, streams)
+    attempt's mapping could not have carried over, named per stream.
+
+    A *prediction*, drawn from the mapping alone. It has to be confirmed against
+    the written file by :func:`confirm_drops` before it is reported, because a
+    muxer may put back what no ``-map`` selected (issue #66).
+    """
+    _, predicted = _predict_unmapped(profile, streams)
+    return tuple(note for _, note in predicted)
+
+
+def confirm_drops(
+    profile: Profile, streams: Sequence[Stream], produced: Sequence[Stream]
+) -> tuple[str, ...]:
+    """Keep only the predicted drops the written file does *not* in fact contain.
+
+    A ``-map`` set says what ffmpeg was asked to carry, which is not the same as
+    what the muxer wrote: MP4 and MOV regenerate a timecode track from source
+    metadata, so a ``tmcd`` stream no selector names is in the output anyway
+    (issue #66). Comparing *counts per stream type* is what makes this general
+    rather than a `tmcd` special case -- and it is the only comparison available,
+    since a regenerated stream shares neither index nor codec name with its
+    source (measured: ffprobe reports no ``codec_name`` at all for either side).
+
+    A surplus is therefore attributed to the predicted drops of that type in
+    source order. With more than one predicted drop of one type and only some of
+    them surviving, the *count* of reported drops stays right while the index
+    named may not be -- deliberately preferred over the alternative of reporting
+    a loss that did not happen, and never over-suppressing: a type with no
+    surplus keeps every note it was given (``docs/constitution.md``).
+    """
+    kept, predicted = _predict_unmapped(profile, streams)
+    surplus = {
+        kind: max(count - kept.get(kind, 0), 0) for kind, count in _count_types(produced).items()
+    }
+    notes: list[str] = []
+    for kind, note in predicted:
+        if surplus.get(kind, 0) > 0:
+            surplus[kind] -= 1
+            continue
+        notes.append(note)
+    return tuple(notes)
 
 
 def describe_unsupported(profile: Profile, streams: Sequence[Stream]) -> tuple[str, ...] | None:

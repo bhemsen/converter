@@ -7,7 +7,7 @@ import pytest
 from converter import batch
 from converter.batch import Outcome, Result, Task, convert_one, run_batch, summarise
 from converter.ffmpegtool import CommandResult, ProbeError, Stream, Tools
-from converter.profiles import FLAC, MP4, WAV, Attempt, Profile, StreamRule, flags
+from converter.profiles import FLAC, MKV, MOV, MP4, WAV, WEBM, Attempt, Profile, StreamRule, flags
 
 TOOLS = Tools(ffmpeg="ffmpeg", ffprobe="ffprobe")
 
@@ -42,8 +42,15 @@ def fake_ffmpeg(monkeypatch):
             self.calls: list[list[str]] = []
             self.exit_codes: list[int] = [0]
             self.streams: list[Stream] = []
+            #: What a probe of the *written file* reports, as opposed to
+            #: ``streams`` (the source). Empty by default: the muxer kept
+            #: nothing the mapping did not ask for, so every predicted drop
+            #: stands. A profile whose container puts a stream back (MOV's
+            #: regenerated timecode track, issue #66) sets this instead.
+            self.output_streams: list[Stream] = []
             self.probe_error: str | None = None
             self.creates_output = True
+            self.written: set[Path] = set()
 
         def run(self, argv, **_kwargs):
             argv = list(argv)
@@ -51,12 +58,16 @@ def fake_ffmpeg(monkeypatch):
             code = self.exit_codes[min(len(self.calls) - 1, len(self.exit_codes) - 1)]
             if self.creates_output:
                 Path(argv[-1]).write_bytes(b"partial")
+                self.written.add(Path(argv[-1]))
             return CommandResult(tuple(argv), code, "", "boom" if code else "")
 
-        def probe_streams(self, _tools, _src):
+        def probe_streams(self, _tools, src):
             if self.probe_error is not None:
                 raise ProbeError(self.probe_error)
-            return self.streams
+            # Which file is being probed is the whole point of the
+            # confirmation step, so the fake has to tell the two apart rather
+            # than answering the same list for both.
+            return self.output_streams if Path(src) in self.written else self.streams
 
     fake = Fake()
     monkeypatch.setattr(batch.ffmpegtool, "run", fake.run)
@@ -70,17 +81,25 @@ def make_task(tmp_path: Path, name: str = "clip") -> Task:
     return Task(src, tmp_path / "out" / f"{name}.mp4")
 
 
-def spy_on_probe(monkeypatch, streams: list[Stream]) -> list[Path]:
+def spy_on_probe(
+    monkeypatch, streams: list[Stream], output_streams: list[Stream] | None = None
+) -> list[Path]:
     """Replace probe_streams on the module and record what it was asked about.
 
     Patching the module attribute matters: rebinding the attribute on the fake
     object would leave the already-installed reference untouched, and the spy
     would silently never be called.
+
+    The source is probed first and the output only afterwards, and only when a
+    loss is about to be claimed (``batch._confirm_against_output``), so call
+    order is enough to tell the two apart for a single-file conversion.
     """
     seen: list[Path] = []
 
     def probe(_tools, src):
         seen.append(src)
+        if len(seen) > 1:
+            return list(output_streams or [])
         return list(streams)
 
     monkeypatch.setattr(batch.ffmpegtool, "probe_streams", probe)
@@ -272,9 +291,9 @@ class TestPartialCheapAttemptVerification:
         assert result.outcome is Outcome.CONVERTED
         assert result.attempt == "remux"
         assert len(fake_ffmpeg.calls) == 1
-        # The other half of "at most one probe per file": the success side pays
-        # for exactly one, never one per rung and never a second on the way out.
-        assert probes == [task.src]
+        # One probe per file, plus the one the claim itself pays for: the source
+        # says what was there, the output says what survived. Never one per rung.
+        assert probes == [task.src, task.dst]
         assert result.notes == ("attachment stream 1 (ttf) dropped: not supported by MP4",)
 
     def test_a_dropped_surplus_audio_stream_is_named_on_a_successful_pcm_run(
@@ -285,6 +304,9 @@ class TestPartialCheapAttemptVerification:
         task = Task(src, tmp_path / "out" / "two-tone.wav")
         task.dst.parent.mkdir(parents=True)
         fake_ffmpeg.streams = [Stream(0, "audio", "opus"), Stream(1, "audio", "opus")]
+        # WAV really does hold one: the drop the mapping predicts is confirmed
+        # by the written file rather than assumed from the mapping alone.
+        fake_ffmpeg.output_streams = [Stream(0, "audio", "pcm_s16le")]
 
         result = convert_one(WAV, task, TOOLS, overwrite=False)
 
@@ -327,6 +349,29 @@ class TestPartialCheapAttemptVerification:
         assert result.outcome is Outcome.CONVERTED
         assert result.notes == ("could not verify which source streams were kept: unreadable",)
 
+    def test_a_probe_of_the_output_that_fails_leaves_the_prediction_standing(
+        self, tmp_path, fake_ffmpeg, monkeypatch
+    ):
+        """The confirmation is what can *remove* a note, so losing it must fall
+        back to over-reporting, never to silence (``docs/constitution.md``)."""
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+
+        def probe(_tools, src):
+            if Path(src) == task.dst:
+                raise ProbeError("output vanished")
+            return [Stream(0, "video", "h264"), Stream(1, "attachment", "ttf")]
+
+        monkeypatch.setattr(batch.ffmpegtool, "probe_streams", probe)
+
+        result = convert_one(MP4, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert result.notes == (
+            "attachment stream 1 (ttf) dropped: not supported by MP4",
+            "could not confirm this against the output: output vanished",
+        )
+
     def test_a_later_rung_is_not_verified_a_second_time(self, tmp_path, fake_ffmpeg, monkeypatch):
         """The selective rung was built from the stream list itself, so its own
         notes are already accurate and a second probe would buy nothing."""
@@ -340,6 +385,80 @@ class TestPartialCheapAttemptVerification:
         assert result.attempt == "selective"
         assert len(probes) == 1
         assert result.notes == ("video stream 0 (vp8) re-encoded to h264",)
+
+
+class TestDropsAreConfirmedAgainstTheOutput:
+    """Issue #66: a `-map` set says what ffmpeg was *asked* to carry, which is
+    not the same as what the muxer wrote.
+
+    Measured against ffmpeg 9.0: MP4 and MOV regenerate a `tmcd` timecode track
+    from the source's metadata although no selector names it, while MKV and
+    WebM really do leave it behind. Every test here drives the
+    cheap-attempt-succeeds path through `convert_one`, so it exercises the
+    success-side verification rather than `jobs.confirm_drops` in isolation.
+    """
+
+    #: What ffprobe reports for a `tmcd` stream: a data stream whose codec name
+    #: is absent on both sides, which is why the confirmation compares counts
+    #: per stream type and not indices or codec names.
+    TIMECODE = Stream(2, "data", "")
+
+    def _task(self, tmp_path: Path, suffix: str) -> Task:
+        src = tmp_path / "tcsrc.mp4"
+        src.write_bytes(b"data")
+        task = Task(src, tmp_path / "out" / f"tcsrc.{suffix}")
+        task.dst.parent.mkdir(parents=True)
+        return task
+
+    @pytest.mark.parametrize("profile", [MP4, MOV], ids=lambda profile: profile.label)
+    def test_a_timecode_stream_the_muxer_puts_back_is_not_reported_as_dropped(
+        self, tmp_path, fake_ffmpeg, profile
+    ):
+        task = self._task(tmp_path, profile.target_suffix.lstrip("."))
+        fake_ffmpeg.streams = [Stream(0, "video", "h264"), Stream(1, "audio", "aac"), self.TIMECODE]
+        fake_ffmpeg.output_streams = list(fake_ffmpeg.streams)
+
+        result = convert_one(profile, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert result.notes == ()
+
+    @pytest.mark.parametrize("profile", [MKV, WEBM], ids=lambda profile: profile.label)
+    def test_a_timecode_stream_the_muxer_really_drops_is_still_named(
+        self, tmp_path, fake_ffmpeg, profile
+    ):
+        task = self._task(tmp_path, profile.target_suffix.lstrip("."))
+        fake_ffmpeg.streams = [Stream(0, "video", "h264"), Stream(1, "audio", "aac"), self.TIMECODE]
+        fake_ffmpeg.output_streams = [Stream(0, "video", "h264"), Stream(1, "audio", "aac")]
+
+        result = convert_one(profile, task, TOOLS, overwrite=False)
+
+        assert f"data stream 2 (unknown) dropped: not supported by {profile.label}" in result.notes
+
+    def test_only_the_surviving_share_of_a_predicted_drop_is_forgiven(self, tmp_path, fake_ffmpeg):
+        """Two data streams predicted dropped, one of them in the output: the
+        count of reported losses has to follow the output, not the mapping."""
+        task = self._task(tmp_path, "mp4")
+        fake_ffmpeg.streams = [Stream(0, "video", "h264"), Stream(1, "data", ""), self.TIMECODE]
+        fake_ffmpeg.output_streams = [Stream(0, "video", "h264"), Stream(1, "data", "")]
+
+        result = convert_one(MP4, task, TOOLS, overwrite=False)
+
+        assert len(result.notes) == 1
+        assert result.notes[0].startswith("data stream ")
+
+    def test_the_output_is_probed_only_when_a_loss_is_about_to_be_claimed(
+        self, tmp_path, fake_ffmpeg, monkeypatch
+    ):
+        """The confirmation's whole cost argument: a conversion that lost
+        nothing still spends the single probe it spent before."""
+        task = self._task(tmp_path, "mp4")
+        probes = spy_on_probe(monkeypatch, [Stream(0, "video", "h264"), Stream(1, "audio", "aac")])
+
+        result = convert_one(MP4, task, TOOLS, overwrite=False)
+
+        assert result.notes == ()
+        assert probes == [task.src]
 
 
 class TestUnsupportedOutcome:

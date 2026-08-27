@@ -194,10 +194,12 @@ def version(tools: Tools) -> str:
 def probe_streams(tools: Tools, src: str | os.PathLike[str]) -> list[Stream]:
     """List the elementary streams of *src*.
 
-    Called at most once per file, and never for a cheap attempt whose mapping is
+    Called once per file, and never for a cheap attempt whose mapping is
     exhaustive: either after an attempt has failed, or -- when the profile
     declares its cheap attempt partial by construction -- to name what that
-    attempt could not carry (``docs/design/degradation-ladder.md``).
+    attempt could not carry. A run that is about to report such a loss calls it
+    once more, on the *output* file, to confirm the claim against what the muxer
+    actually wrote (``docs/design/degradation-ladder.md``).
     """
     result = run(
         [

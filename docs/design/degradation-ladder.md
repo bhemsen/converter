@@ -10,13 +10,15 @@ In which order the engine tries to produce one output file, where a subprocess i
 spent, and which conditions move it down a rung. The point of the ladder is that
 `ffprobe` stays off the happy path of an *exhaustive* cheap attempt
 (`docs/constitution.md`), so every node that costs a process call is marked —
-including the one node on the success side, which only a cheap attempt the
-profile declares *partial by construction* ever reaches.
+including the two nodes on the success side, which only a cheap attempt the
+profile declares *partial by construction* ever reaches, and the second of which
+only a run that is about to claim a loss ever reaches.
 
 ```mermaid
 flowchart TD
     A["Attempt 1 — the profile's cheap attempt<br/>(ffmpeg)"]
-    V["verify what that mapping could carry<br/>(ffprobe — the only probe on the success side)"]
+    V["predict what that mapping could carry<br/>(ffprobe on the source — the success side's first probe)"]
+    C["confirm the prediction against the written file<br/>(ffprobe on the output — only when a loss is predicted)"]
     P["describe the source's streams<br/>(ffprobe — the only probe on the failure side)"]
     PLAN["build the selective plan<br/>(no subprocess — see stream-decision.md)"]
     SEL["Attempt 2 — selective<br/>(ffmpeg)"]
@@ -26,8 +28,11 @@ flowchart TD
 
     A -->|"exit 0, and the profile declares the mapping exhaustive"| OK
     A -->|"exit 0, and the profile declares the mapping partial"| V
-    V -->|"stream list — plus a note per source stream<br/>the mapping could not carry"| OK
+    V -->|"stream list, and the mapping gave nothing up"| OK
+    V -->|"stream list, and the mapping left something behind"| C
     V -->|"probe failed — plus a note that the run is unverified,<br/>so it is not a plain success"| OK
+    C -->|"a note per predicted drop the output does not hold"| OK
+    C -->|"probe failed — every predicted drop stands,<br/>plus a note that it could not be confirmed"| OK
     A -->|"exit != 0"| P
     P -->|"probe failed"| BAD
     P -->|"stream list"| PLAN
@@ -42,12 +47,32 @@ flowchart TD
 
 ## Rules the diagram encodes
 
-- **At most one probe per file, and none for an exhaustive cheap attempt.** The
-  failure-side `ffprobe` node sits behind the first non-zero exit and is reached
-  at most once; every later rung reuses the same stream list. The success-side
-  node is reached only when the profile declares its cheap attempt *partial by
-  construction*. The two are mutually exclusive — a file takes one path or the
-  other — so no file is ever probed twice.
+- **One probe per file, and none for an exhaustive cheap attempt — plus one more
+  only for a run that is about to report a loss.** The failure-side `ffprobe`
+  node sits behind the first non-zero exit and is reached at most once; every
+  later rung reuses the same stream list. The success-side nodes are reached only
+  when the profile declares its cheap attempt *partial by construction*, and the
+  failure side and the success side are mutually exclusive — a file takes one
+  path or the other. The second success-side probe, `C`, is the one exception to
+  the one-probe count, and it is bounded by the claim it pays for: it runs only
+  when `V` predicted at least one drop, so a conversion that gave nothing up
+  still costs a single probe.
+- **A predicted drop is confirmed against the output before it is reported.** A
+  `-map` set says what ffmpeg was *asked* to carry, which is not the same as what
+  the muxer wrote: MP4 and MOV regenerate a `tmcd` timecode track from the
+  source's metadata although no selector names it (measured, ffmpeg 9.0), so the
+  mapping alone reports a loss that did not happen — the false-positive half of
+  the loss accounting `docs/vision.md` names as the USP (issue #66). `C` compares
+  *counts per stream type* between the source and the written file, because a
+  regenerated stream shares neither index nor codec name with its source, and
+  attributes any surplus to that type's predicted drops in source order. Two
+  properties make this safe in the direction the constitution cares about: a type
+  with no surplus keeps every note it was given, and a probe that fails leaves
+  the whole prediction standing rather than falling silent. The cost is that with
+  several predicted drops of one type and only some of them surviving, the
+  *count* of reported losses is right while the index named may not be —
+  deliberately preferred over reporting a loss that did not happen, and never
+  over the silence the constitution forbids.
 - **A partial cheap attempt's success is verified, not assumed.** A mapping is
   partial by construction when it can leave source streams unmapped whatever the
   source turns out to contain: MP4's `-map 0:v? -map 0:a? -map 0:s?` selects no
@@ -152,9 +177,9 @@ flowchart TD
   not, and a failure at the rung before it is then the end of the ladder.
 - **Every rung carries its own notes.** The notes of the attempt that actually
   succeeded are what the batch reports — the discarded rungs' notes are not. Only
-  the cheap attempt's notes are ever added to, and only by the verification node
-  above it; a later rung was built from the stream list itself, so its notes are
-  already complete and it is never verified a second time.
+  the cheap attempt's notes are ever added to, and only by the two verification
+  nodes above it; a later rung was built from the stream list itself, so its
+  notes are already complete and it is never verified a second time.
 - **Container-wide options are appended by the engine, once, at the end of every
   attempt.** The profile declares them in one place instead of repeating them in
   each attempt it declares.
