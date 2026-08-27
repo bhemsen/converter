@@ -605,7 +605,13 @@ New-Item -ItemType Directory -Force in
   principles), `docs/design/degradation-ladder.md` (the diagram gains node `C`
   and a rule for it), `docs/design.md` (Cost markers), `docs/architecture.md`
   (Key flows section 1), `docs/prior-art.md`'s ADOPT note, and
-  `converter/ffmpegtool.probe_streams`'s docstring.
+  `converter/ffmpegtool.probe_streams`'s docstring. One restatement is left
+  stale on purpose: `spec-profile-registry.md`'s Constraints still say "the
+  engine probes at most once per file". That file was being edited concurrently
+  by another issue's branch, and a Decision log entry outside one's own spec is
+  not this issue's to write -- the live normative statement in
+  `docs/constitution.md` is corrected, and the archived one is a record of what
+  phase 1 decided.
 
   `mov`'s standing note (`"data and timecode streams are not carried into MOV"`,
   Prior decisions row 3 and the Verification item pinning its wording) is
