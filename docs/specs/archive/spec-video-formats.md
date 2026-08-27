@@ -582,32 +582,51 @@ New-Item -ItemType Directory -Force in
   Fixed **generally rather than by special-casing `tmcd`**: `jobs.verify_success`
   is now explicitly a *prediction* from the mapping, and `jobs.confirm_drops`
   weighs it against the file that was actually written, keeping only the drops
-  the output does not contain. The comparison counts streams per **type and
-  codec name together**. An index cannot be the match key -- a stream the muxer
-  put back carries whatever index the output gives it -- but the codec name can:
-  ffprobe reports none at all for a `tmcd` stream on *either* side, and reports
-  `bin_data` on both sides of a `gpmd`/ANC telemetry stream. Any surplus is
-  attributed to that pair's predicted drops in source order, so with several
-  predicted drops sharing one pair and only some surviving the *count* of
-  reported losses is right while the index named may not be -- accepted
-  deliberately, since the alternative is reporting a loss that did not happen.
-  The direction `docs/constitution.md` forbids is closed on three sides: a pair
-  with no surplus keeps every note it was given, a probe that fails leaves the
-  whole prediction standing with an added note saying it could not be confirmed,
-  and the output probe now also catches `OSError` rather than turning a
-  conversion ffmpeg already completed into a reported failure.
+  the output does not contain. The comparison counts both files' streams
+  **twice** -- once per stream type, once per type-and-codec-name pair -- and
+  forgives a predicted drop only where *both* counts show a surplus, spending one
+  of each budget per forgiveness. An index cannot be a match key at all: a stream
+  the muxer put back carries whatever index the output gives it.
 
-  The first draft of this fix matched on `codec_type` alone, and review built the
-  counter-example that killed it: no profile declares a `data` rule, so
-  `kept["data"]` is always 0 and *any* data stream in the output forgave one
-  predicted data drop. A source carrying `gpmd` telemetry *and* a source-level
-  timecode therefore reported a clean success while the telemetry was genuinely
-  gone -- trading the common false positive for the rarer false negative that
-  `docs/constitution.md` forbids outright. Re-measured on ffmpeg 9.0 to settle
-  it: a source with a `TIMECODE` tag and no data stream at all still produces a
-  `tmcd` data stream in a MOV output (so the track comes from *metadata*), and a
-  `video + bin_data` source produces an output with zero data streams (so
-  `bin_data` really is lost). Both facts are now pinned by tests.
+  It took two review rounds to arrive at both halves, and each half exists
+  because review built a counter-example that turned a real loss into a silent
+  success -- the direction `docs/constitution.md` forbids outright, and the one
+  this fix must not open while closing its mirror image.
+
+  **Round 1 killed matching by type alone.** No profile declares a `data` rule,
+  so `kept["data"]` is always 0 and *any* data stream in the output forgave one
+  predicted data drop. A source carrying `gpmd`/ANC telemetry *and* a
+  source-level timecode reported a clean success while the telemetry was
+  genuinely gone. Re-measured on ffmpeg 9.0 to settle the key: a source with a
+  `TIMECODE` tag and no data stream at all still produces a `tmcd` data stream in
+  a MOV output (so the track comes from *metadata*), and a `video + bin_data`
+  source produces an output with zero data streams (so `bin_data` really is
+  lost). ffprobe reports no `codec_name` on *either* side of a `tmcd` pair and
+  `bin_data` on both sides of a telemetry one -- which is what makes the codec
+  name a usable match key.
+
+  **Round 2 killed matching by that key alone.** A cheap attempt that
+  *re-encodes* makes the two sides disagree by construction: `kept` carries the
+  source's codec name, the output carries the encoder's. WAV's `-map 0:a:0 -c:a
+  pcm_s16le` over an `[aac, pcm_s16le]` source writes one `pcm_s16le` stream,
+  which read as a surplus under that key and forgave the drop of the source's
+  second, genuinely lost, `pcm_s16le` track -- an ordinary camera/pro-video MOV
+  through `--to wav`, not a corner case. A re-encode preserves a stream's *type*
+  but not its codec name, which is exactly why the type count is immune to that
+  phantom, and why requiring both is not a patch on top of the first rule but the
+  rule the two failures jointly describe. WAV is the only live instance today,
+  but the hazard is structural: it arms itself for any future profile that
+  combines a re-encoding cheap attempt with a `stream_limit`.
+
+  Within a type, a surplus is attributed to the predicted drops sharing its key
+  in source order, so with several predicted drops sharing one pair and only some
+  surviving the *count* of reported losses is right while the index named may not
+  be -- accepted deliberately, since the alternative is reporting a loss that did
+  not happen. The forbidden direction is closed on three further sides: a drop
+  with no surplus under either count keeps its note, a probe that fails leaves the
+  whole prediction standing with an added note saying it could not be confirmed,
+  and the output probe catches `OSError` as well as `ProbeError` rather than
+  turning a conversion ffmpeg already completed into a reported failure.
 
   **ffprobe frequency changed, deliberately.** The success side now spends a
   second probe -- on the *output* -- but only on a run that has already predicted

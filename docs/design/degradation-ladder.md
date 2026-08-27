@@ -66,22 +66,35 @@ flowchart TD
   source's metadata although no selector names it (measured, ffmpeg 9.0), so the
   mapping alone reports a loss that did not happen — the false-positive half of
   the loss accounting `docs/vision.md` names as the USP (issue #66). `C` counts
-  the streams of each **type-and-codec-name pair** in the source and in the
-  written file, and attributes any surplus to that pair's predicted drops in
-  source order. An index cannot be the match key — a stream the muxer put back
-  carries whatever index the output gives it — but the codec name can: a
-  regenerated `tmcd` reports none at all and neither does its source
-  counterpart, while a `gpmd`/ANC telemetry stream reports `bin_data` on both
-  sides. Matching on type alone is what must be avoided, and is the shape this
-  rule exists to forbid: no profile declares a `data` rule, so a regenerated
-  timecode would forgive the loss of telemetry in the same file, and a real drop
-  would go unreported. Two further properties keep the direction the constitution
-  cares about closed: a pair with no surplus keeps every note it was given, and a
-  probe that fails leaves the whole prediction standing rather than falling
-  silent. The residual cost is that with several predicted drops sharing one pair
-  and only some of them surviving, the *count* of reported losses is right while
-  the index named may not be — deliberately preferred over reporting a loss that
-  did not happen, and never over the silence the constitution forbids.
+  the source's streams and the written file's **twice** — once per stream type,
+  once per type-and-codec-name pair — and forgives a predicted drop only where
+  *both* counts show a surplus, spending one of each budget per forgiveness. An
+  index cannot be a match key at all: a stream the muxer put back carries
+  whatever index the output gives it.
+
+  Each count alone is unsound, in the direction the constitution forbids, and
+  each covers the other's blind spot. **By type alone**, no profile declares a
+  `data` rule, so every data stream in the output forgives one predicted data
+  drop, whichever it actually was — a regenerated `tmcd` would silence the loss
+  of `gpmd`/ANC telemetry in the same file. **By pair alone**, a cheap attempt
+  that *re-encodes* makes the two sides disagree by construction, since the
+  source carries the decoder's codec name and the output the encoder's: WAV's
+  `-map 0:a:0 -c:a pcm_s16le` over an `[aac, pcm_s16le]` source writes one
+  `pcm_s16le` stream, which reads as a surplus under that pair and would forgive
+  the loss of the source's second, genuinely dropped, `pcm_s16le` track. A
+  re-encode preserves a stream's type but not its codec name, which is exactly
+  why the type count is immune to that phantom; the codec name is what stops
+  cross-attribution within a type, since a regenerated `tmcd` reports no codec
+  name and neither does its source counterpart, while telemetry reports
+  `bin_data` on both sides.
+
+  Two further properties keep the same direction closed: a drop with no surplus
+  under either count keeps its note, and a probe that fails leaves the whole
+  prediction standing rather than falling silent. The residual cost is that with
+  several predicted drops sharing one pair and only some of them surviving, the
+  *count* of reported losses is right while the index named may not be —
+  deliberately preferred over reporting a loss that did not happen, and never
+  over the silence the constitution forbids.
 - **A partial cheap attempt's success is verified, not assumed.** A mapping is
   partial by construction when it can leave source streams unmapped whatever the
   source turns out to contain: MP4's `-map 0:v? -map 0:a? -map 0:s?` selects no

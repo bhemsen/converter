@@ -2646,11 +2646,17 @@ class TestConfirmDrops:
     carry. MP4 and MOV regenerate a `tmcd` timecode track from source metadata
     with no selector naming it (issue #66), so the mapping alone over-reports.
 
-    The match key is type *and* codec name. The first review of this fix
-    matched on type alone and built the counter-example that kills it: no
-    profile declares a `data` rule, so a regenerated `tmcd` forgave the drop of
-    a `gpmd`/ANC telemetry stream in the same file, turning a real loss into a
-    silent success -- the one direction `docs/constitution.md` forbids outright.
+    A drop is forgiven only when the output holds a surplus by stream type
+    *and* by (type, codec name). Review killed both halves in turn, each with a
+    counter-example that turned a real loss into a silent success -- the one
+    direction `docs/constitution.md` forbids outright:
+
+    * by type alone, a regenerated `tmcd` forgave the drop of a `gpmd`/ANC
+      telemetry stream in the same file, since no profile declares a `data`
+      rule;
+    * by key alone, WAV's re-encoding cheap attempt made source and output
+      disagree on the codec name, so its own `pcm_s16le` output forgave the
+      drop of a second, genuinely lost `pcm_s16le` source track.
     """
 
     SOURCE: ClassVar[list[Stream]] = [
@@ -2714,9 +2720,27 @@ class TestConfirmDrops:
             f"data stream 1 (bin_data) dropped: not supported by {profile.label}",
         )
 
+    def test_a_re_encoded_output_stream_never_forgives_a_real_drop(self):
+        """The counter-example that decided the *second* half of the rule.
+
+        WAV's cheap attempt re-encodes (`-map 0:a:0 -c:a pcm_s16le`), so the
+        source's codec name and the output's disagree by construction. Its one
+        `pcm_s16le` output stream reads as a surplus under that key, and by key
+        alone it forgave the drop of the source's second track -- which happens
+        to be `pcm_s16le` too and is genuinely gone. The stream-type count is
+        what closes it: a re-encode preserves the type, so `audio` shows no
+        surplus at all.
+        """
+        source = [Stream(0, "audio", "aac"), Stream(1, "audio", "pcm_s16le")]
+        produced = [Stream(0, "audio", "pcm_s16le")]
+
+        assert jobs.confirm_drops(WAV, source, produced) == (
+            "audio stream 1 (pcm_s16le) dropped: WAV holds 1 audio stream",
+        )
+
     def test_a_stream_of_another_type_never_forgives_a_drop(self):
-        """The surplus is counted per stream type, so an extra audio stream in
-        the output cannot silence a dropped attachment."""
+        """Neither budget is spendable across stream types, so an extra audio
+        stream in the output cannot silence a dropped attachment."""
         source = [Stream(0, "video", "h264"), Stream(1, "attachment", "ttf")]
         produced = [Stream(0, "video", "h264"), Stream(1, "audio", "aac")]
 

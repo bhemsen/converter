@@ -459,6 +459,26 @@ class TestDropsAreConfirmedAgainstTheOutput:
 
         assert result.notes == ("data stream 2 (unknown) dropped: not supported by MP4",)
 
+    def test_a_real_drop_is_not_forgiven_by_the_re_encode_that_replaced_it(
+        self, tmp_path, fake_ffmpeg
+    ):
+        """The second regression review caught: WAV's cheap attempt re-encodes,
+        so its `pcm_s16le` output stream reads as a surplus under the source's
+        own `pcm_s16le` key and forgave a track that really was lost. An
+        ordinary camera/pro-video MOV carrying one compressed and one PCM track
+        reaches this, so it is not a corner case."""
+        src = tmp_path / "two-track.mov"
+        src.write_bytes(b"data")
+        task = Task(src, tmp_path / "out" / "two-track.wav")
+        task.dst.parent.mkdir(parents=True)
+        fake_ffmpeg.streams = [Stream(0, "audio", "aac"), Stream(1, "audio", "pcm_s16le")]
+        fake_ffmpeg.output_streams = [Stream(0, "audio", "pcm_s16le")]
+
+        result = convert_one(WAV, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert result.notes == ("audio stream 1 (pcm_s16le) dropped: WAV holds 1 audio stream",)
+
     def test_a_real_drop_is_not_forgiven_by_a_stream_the_muxer_synthesised(
         self, tmp_path, fake_ffmpeg
     ):

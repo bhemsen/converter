@@ -16,9 +16,14 @@ inside the engine-built rung, and
 
 from collections.abc import Sequence
 from dataclasses import replace
+from typing import TypeVar
 
 from converter.ffmpegtool import Stream
 from converter.profiles import Attempt, Profile
+
+#: What a stream is counted under -- either its (type, codec name) key or its
+#: bare type. :func:`_surplus` does the same arithmetic for both.
+_K = TypeVar("_K")
 
 
 def _with_container_options(attempt: Attempt, profile: Profile) -> Attempt:
@@ -121,6 +126,27 @@ def _count_keys(streams: Sequence[Stream]) -> dict[tuple[str, str], int]:
     counts: dict[tuple[str, str], int] = {}
     for stream in streams:
         counts[_stream_key(stream)] = counts.get(_stream_key(stream), 0) + 1
+    return counts
+
+
+def _surplus(kept: dict[_K, int], produced: dict[_K, int]) -> dict[_K, int]:
+    """How many streams the output holds beyond what the mapping expected to keep."""
+    return {unit: max(count - kept.get(unit, 0), 0) for unit, count in produced.items()}
+
+
+def _by_type(counts: dict[tuple[str, str], int]) -> dict[str, int]:
+    """Collapse per-key counts onto the stream type alone."""
+    totals: dict[str, int] = {}
+    for (kind, _codec), count in counts.items():
+        totals[kind] = totals.get(kind, 0) + count
+    return totals
+
+
+def _count_types(streams: Sequence[Stream]) -> dict[str, int]:
+    """How many streams of each ``codec_type`` a probed stream list holds."""
+    counts: dict[str, int] = {}
+    for stream in streams:
+        counts[stream.codec_type] = counts.get(stream.codec_type, 0) + 1
     return counts
 
 
@@ -230,25 +256,39 @@ def confirm_drops(
     (issue #66). Comparing what the two files *hold*, rather than reasoning about
     `tmcd` in particular, is what makes this general.
 
-    The comparison counts streams per :func:`_stream_key` -- type and codec name
-    together. Type alone would be unsound in the direction ``docs/constitution.md``
-    forbids: no profile declares a ``data`` rule, so a regenerated `tmcd` would
-    forgive the drop of a `gpmd`/ANC telemetry stream in the same file and a real
-    loss would go unreported. A surplus is attributed to the predicted drops
-    sharing its key, in source order. With more than one predicted drop of one
-    key and only some of them surviving, the *count* of reported drops stays
-    right while the index named may not be -- deliberately preferred over the
-    alternative of reporting a loss that did not happen, and never
-    over-suppressing: a key with no surplus keeps every note it was given.
+    A predicted drop is forgiven only when the output holds a surplus under
+    **both** counts, and each forgiveness spends one of each budget. Neither
+    count is sound alone, and each covers the other's blind spot:
+
+    * By stream type alone, a regenerated `tmcd` would forgive the drop of a
+      `gpmd`/ANC telemetry stream in the same file -- no profile declares a
+      ``data`` rule, so every data stream in the output forgives one predicted
+      data drop, whichever it actually was.
+    * By :func:`_stream_key` alone, a cheap attempt that *re-encodes* makes the
+      two sides disagree by construction: ``kept`` carries the source's codec
+      name and the output carries the encoder's. WAV's ``-map 0:a:0 -c:a
+      pcm_s16le`` over an ``[aac, pcm_s16le]`` source writes one ``pcm_s16le``
+      stream, which reads as a surplus under that key and forgives the drop of
+      the source's second, genuinely lost, ``pcm_s16le`` track. A re-encode
+      preserves a stream's *type* but not its codec name, which is exactly why
+      the type count is immune to that phantom.
+
+    Both readings therefore have to agree before a note is dropped. Within a
+    type, a surplus is attributed to the predicted drops sharing its key in
+    source order: with more than one predicted drop of one key and only some of
+    them surviving, the *count* of reported drops stays right while the index
+    named may not be -- deliberately preferred over the alternative of reporting
+    a loss that did not happen, and never over-suppressing.
     """
     kept, predicted = _predict_unmapped(profile, streams)
-    surplus = {
-        key: max(count - kept.get(key, 0), 0) for key, count in _count_keys(produced).items()
-    }
+    by_key = _surplus(kept, _count_keys(produced))
+    by_type = _surplus(_by_type(kept), _count_types(produced))
     notes: list[str] = []
     for key, note in predicted:
-        if surplus.get(key, 0) > 0:
-            surplus[key] -= 1
+        kind = key[0]
+        if by_key.get(key, 0) > 0 and by_type.get(kind, 0) > 0:
+            by_key[key] -= 1
+            by_type[kind] -= 1
             continue
         notes.append(note)
     return tuple(notes)
