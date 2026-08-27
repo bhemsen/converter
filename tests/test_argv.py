@@ -2888,14 +2888,38 @@ class TestDispositionResolution:
 
     @pytest.mark.parametrize("profile", [OGG, OPUS, WAV], ids=lambda profile: profile.label)
     def test_ogg_opus_and_wav_are_unaffected_by_the_disposition(self, profile):
-        """None of the three declares an ``attached_pic`` rule, so a stream's
-        disposition must make no difference at all -- the fallback guard this
-        phase must not break (issue #76's Acceptance)."""
+        """None of the three declares a ``video`` rule *or* an ``attached_pic``
+        one, so a video-typed stream is dropped by D1 either way (issue #76's
+        Acceptance names these three as the guard). This alone cannot catch a
+        broken ``"attached_pic" in profile.rules`` clause in `_rule_key` --
+        neither key resolves to a declared rule here regardless -- so
+        `test_a_profile_with_a_video_rule_and_no_attached_pic_rule_uses_it`
+        below is the case that actually exercises the guard."""
         plain = Stream(0, "video", "png")
         picture = Stream(0, "video", "png", attached_pic=True)
 
         assert jobs.verify_success(profile, [plain]) == jobs.verify_success(profile, [picture])
         assert jobs.retries(profile, [plain]) == jobs.retries(profile, [picture])
+
+    def test_a_profile_with_a_video_rule_and_no_attached_pic_rule_uses_it(self):
+        """MP4 declares a ``video`` rule but no ``attached_pic`` one -- unlike
+        ogg/opus/wav above, a picture-disposition stream here must still fall
+        back to and be handled by the ``video`` rule, identically to an
+        ordinary video stream of the same codec. Dropping `_rule_key`'s
+        ``"attached_pic" in profile.rules`` guard clause changes this exact
+        case: the stream would resolve to the undeclared ``"attached_pic"``
+        key instead, and be dropped by D1 rather than copied by the video
+        rule -- a fabricated drop note and a lost stream, invisible to any
+        test that never gives the profile a ``video`` rule to steal."""
+        plain = Stream(0, "video", "mjpeg")
+        picture = Stream(0, "video", "mjpeg", attached_pic=True)
+
+        assert jobs.verify_success(MP4, [plain]) == jobs.verify_success(MP4, [picture]) == ()
+
+        plain_selective = jobs.retries(MP4, [plain])[0]
+        picture_selective = jobs.retries(MP4, [picture])[0]
+        assert plain_selective == picture_selective
+        assert plain_selective.options[:4] == ("-map", "0:0", "-c:v:0", "copy")
 
     def test_the_engine_still_counts_a_carried_picture_under_video(self):
         """A real video stream and an attached picture share one position
