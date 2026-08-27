@@ -268,8 +268,8 @@ New-Item -ItemType Directory -Force in
   that research mode `none` left it unchecked whether any comparable converter
   warns at all; checked now, the principle is stated everywhere and no tool
   surfaced that acts on it, so the differentiation is real. The entry's other half
-  — whether a list exists to adopt — resolved the other way; see the fourth
-  entry below.
+  — whether a list exists to adopt — resolved the other way; see the entry below
+  on ffmpeg's `-codecs` flag.
 - 2026-08-27: `docs/roadmap.md`'s seeded verdict "architecture — yes: a
   lossy-codec set is cross-cutting data" is wrong and is corrected here.
   Cross-cutting codec data already lives in `converter/profiles.py` as a
