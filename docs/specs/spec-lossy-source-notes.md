@@ -9,7 +9,12 @@ milestone and issues, and all progress lives in the GitHub issues and milestone.
 A completed spec is moved to `docs/specs/archive/`.
 
 **Depends on milestone #3 (audio-formats), which is complete.** Independent of
-milestone #6.
+milestone #6 *in outcome*, but not in text: phase 6 rewrites `flac`'s cheap attempt
+to `flags("-map 0:a? -map 0:disp:attached_pic? -c copy")` and adds three
+`attached_pic` rules with no fallback. The conclusion survives -- an MP3 still
+fails a `-c copy` into the flac muxer and still lands on the selective rung -- but
+the lossless criterion below must not match those three rules, which is why it
+tests the pair rather than the bare flag.
 
 ## The one thing this phase is about
 
@@ -25,8 +30,8 @@ carry it at all.
 
 ## Outcome
 
-- [ ] Converting a lossy source into a lossless target says so, naming the source
-      codec — for every target the gate's decision covers.
+- [ ] Converting a lossy source into a lossless target says so, naming the stream
+      index and the source codec -- for every target the gate's decision covers.
 - [ ] The advisory is distinguishable from a degradation note: it reports the
       source's history, not this run's sacrifice, and the constitution says which
       is which.
@@ -45,9 +50,22 @@ carry it at all.
 - `converter/profiles.py`: a module-level `LOSSY_CODECS` frozenset, beside the
   copy masks that already live there, and whatever per-rule flag marks a target
   as lossless for this purpose.
-- `converter/jobs.py`: emitting the advisory where the gate's decision puts it.
+- `converter/jobs.py`: emitting the advisory where the gate's decision puts it --
+  **appended after a rung is built, or onto the success-side notes, never inside
+  the plan**. `_build_selective` short-circuits on `if profile.explicit_streams
+  and not notes`, so an advisory added inside the plan would resurrect a rung that
+  is skipped today for `wav`, the one `explicit_streams=True` profile. This phase
+  adds a sentence, never a stream decision.
 - `docs/constitution.md`: the line distinguishing a degradation note from an
-  advisory, which its current notes convention and test gate do not cover.
+  advisory, which its current notes convention and test gate do not cover. This
+  amendment is needed under **both** options.
+- `docs/design/stream-decision.md`: the carve-out sentence saying an advisory is
+  not bound by the three-things rule the way a degradation note is -- the
+  precedent for such a carve-out is already in that file, for the unverified-run
+  note.
+- **Under option 2 only:** `docs/architecture.md` Key flow 1,
+  `docs/design/degradation-ladder.md` and the engine docstring, which is where the
+  codec-level restriction actually lives.
 - The tests, including one asserting the advisory does **not** fire for a
   lossless source or a lossy target.
 
@@ -66,6 +84,10 @@ carry it at all.
   analysis), squarely outside `docs/vision.md`'s "corruption detection" non-goal.
 - Any change to which conversions happen or what argv they build. This phase adds
   a sentence, never a stream decision.
+- **The bit-depth truncation `--to wav` already performs.** Measured, a 24-bit
+  FLAC becomes 16-bit PCM with no note. That is a genuine unreported loss, but it
+  is a *degradation* this conversion performs rather than the source's history,
+  so it belongs to a different note and a different phase.
 
 ## Constraints
 
@@ -85,14 +107,17 @@ carry it at all.
   checked whether any comparable converter warns at all. Checked now: the
   *principle* is stated everywhere — converting an MP3 to FLAC restores nothing,
   it just stores what is left in a new wrapper — but no converter surfaced that
-  warns about it, and no maintained lossy-codec list surfaced to adopt instead of
-  curating one. So the differentiation is real and the curation is unavoidable;
-  both halves of the seed's uncertainty resolve in favour of building it.
+  warns about it. That much one search supports, and the differentiation is real.
+  The second half is narrower than the seed hoped: ffmpeg **does** classify codecs
+  as lossy or lossless (`-codecs`, columns `L` and `S`), so a list does exist --
+  it is simply not usable here, for the three reasons the decision row gives.
 - [Container/codec capability modelling (Phase 1)](../prior-art.md#containercodec-capability-modelling-phase-1)
-  — the method: a curated set, hand-maintained, because `ffmpeg -codecs` reports
-  what a build contains and never a judgement about it. `LOSSY_CODECS` is the
-  same kind of artifact as a copy mask and lives in the same module for the same
-  reason.
+  -- the method: a curated set, hand-maintained. Note the phase-1 argument does
+  **not** transfer unchanged: its claim is that `-codecs` lists what a build
+  contains, "never which codec is LEGAL in which muxer" -- a statement about
+  muxers, which is a different question from lossiness. `LOSSY_CODECS` is the same
+  *kind* of artifact as a copy mask and lives in the same module, but it is
+  curated for its own reasons, given in the decision row.
 
 ## Design
 
@@ -112,19 +137,21 @@ Read off the merged registry and engine, not assumed.
 
 | Fact | Consequence |
 |---|---|
-| **Five targets are lossless** for this purpose — the rules that declare `fallback_name=None` on their content stream: `flac` (audio), `wav` (audio), `png`, `tiff`, `bmp` (video). The other `None` entries belong to subtitle and attachment rules | The advisory's scope is those five, and the existing "encoding into this gives up nothing" flag already identifies them |
+| **Nine rules declare `fallback_name=None`, but only five also declare a fallback**: `flac`(audio), `wav`(audio), `png`, `tiff`, `bmp`(video). The other four -- `mp4`/`mov`/`webm` subtitle, `mkv` attachment -- have no fallback at all, so their `None` means "drop", not "re-encode without a note" | The criterion has to be the pair, not the bare flag. Phase 6 adds three more bare-`None` rules (`attached_pic` on `mp3`, `m4a`, `flac`), which the bare test would misread as lossless targets |
+| **`--to wav` from a 24-bit FLAC writes 16-bit PCM and says nothing.** Measured: source `sample_fmt=s32`, `bits_per_raw_sample=24`; output `pcm_s16le`, 16 bits; the run reports `converted` with no note | So `fallback_name=None` does **not** mean "gives up nothing" -- it means the profile declared the encode not worth naming. This phase reuses that declaration; the bit-depth truncation is a separate gap, named rather than inherited |
 | **Only `flac` reaches a lossy source on the failure side.** Its cheap attempt is `-map 0:a? -c:a copy`, so an MP3 source fails it and lands on the selective rung — measured, `-map 0:0 -c:a flac` with **no notes at all** today | The motivating case is a failure-side rung, where the engine holds the stream list and the source codec, and where a note costs nothing structurally |
 | **`wav`, `png`, `tiff` and `bmp` always encode in their cheap attempt** (`-map 0:a:0 -c:a pcm_s16le`, `-map 0:v? -c:v png`, …), so a lossy source *succeeds* at rung 1 | For those four the advisory would have to come from the success-side verification — which issue #18's fix deliberately confined to structural verdicts |
 | `jobs._unmapped_notes` states its own boundary: "Codec-level ones are deliberately left out: the cheap attempt has already exited 0, so whatever it did with a stream's codec worked, and announcing a re-encode it never performed would just swap one dishonest report for another" | The boundary's *reason* does not apply here — this advisory announces no re-encode — but the mechanism does. Extending it is a foundation-doc change, not a code detail |
-| The copy masks already live as module-level frozensets in `converter/profiles.py` (`MP4_VIDEO_CODECS`, `TEXT_SUBTITLE_CODECS`, …) | A `LOSSY_CODECS` constant beside them needs **no** architecture change. `docs/roadmap.md`'s seeded verdict for this phase — "architecture — yes: a lossy-codec set is cross-cutting data" — is wrong and is corrected here |
+| **Genuinely cross-cutting codec data already lives in `converter/profiles.py` as a module-level frozenset**: `TEXT_SUBTITLE_CODECS` is shared by `mp4`, `mov` and `webm`. (Most masks are inlined per profile; only the four container profiles use module-level constants) | A `LOSSY_CODECS` constant beside it needs **no** architecture change. That shared-across-profiles precedent, not the mere existence of module constants, is what answers the seeded verdict "architecture — yes: a lossy-codec set is cross-cutting data" -- corrected here |
 
 ### Decisions
 
 | Decision | Rationale | Date |
 |---|---|---|
 | `LOSSY_CODECS` is a module-level frozenset in `converter/profiles.py`, beside the copy masks | Same kind of artifact, same module, same curation argument (`docs/prior-art.md`). The seeded architecture verdict assumed it needed a new home; the masks show it does not | 2026-08-27 |
-| The set is curated by hand and its membership argued in a comment, not derived | `ffmpeg -codecs` reports what a build contains, never a judgement. The awkward cases are the point: `alac`, `flac`, `wmalossless` and `truehd` are lossless despite living beside lossy siblings, and `pcm_*` is lossless by construction | 2026-08-27 |
-| A target counts as lossless for the advisory exactly where its content rule declares `fallback_name=None` | That flag already means "encoding into this gives up nothing", which is the same judgement. Introducing a second, parallel marker would let the two disagree | 2026-08-27 |
+| The set is curated by hand, **although ffmpeg does ship a lossy/lossless flag** (`-codecs`, columns `L` and `S`) | The first draft claimed no such flag exists. It does, and it classifies every "awkward case" correctly -- `alac`, `flac`, `wmalossless`, `truehd`, `pcm_s16le` all report `S`. Three reasons it still cannot be the source of truth here: `webp` reports **both** (`DEVILS`), so the descriptor cannot answer "was *this instance* lossy"; consulting it costs a subprocess this project does not otherwise spend; and it answers a different question than the tool asks -- `gif` reports `S`, lossless, while this project measured in phase 5 that a photograph through `-c:v gif` keeps 182 of 36 485 colours. A set curated against what the tool actually promises is the honest artifact | 2026-08-27 |
+| A target counts as lossless for the advisory exactly where a rule declares **`fallback_options is not None and fallback_name is None`** -- it re-encodes, and the profile declared that re-encode not worth naming | The bare `fallback_name is None` test is overloaded: it also matches a rule with no fallback at all, which is a *drop*, and matches nine rules rather than five. Worse, phase 6 gives `mp3`, `m4a` and `flac` an `attached_pic` rule that copies with no fallback declared, so the bare test would start classifying `mp3` and `m4a` as lossless targets the moment #6 merges. The refined test selects exactly `flac`, `wav`, `png`, `tiff`, `bmp` | 2026-08-27 |
+| The rationale for reusing that flag is that it is the **profile's own declaration** that the encode needs no note -- not that the encode gives up nothing | Measured, the stronger claim is false for one of the five: `--to wav` from a 24-bit FLAC writes `pcm_s16le` at 16 bits and says nothing. So the flag records a judgement the profile made, and this phase reuses that judgement rather than adding a second marker that could disagree with it. The bit-depth truncation is a real, separate gap -- named in Out of scope, not silently inherited | 2026-08-27 |
 | **No advisory for a lossy target.** A lossy-to-lossy conversion already carries the engine's re-encode note naming both codecs | One advisory, not a commentary track. The re-encode note is the honest report there, and a second line would fire on the commonest conversion the tool performs | 2026-08-27 |
 | The advisory names the source codec and says plainly that the target cannot restore what the source had already discarded | `docs/vision.md` requires a note to name the stream and its codec. The wording is pinned by test, as every note in this project is | 2026-08-27 |
 | `docs/constitution.md` gains one line distinguishing a **degradation note** (what this conversion gave up) from an **advisory** (what the source had already given up), authored in this PR | The current notes convention and its test gate — "a new degradation branch ships with a test asserting the note it emits" — assume the former. Without the distinction, the advisory reads as a claim the tool destroyed something | 2026-08-27 |
@@ -147,20 +174,26 @@ stream list. That splits the five lossless targets in two:
 The restriction's stated reason does not apply to this advisory: #18 excluded
 codec-level statements because "announcing a re-encode it never performed would
 swap one dishonest report for another", and this advisory announces no re-encode.
-But the restriction is written down in `docs/constitution.md`,
-`docs/design/degradation-ladder.md` and the code's own docstring, so widening it
-is a deliberate amendment, not a reading.
+But the restriction is written down in `docs/architecture.md` Key flow 1,
+`docs/design/degradation-ladder.md` and the `jobs._unmapped_notes` docstring --
+**not** in `docs/constitution.md`, which carries only the narrowed ffprobe rule and
+the notes test gate. Widening it is a deliberate amendment of those three, not a
+reading. Getting that list right matters here: issue #38's own follow-up commit
+existed because a restatement was missed and a grep disproved the claim that all
+of them had moved.
 
 1. **`flac` only — the failure-side rung.** Covers the motivating case, needs no
    amendment beyond the degradation-versus-advisory line, and leaves `--to wav`
    over an MP3 silent. Smallest change, and inconsistent in a way a user could
    notice: the same source says something on the way to FLAC and nothing on the
    way to WAV.
-2. **All five — widen the success-side verification to permit this one
-   codec-level statement.** Consistent, and costs an amendment to
-   `degradation-ladder.md` plus the constitution, with the new boundary written
-   precisely enough that it does not become a licence for any codec claim on the
-   success path. Also adds an advisory to `--to png` from a JPEG, which is
+2. **All five -- widen the success-side verification to permit this one
+   codec-level statement.** Consistent, and costs amendments to
+   `docs/architecture.md` Key flow 1, `docs/design/degradation-ladder.md` and the
+   engine docstring, with the new boundary written precisely enough that it does
+   not become a licence for any codec claim on the success path -- plus narrowing
+   the test that pins the current boundary
+   (`tests/test_argv.py::test_a_codec_outside_the_copy_mask_produces_no_note`). Also adds an advisory to `--to png` from a JPEG, which is
    correct and may be more noise than anyone wants on an image batch.
 
 ## Tracking
@@ -175,12 +208,18 @@ Machine checks:
 - [ ] Verify passes (ruff check, ruff format --check, pytest) on the merge commit.
 - [ ] A test per covered target that a lossy source produces the advisory, with
       its exact wording pinned.
-- [ ] A test that a **lossless** source into the same target produces no
-      advisory — `flac` from `flac`, `wav` from `wav`.
+- [ ] A test that a **lossless** source that is not the target's own codec
+      produces no advisory: ALAC into `flac` reaches the selective rung -- measured,
+      `1 converted`, no note -- so it actually exercises the guard. `flac` from
+      `flac` is kept only as a rung-1 control: it copies and wins at rung 1, so it
+      never reaches the rung the advisory would live on and proves nothing about it.
 - [ ] A test that a lossy source into a **lossy** target produces the ordinary
       re-encode note and no advisory.
 - [ ] A test that `LOSSY_CODECS` excludes `alac`, `flac`, `wmalossless`,
-      `truehd` and the `pcm_*` family — the members a careless list gets wrong.
+      `truehd` and the `pcm_*` family -- the members a careless list gets wrong.
+- [ ] A test pinning that exactly `flac`, `wav`, `png`, `tiff` and `bmp` satisfy
+      the lossless criterion across the **whole** registry -- the guard that stops
+      phase 6's three new fallback-less rules from being read as lossless targets.
 - [ ] A test that the probe count per file is unchanged.
 - [ ] Under option 2 only: a test that the success-side verification still refuses
       every codec-level statement other than this one.
@@ -193,13 +232,15 @@ New-Item -ItemType Directory -Force in
 & $FF -y -f lavfi -i sine=duration=2 -c:a libmp3lame -b:a 128k in/lossy-mp3.mp3
 & $FF -y -f lavfi -i sine=duration=2 -c:a libopus in/lossy-opus.opus
 & $FF -y -f lavfi -i sine=duration=2 -c:a flac in/lossless-flac.flac
+& $FF -y -f lavfi -i sine=duration=2 -c:a alac in/lossless-alac.m4a
 & $FF -y -f lavfi -i sine=duration=2 -c:a pcm_s16le in/lossless-wav.wav
 & $FF -y -f lavfi -i color=c=red:size=200x200:d=1 -frames:v 1 in/lossy-jpg.jpg
 ```
 
 - [ ] `--to flac in out` over `lossy-mp3.mp3` prints the advisory naming `mp3`,
       and the output is a playable FLAC. This is the case the phase exists for.
-- [ ] The same run over `lossless-flac.flac` prints **no** advisory.
+- [ ] The same run over `lossless-alac.m4a` prints **no** advisory -- the negative
+      that actually reaches the rung. `lossless-flac.flac` is the rung-1 control.
 - [ ] `--to wav in out` over `lossy-mp3.mp3` behaves as the gate decided —
       advisory under option 2, silence under option 1.
 - [ ] `--to mp3 in out` over `lossy-opus.opus` prints the ordinary re-encode note
@@ -217,6 +258,8 @@ New-Item -ItemType Directory -Force in
 | The lossy set misclassifies a codec | The awkward members are named in a test rather than left to the author's memory |
 | The advisory fires on every file of an image batch | Named as option 2's cost, with a QA item asking the human to judge it on real photos before accepting |
 | Someone extends this to detect laundered sources | Named out of scope, with the reason: it needs spectral analysis, which `docs/vision.md` already rules out |
+| Under option 1, a lossy source that also fails the *selective* rung wins on `last_resort` and prints no advisory | A declared attempt's notes are fixed data, so the advisory cannot reach it. Named as a known gap rather than discovered: the fix, if it is wanted, is to extend the five lossless targets' `last_resort` note text, which is a profile edit and not an engine one |
+| The bit-depth truncation `--to wav` performs stays unreported | Out of scope here and named in the facts table with its measurement, so it is a recorded gap with somewhere to land rather than an assumption this phase quietly inherits |
 
 ## Decision log
 
@@ -233,3 +276,17 @@ New-Item -ItemType Directory -Force in
   looked. It is not "the success path forbids codec statements" in general — the
   motivating case is a *failure*-side rung and entirely free. It is the four
   targets whose cheap attempt always encodes, and that is the gate's decision.
+- 2026-08-27: Review round 1 falsified the claim that no flag answers lossiness.
+  ffmpeg's `-codecs` classifies every codec the spec had named as an awkward case,
+  correctly. The decision to curate survives on better grounds — `webp` reports
+  both flags, reading it costs a subprocess, and `gif` reports lossless while this
+  project measured it keeping 182 of 36 485 colours — and the prior-art AVOID is
+  corrected rather than left asserting something untrue.
+- 2026-08-27: Review round 1 also found the lossless criterion overloaded. Bare
+  `fallback_name is None` matches nine rules, four of which mean "drop", and phase
+  6 adds three more that would make `mp3` and `m4a` read as lossless targets. The
+  criterion is now the pair, pinned by a registry-wide test.
+- 2026-08-27: And that `--to wav` from a 24-bit FLAC silently writes 16-bit PCM,
+  so `fallback_name=None` does not mean "gives up nothing". The phase reuses the
+  flag as the profile's own declaration and names the truncation as a separate
+  gap rather than inheriting a false premise.
