@@ -1679,12 +1679,36 @@ class TestLossyCodecs:
     """
 
     def test_excludes_the_named_lossless_family(self):
-        """The five awkward cases the issue names: `alac`, `flac`,
-        `wmalossless` and `truehd` all report ffmpeg's own lossless flag
-        (`S`) with no `L`, and so does every `pcm_*` decoder -- none of them
-        may ever read as a lossy source."""
-        assert LOSSY_CODECS.isdisjoint({"alac", "flac", "wmalossless", "truehd"})
-        assert not any(name.startswith("pcm_") for name in LOSSY_CODECS)
+        """The four awkward codecs the issue names -- `alac`, `flac`,
+        `wmalossless`, `truehd` -- and the *linear* `pcm_*` decoders all
+        report ffmpeg's own lossless flag (`S`) with no `L`, and none of
+        them may ever read as a lossy source. Scoped to a representative
+        sample of linear PCM (`pcm_s16le`, `pcm_s24le`, `pcm_s32le`,
+        `pcm_f32le`, `pcm_u8` -- different bit depths, signedness and a
+        float variant) rather than a blanket `pcm_` prefix ban: three
+        *other* `pcm_*` decoders -- `pcm_alaw`, `pcm_mulaw`, `pcm_vidc` --
+        are genuinely lossy and are members (the next test)."""
+        assert LOSSY_CODECS.isdisjoint(
+            {
+                "alac",
+                "flac",
+                "wmalossless",
+                "truehd",
+                "pcm_s16le",
+                "pcm_s24le",
+                "pcm_s32le",
+                "pcm_f32le",
+                "pcm_u8",
+            }
+        )
+
+    def test_includes_the_lossy_pcm_companding_variants(self):
+        """`pcm_alaw`/`pcm_mulaw` (G.711 companding) and `pcm_vidc` report
+        `L` only, no `S` -- unambiguously lossy, unlike every codec this
+        set deliberately leaves out. A companded source is an ordinary
+        `SOURCE_SUFFIXES` member (a G.711 `.wav`), so omitting them would
+        have been a silent gap rather than a judgement call."""
+        assert {"pcm_alaw", "pcm_mulaw", "pcm_vidc"} <= LOSSY_CODECS
 
     def test_includes_the_motivating_and_flag_contradicting_cases(self):
         """A set could satisfy the exclusion test above by being empty, which

@@ -346,3 +346,19 @@ New-Item -ItemType Directory -Force in
   construction (a bare rule with no fallback at all fails the first half of
   the pair) rather than by a live conflict, and will hold the same way once
   that work lands.
+- 2026-08-27 (issue #87 review round 2): the round-1 fix above relocated the
+  same overreach it was meant to remove rather than closing it. "This registry
+  never produces or accepts any of the three [`pcm_alaw`/`pcm_mulaw`/
+  `pcm_vidc`], so their absence costs nothing" is a non sequitur: `LOSSY_CODECS`
+  matches a *source* codec, and what the registry's own copy masks and
+  fallback encoders produce is irrelevant to what a source file may carry. A
+  G.711-encoded `.wav` is an ordinary `SOURCE_SUFFIXES` member, fails `flac`'s
+  `-map 0:a? -c:a copy` the same way an MP3 does, and lands on the identical
+  selective rung the `dts` gap above already concedes reaches the advisory.
+  Unlike `dts`, none of the three has a genuine lossless-mode ambiguity to
+  trade against -- the flag reports `L` only for all three -- so there was no
+  reason to leave the gap open at all. Fixed by adding `pcm_alaw`,
+  `pcm_mulaw` and `pcm_vidc` to `LOSSY_CODECS` and narrowing
+  `test_excludes_the_named_lossless_family` from a blanket `pcm_` prefix ban
+  to the specific linear-PCM codecs the exclusion actually covers, with a new
+  `test_includes_the_lossy_pcm_companding_variants` pinning the three in.

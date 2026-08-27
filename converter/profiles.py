@@ -117,12 +117,14 @@ TEXT_SUBTITLE_CODECS = frozenset({"subrip", "srt", "ass", "ssa", "mov_text", "we
 #: and ``S``), and for the five codecs this issue names it is not wrong -- measured
 #: against ffmpeg 9.0: ``alac``, ``flac``, ``wmalossless``, ``truehd`` and every
 #: *linear* ``pcm_*`` decoder (``pcm_s16le``, ``pcm_s24le`` and the rest of that
-#: family) report ``S`` only, no ``L``. (Three ``pcm_*`` decoders are themselves
-#: lossy and report ``L`` only -- ``pcm_alaw``/``pcm_mulaw``, G.711 companding, and
-#: ``pcm_vidc`` -- but this registry never produces or accepts any of the three, so
-#: their absence from this set, like their absence from every copy mask above,
-#: costs nothing.) The flag still cannot be read wholesale as a general rule,
-#: for three measured reasons:
+#: family) report ``S`` only, no ``L``. Three ``pcm_*`` decoders are the opposite:
+#: ``pcm_alaw``/``pcm_mulaw`` (G.711 companding) and ``pcm_vidc`` report ``L``
+#: only, no ``S`` -- genuinely and unambiguously lossy, unlike every case below --
+#: so all three are members of this set, not exceptions to it. A companded source
+#: is reachable the same way a lossy audio source of any other codec is (a G.711
+#: ``.wav`` is an ordinary `SOURCE_SUFFIXES` member), so leaving them out would
+#: have been a silent gap, not a saved judgement call. The flag still cannot be
+#: read wholesale as a general rule, for three measured reasons:
 #:
 #: - Some codecs report **both** flags at once. ``webp`` does (``DEVILS``): it is
 #:   genuinely used both ways -- a lossy photograph and a lossless screenshot are
@@ -135,9 +137,11 @@ TEXT_SUBTITLE_CODECS = frozenset({"subrip", "srt", "ass", "ssa", "mov_text", "we
 #:   ``h264``/``hevc``/``av1``, which this phase's only consumer (`flac`, an
 #:   audio-only rule) can never even map, ``dts`` is audio and genuinely reaches
 #:   that rule -- a lossy DTS core into `flac` lands on the selective rung with
-#:   no advisory, a real accepted gap rather than a free exclusion, the same
-#:   accuracy-over-coverage trade this phase's gate already made for `wav` versus
-#:   `flac` (`docs/specs/spec-lossy-source-notes.md`, Prior decisions).
+#:   no advisory. That is a real accepted gap, not a free exclusion: unlike the
+#:   companded PCM trio above, ``dts``'s ambiguity is genuine (a DTS-HD Master
+#:   Audio track really is losslessly encoded under the same codec name), so a
+#:   false "already lossy" claim against one is the worse failure mode of the
+#:   two, and exclusion is kept.
 #: - Reading the flag at all costs a subprocess call this project does not
 #:   otherwise spend on the happy path; a curated Python literal costs nothing.
 #: - ``gif`` reports lossless (``S`` only, no ``L`` -- ffmpeg calls the format
@@ -168,6 +172,9 @@ LOSSY_CODECS = frozenset(
         "mp3",
         "opus",
         "vorbis",
+        "pcm_alaw",
+        "pcm_mulaw",
+        "pcm_vidc",
     }
 )
 
