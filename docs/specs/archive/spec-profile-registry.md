@@ -237,12 +237,16 @@ find tag for codec vp8 in stream #0, codec not currently supported in
 container`), so the remux fails and the selective rung has to re-encode the
 video. `attached.mkv` and
 `two-tone.opus` exist to make deltas 1 and 2 observable — the other fixtures
-never reach those branches. The WAV job only accepts `.opus` sources, which is
-why both audio fixtures use that suffix.
+never reach those branches. `tone.opus` and `two-tone.opus` use `.opus` because
+they are the single- and two-audio-stream cases delta 2 needs, not because
+`--to wav` is suffix-restricted: it attempts every source in `in/` and reports
+`unsupported` for `lossless.mkv` and `attached.mkv`, which carry no audio
+stream at all, while `clip.mkv` converts to `.wav` too despite not being
+`.opus`.
 
-- [ ] `converter video in out` converts `clip.mkv` to a playable `.mp4` and
+- [ ] `converter --to mp4 in out` converts `clip.mkv` to a playable `.mp4` and
       reports `converted`, `0 failed`, exit 0.
-- [ ] `converter audio in out` converts `tone.opus` to a playable `.wav`.
+- [ ] `converter --to wav in out` converts `tone.opus` to a playable `.wav`.
 - [ ] `lossless.mkv` still converts, and prints a note naming the stream index,
       `vp8`, and the re-encode to h264.
 - [ ] A second run of each over the same output tree reports `0 converted`,
@@ -466,3 +470,28 @@ why both audio fixtures use that suffix.
 - 2026-08-26: Close-out. The final QA gate ran against real ffmpeg 9.0 on
   Windows 11, verifying all 17 target formats end-to-end with ffprobe.
   Verdict: PASS WITH FINDINGS; the findings are filed as issues #66-#73.
+- 2026-08-27 (issue #70): the human QA gate's `converter video in out` and
+  `converter audio in out` lines are replaced with `converter --to mp4 in out`
+  and `converter --to wav in out` — the `video`/`audio` sub-commands were
+  removed in phase 2 (issue #15) and now exit 2 with a migration message, so
+  the block could not be run as written. Re-run in full against real ffmpeg 9.0
+  on Windows 11 (gyan.dev build) from a bootstrapped worktree, `--ffmpeg` /
+  `--ffprobe` pointed at the absolute paths from *This machine*: `--to mp4`
+  converts all five `in/` fixtures (`5 converted, 0 failed`, exit 0),
+  `lossless.mkv` re-encodes with the note
+  `video stream 0 (vp8) re-encoded to h264`, and `attached.mkv`'s note names
+  the codec (`attachment stream 1 (ttf) dropped: not supported by MP4`,
+  delta 1). `--to wav` converts `clip.mkv`, `tone.opus` and `two-tone.opus`
+  (`3 converted, 0 failed`, `2 unsupported`), with `two-tone.opus` noting
+  `audio stream 1 (opus) dropped: WAV holds 1 audio stream` (delta 2). A second
+  run of each reports `0 converted`, `N skipped`, `0 failed`, exit 0.
+  `ffprobe` on the outputs confirms `clip.mp4` (h264/aac), `lossless.mp4`
+  (h264) and `tone.wav` (pcm_s16le) are genuinely playable. One correction
+  beyond the two command lines: the sentence "the WAV job only accepts `.opus`
+  sources" no longer holds under `--to wav`, which attempts every source in
+  `in/` — `clip.mkv` converts to `.wav` too (it has an AAC audio stream), and
+  `lossless.mkv`/`attached.mkv` are reported `unsupported` for lacking any
+  audio stream rather than being silently skipped by suffix. Reworded to say
+  why the `.opus` fixtures exist (the single- and two-audio-stream cases delta
+  2 needs) without the false suffix-restriction claim. Everything else in the
+  Verification block matched observation and needed no change.
