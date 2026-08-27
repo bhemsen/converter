@@ -2645,6 +2645,12 @@ class TestConfirmDrops:
     `verify_success` reads the mapping, which says what ffmpeg was *asked* to
     carry. MP4 and MOV regenerate a `tmcd` timecode track from source metadata
     with no selector naming it (issue #66), so the mapping alone over-reports.
+
+    The match key is type *and* codec name. The first review of this fix
+    matched on type alone and built the counter-example that kills it: no
+    profile declares a `data` rule, so a regenerated `tmcd` forgave the drop of
+    a `gpmd`/ANC telemetry stream in the same file, turning a real loss into a
+    silent success -- the one direction `docs/constitution.md` forbids outright.
     """
 
     SOURCE: ClassVar[list[Stream]] = [
@@ -2678,6 +2684,35 @@ class TestConfirmDrops:
         notes = jobs.confirm_drops(MP4, source, produced)
 
         assert notes == ("data stream 2 (unknown) dropped: not supported by MP4",)
+
+    @pytest.mark.parametrize("profile", [MP4, MOV], ids=lambda profile: profile.label)
+    def test_a_regenerated_timecode_never_forgives_a_telemetry_drop(self, profile):
+        """The counter-example that decided the match key: one source data
+        stream (`gpmd`/ANC telemetry, `bin_data`) genuinely lost, and one data
+        stream in the output that the muxer synthesised from metadata (`tmcd`,
+        no codec name on either side). Matching on `codec_type` alone reported
+        this as a clean success while a real stream was gone."""
+        source = [Stream(0, "video", "h264"), Stream(1, "data", "bin_data")]
+        produced = [Stream(0, "video", "h264"), Stream(1, "data", "")]
+
+        assert jobs.confirm_drops(profile, source, produced) == (
+            f"data stream 1 (bin_data) dropped: not supported by {profile.label}",
+        )
+
+    @pytest.mark.parametrize("profile", [MP4, MOV], ids=lambda profile: profile.label)
+    def test_both_verdicts_are_reached_when_both_data_streams_are_present(self, profile):
+        """The same file carrying both: the timecode is forgiven, the telemetry
+        is not. One key forgiving another would collapse the two."""
+        source = [
+            Stream(0, "video", "h264"),
+            Stream(1, "data", "bin_data"),
+            Stream(2, "data", ""),
+        ]
+        produced = [Stream(0, "video", "h264"), Stream(1, "data", "")]
+
+        assert jobs.confirm_drops(profile, source, produced) == (
+            f"data stream 1 (bin_data) dropped: not supported by {profile.label}",
+        )
 
     def test_a_stream_of_another_type_never_forgives_a_drop(self):
         """The surplus is counted per stream type, so an extra audio stream in

@@ -55,24 +55,33 @@ flowchart TD
   failure side and the success side are mutually exclusive — a file takes one
   path or the other. The second success-side probe, `C`, is the one exception to
   the one-probe count, and it is bounded by the claim it pays for: it runs only
-  when `V` predicted at least one drop, so a conversion that gave nothing up
-  still costs a single probe.
+  when `V` predicted at least one drop, so a conversion whose mapping gives
+  nothing up still costs a single probe. How often that is depends on the
+  profile, not on some general "common case" — an audio target over a library
+  whose files all carry cover art predicts a drop on every one of them, and pays
+  for `C` on every one of them.
 - **A predicted drop is confirmed against the output before it is reported.** A
   `-map` set says what ffmpeg was *asked* to carry, which is not the same as what
   the muxer wrote: MP4 and MOV regenerate a `tmcd` timecode track from the
   source's metadata although no selector names it (measured, ffmpeg 9.0), so the
   mapping alone reports a loss that did not happen — the false-positive half of
-  the loss accounting `docs/vision.md` names as the USP (issue #66). `C` compares
-  *counts per stream type* between the source and the written file, because a
-  regenerated stream shares neither index nor codec name with its source, and
-  attributes any surplus to that type's predicted drops in source order. Two
-  properties make this safe in the direction the constitution cares about: a type
-  with no surplus keeps every note it was given, and a probe that fails leaves
-  the whole prediction standing rather than falling silent. The cost is that with
-  several predicted drops of one type and only some of them surviving, the
-  *count* of reported losses is right while the index named may not be —
-  deliberately preferred over reporting a loss that did not happen, and never
-  over the silence the constitution forbids.
+  the loss accounting `docs/vision.md` names as the USP (issue #66). `C` counts
+  the streams of each **type-and-codec-name pair** in the source and in the
+  written file, and attributes any surplus to that pair's predicted drops in
+  source order. An index cannot be the match key — a stream the muxer put back
+  carries whatever index the output gives it — but the codec name can: a
+  regenerated `tmcd` reports none at all and neither does its source
+  counterpart, while a `gpmd`/ANC telemetry stream reports `bin_data` on both
+  sides. Matching on type alone is what must be avoided, and is the shape this
+  rule exists to forbid: no profile declares a `data` rule, so a regenerated
+  timecode would forgive the loss of telemetry in the same file, and a real drop
+  would go unreported. Two further properties keep the direction the constitution
+  cares about closed: a pair with no surplus keeps every note it was given, and a
+  probe that fails leaves the whole prediction standing rather than falling
+  silent. The residual cost is that with several predicted drops sharing one pair
+  and only some of them surviving, the *count* of reported losses is right while
+  the index named may not be — deliberately preferred over reporting a loss that
+  did not happen, and never over the silence the constitution forbids.
 - **A partial cheap attempt's success is verified, not assumed.** A mapping is
   partial by construction when it can leave source streams unmapped whatever the
   source turns out to contain: MP4's `-map 0:v? -map 0:a? -map 0:s?` selects no

@@ -87,12 +87,15 @@ def _confirm_against_output(
 
     The second probe of ``docs/design/degradation-ladder.md``, and the only one
     ever aimed at an output. It is spent solely on a run that is *about to claim
-    a loss*, so a conversion that lost nothing -- the common case -- still costs
-    a single probe.
+    a loss*, so a conversion whose mapping gives nothing up still costs a single
+    probe.
     """
     try:
         produced = ffmpegtool.probe_streams(tools, task.dst)
-    except ProbeError as exc:
+    # OSError as well as ProbeError, unlike the source probe above: this call
+    # sits *after* a conversion ffmpeg already completed, so letting a spawn
+    # failure escape would turn a good output into a reported failure.
+    except (ProbeError, OSError) as exc:
         # Over-reporting is the safe side of "never report success for a
         # conversion that silently dropped something" (``docs/constitution.md``):
         # keep the prediction and say it could not be checked, rather than

@@ -82,7 +82,10 @@ def make_task(tmp_path: Path, name: str = "clip") -> Task:
 
 
 def spy_on_probe(
-    monkeypatch, streams: list[Stream], output_streams: list[Stream] | None = None
+    monkeypatch,
+    streams: list[Stream],
+    output_streams: list[Stream] | None = None,
+    task: Task | None = None,
 ) -> list[Path]:
     """Replace probe_streams on the module and record what it was asked about.
 
@@ -90,15 +93,15 @@ def spy_on_probe(
     object would leave the already-installed reference untouched, and the spy
     would silently never be called.
 
-    The source is probed first and the output only afterwards, and only when a
-    loss is about to be claimed (``batch._confirm_against_output``), so call
-    order is enough to tell the two apart for a single-file conversion.
+    Source and output are told apart by *path*, the same way the `fake_ffmpeg`
+    fixture does it, so a test cannot pass on the strength of the order the two
+    probes happen to run in. Pass `task` to answer differently for the output.
     """
     seen: list[Path] = []
 
     def probe(_tools, src):
         seen.append(src)
-        if len(seen) > 1:
+        if task is not None and Path(src) == task.dst:
             return list(output_streams or [])
         return list(streams)
 
@@ -283,7 +286,11 @@ class TestPartialCheapAttemptVerification:
         task = make_task(tmp_path)
         task.dst.parent.mkdir(parents=True)
         probes = spy_on_probe(
-            monkeypatch, [Stream(0, "video", "h264"), Stream(1, "attachment", "ttf")]
+            monkeypatch,
+            [Stream(0, "video", "h264"), Stream(1, "attachment", "ttf")],
+            # MP4 really cannot hold a font attachment, so the output has none.
+            output_streams=[Stream(0, "video", "h264")],
+            task=task,
         )
 
         result = convert_one(MP4, task, TOOLS, overwrite=False)
@@ -399,8 +406,8 @@ class TestDropsAreConfirmedAgainstTheOutput:
     """
 
     #: What ffprobe reports for a `tmcd` stream: a data stream whose codec name
-    #: is absent on both sides, which is why the confirmation compares counts
-    #: per stream type and not indices or codec names.
+    #: is absent on both sides, which is what lets the confirmation match a
+    #: regenerated timecode to its source without ever matching indices.
     TIMECODE = Stream(2, "data", "")
 
     def _task(self, tmp_path: Path, suffix: str) -> Task:
@@ -433,19 +440,40 @@ class TestDropsAreConfirmedAgainstTheOutput:
 
         result = convert_one(profile, task, TOOLS, overwrite=False)
 
-        assert f"data stream 2 (unknown) dropped: not supported by {profile.label}" in result.notes
+        # The full tuple, not a membership check: the standing note these two
+        # profiles still carry is part of what must not have changed.
+        assert result.notes == (
+            *profile.cheap_attempt.notes,
+            f"data stream 2 (unknown) dropped: not supported by {profile.label}",
+        )
 
     def test_only_the_surviving_share_of_a_predicted_drop_is_forgiven(self, tmp_path, fake_ffmpeg):
-        """Two data streams predicted dropped, one of them in the output: the
-        count of reported losses has to follow the output, not the mapping."""
+        """Two data streams of the same key predicted dropped, one of them in
+        the output: the count of reported losses follows the output, not the
+        mapping. The index named may be either -- the count is what is pinned."""
         task = self._task(tmp_path, "mp4")
         fake_ffmpeg.streams = [Stream(0, "video", "h264"), Stream(1, "data", ""), self.TIMECODE]
         fake_ffmpeg.output_streams = [Stream(0, "video", "h264"), Stream(1, "data", "")]
 
         result = convert_one(MP4, task, TOOLS, overwrite=False)
 
-        assert len(result.notes) == 1
-        assert result.notes[0].startswith("data stream ")
+        assert result.notes == ("data stream 2 (unknown) dropped: not supported by MP4",)
+
+    def test_a_real_drop_is_not_forgiven_by_a_stream_the_muxer_synthesised(
+        self, tmp_path, fake_ffmpeg
+    ):
+        """The regression the first review of this fix caught: a `gpmd`/ANC
+        telemetry stream really lost, and a `tmcd` the muxer put back. Matching
+        on stream type alone reported a clean success while a stream was gone --
+        the direction `docs/constitution.md` forbids outright."""
+        task = self._task(tmp_path, "mov")
+        fake_ffmpeg.streams = [Stream(0, "video", "h264"), Stream(1, "data", "bin_data")]
+        fake_ffmpeg.output_streams = [Stream(0, "video", "h264"), Stream(1, "data", "")]
+
+        result = convert_one(MOV, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert result.notes == ("data stream 1 (bin_data) dropped: not supported by MOV",)
 
     def test_the_output_is_probed_only_when_a_loss_is_about_to_be_claimed(
         self, tmp_path, fake_ffmpeg, monkeypatch

@@ -582,22 +582,42 @@ New-Item -ItemType Directory -Force in
   Fixed **generally rather than by special-casing `tmcd`**: `jobs.verify_success`
   is now explicitly a *prediction* from the mapping, and `jobs.confirm_drops`
   weighs it against the file that was actually written, keeping only the drops
-  the output does not contain. The comparison is *counts per stream type*,
-  because a regenerated stream shares neither index nor codec name with its
-  source (ffprobe reports no `codec_name` at all for either side of a `tmcd`
-  pair). Any surplus is attributed to that type's predicted drops in source
-  order, so with several predicted drops of one type and only some surviving the
-  *count* of reported losses is right while the index named may not be --
-  accepted deliberately, since the alternative is reporting a loss that did not
-  happen. The direction `docs/constitution.md` forbids is closed on both sides: a
-  type with no surplus keeps every note it was given, and a probe that fails
-  leaves the whole prediction standing, with an added note saying it could not be
-  confirmed.
+  the output does not contain. The comparison counts streams per **type and
+  codec name together**. An index cannot be the match key -- a stream the muxer
+  put back carries whatever index the output gives it -- but the codec name can:
+  ffprobe reports none at all for a `tmcd` stream on *either* side, and reports
+  `bin_data` on both sides of a `gpmd`/ANC telemetry stream. Any surplus is
+  attributed to that pair's predicted drops in source order, so with several
+  predicted drops sharing one pair and only some surviving the *count* of
+  reported losses is right while the index named may not be -- accepted
+  deliberately, since the alternative is reporting a loss that did not happen.
+  The direction `docs/constitution.md` forbids is closed on three sides: a pair
+  with no surplus keeps every note it was given, a probe that fails leaves the
+  whole prediction standing with an added note saying it could not be confirmed,
+  and the output probe now also catches `OSError` rather than turning a
+  conversion ffmpeg already completed into a reported failure.
+
+  The first draft of this fix matched on `codec_type` alone, and review built the
+  counter-example that killed it: no profile declares a `data` rule, so
+  `kept["data"]` is always 0 and *any* data stream in the output forgave one
+  predicted data drop. A source carrying `gpmd` telemetry *and* a source-level
+  timecode therefore reported a clean success while the telemetry was genuinely
+  gone -- trading the common false positive for the rarer false negative that
+  `docs/constitution.md` forbids outright. Re-measured on ffmpeg 9.0 to settle
+  it: a source with a `TIMECODE` tag and no data stream at all still produces a
+  `tmcd` data stream in a MOV output (so the track comes from *metadata*), and a
+  `video + bin_data` source produces an output with zero data streams (so
+  `bin_data` really is lost). Both facts are now pinned by tests.
 
   **ffprobe frequency changed, deliberately.** The success side now spends a
   second probe -- on the *output* -- but only on a run that has already predicted
-  at least one drop, so a conversion that gives nothing up costs exactly the one
-  probe it cost before. This is the same trade issue #18 made and
+  at least one drop, so a conversion whose mapping gives nothing up costs exactly
+  the one probe it cost before. How often that is depends on the profile rather
+  than on any general "common case": every one of the 17 shipped profiles
+  declares `partial_mapping=True`, so the change reaches all of them, and an
+  audio target over a library whose files all carry cover art predicts a drop --
+  and pays for the second probe -- on every file. This is the same trade issue
+  #18 made and
   `spec-profile-registry.md`'s Decision log records (the loss-accounting USP over
   a probe on a minority of runs), applied to the mirror-image bug, so it was
   resolved as settled by precedent rather than escalated as a design fork. The
@@ -612,6 +632,13 @@ New-Item -ItemType Directory -Force in
   not this issue's to write -- the live normative statement in
   `docs/constitution.md` is corrected, and the archived one is a record of what
   phase 1 decided.
+
+  Review also proposed renaming `jobs.verify_success` to `predict_drops`, since
+  it now returns something that must never be reported unconfirmed. Declined for
+  now, and recorded rather than dropped: `spec-target-driven-cli.md` names the
+  symbol and belongs to a concurrently edited branch, so the rename would leave a
+  dangling reference in a file this issue must not touch. The docstring carries
+  the correction instead, and the rename is cheap to make once that branch lands.
 
   `mov`'s standing note (`"data and timecode streams are not carried into MOV"`,
   Prior decisions row 3 and the Verification item pinning its wording) is
