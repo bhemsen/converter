@@ -200,6 +200,16 @@ class TestProbeStreams:
 
         assert streams[0].attached_pic is False
 
+    def test_attached_pic_defaults_to_false_when_the_key_is_absent(self, monkeypatch):
+        """The disposition object can be present without the one flag we read --
+        ffprobe reports it alongside every other disposition flag it knows."""
+        payload = {"streams": [{"index": 0, "codec_type": "video", "disposition": {"default": 1}}]}
+        stub_run(monkeypatch, 0, json.dumps(payload))
+
+        streams = ffmpegtool.probe_streams(TOOLS, "in.mkv")
+
+        assert streams[0].attached_pic is False
+
     def test_streams_without_a_usable_index_are_skipped(self, monkeypatch):
         payload = {
             "streams": [

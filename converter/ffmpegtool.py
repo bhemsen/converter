@@ -207,6 +207,30 @@ def version(tools: Tools) -> str:
     return first_line.strip() or "unknown"
 
 
+def _parse_stream(raw: dict[str, object]) -> Stream | None:
+    """Build a :class:`Stream` from one ffprobe JSON stream object.
+
+    Returns ``None`` for an entry with no usable index, so the caller can drop
+    it without duplicating the guard. Split out of :func:`probe_streams` to
+    keep that function under the constitution's 50-line ceiling.
+    """
+    try:
+        index = int(raw["index"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    # A stream with no disposition flagged at all -- most of them -- omits
+    # the "disposition" object entirely rather than reporting zeros, so the
+    # fallback to {} is what makes attached_pic default to false.
+    disposition = raw.get("disposition") or {}
+    return Stream(
+        index=index,
+        codec_type=str(raw.get("codec_type", "")),
+        codec_name=str(raw.get("codec_name", "")),
+        codec_tag=str(raw.get("codec_tag_string", "")),
+        attached_pic=bool(disposition.get("attached_pic", 0)),
+    )
+
+
 def probe_streams(tools: Tools, src: str | os.PathLike[str]) -> list[Stream]:
     """List the elementary streams of *src*.
 
@@ -242,23 +266,5 @@ def probe_streams(tools: Tools, src: str | os.PathLike[str]) -> list[Stream]:
     except json.JSONDecodeError as exc:  # pragma: no cover - malformed ffprobe output
         raise ProbeError(f"could not parse ffprobe output: {exc}") from exc
 
-    streams = []
-    for raw in payload.get("streams", []):
-        try:
-            index = int(raw["index"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        # A stream with no disposition flagged at all -- most of them -- omits
-        # the "disposition" object entirely rather than reporting zeros, so
-        # the fallback to {} is what makes attached_pic default to false.
-        disposition = raw.get("disposition") or {}
-        streams.append(
-            Stream(
-                index=index,
-                codec_type=str(raw.get("codec_type", "")),
-                codec_name=str(raw.get("codec_name", "")),
-                codec_tag=str(raw.get("codec_tag_string", "")),
-                attached_pic=bool(disposition.get("attached_pic", 0)),
-            )
-        )
-    return streams
+    parsed = (_parse_stream(raw) for raw in payload.get("streams", []))
+    return [stream for stream in parsed if stream is not None]
