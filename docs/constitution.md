@@ -9,7 +9,7 @@
 | Area | Choice | Rationale |
 | ---- | ------ | --------- |
 | Language | Python >= 3.11 | `StrEnum` and modern typing without `from __future__`; 3.11 is the floor CI proves |
-| Media engine | the ffmpeg / ffprobe CLI, called with argv lists | Wrapper libraries are dead or broken; the reasoning is recorded in `converter/ffmpegtool.py` |
+| Media engine | the ffmpeg / ffprobe CLI, called with argv lists. **7.1 is the floor for the fast path**, not for correctness: below it the three targets that carry cover art spend one failed process plus one probe per file and reach the same result through the ladder | Wrapper libraries are dead or broken; the reasoning is recorded in `converter/ffmpegtool.py`. 7.1 is where `-map 0:disp:...` arrived, and older builds are still supported because refusing them would stop the fourteen targets that never use it |
 | Runtime dependencies | `tqdm>=4.66.3`, nothing else | Progress bar only; the floor is the fix for CVE-2024-34062 |
 | Build backend | hatchling | PEP 517, no `setup.py` |
 | Lint and format | ruff, explicit rule set, line length 100 | One tool for both; `select` is explicit so an upgrade cannot silently change the rule set |

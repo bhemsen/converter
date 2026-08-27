@@ -171,9 +171,9 @@ this one is rebuilt from what survived plus what the review found.
 | **The cheap-attempt standing notes are removed from the five audio profiles that carry one** — `mp3`, `flac`, `m4a`, `ogg`, `opus`. `wav` carries none | Measured: the verifier already names every stream those notes describe, per stream and accurately, so the blanket line is duplication. For `mp3`, `m4a` and `flac` it also becomes false the moment artwork is carried. `ogg` and `opus` gain no artwork, so their removal rests on the duplication argument alone | 2026-08-26 |
 | `last_resort` notes are **retained** on every profile | That rung maps `-map 0:a:0` explicitly and is never verified (`docs/design/degradation-ladder.md`: only the cheap attempt's notes are added to), so its note is the only place that information exists. Removing it would lose a statement | 2026-08-26 |
 | The first draft's open decision -- which targets map video, given a per-target hazard -- was **dissolved** by the disposition specifier rather than resolved | Recorded so the gate is not asked a question the measurement removed | 2026-08-26 |
-| OPEN -- what happens below ffmpeg 7.1 | resolved at the spec-acceptance gate; see the note below | -- |
+| **ffmpeg 7.1 is the floor for the fast path, not for correctness.** Older builds stay supported: below 7.1 the cheap attempt of `mp3`, `m4a` and `flac` fails per file and the ladder reaches the same result, artwork included | Resolved at the gate on 2026-08-27. The failure below the floor is a performance cost on three of seventeen targets, not a correctness one, and refusing at startup would stop the fourteen that never touch the specifier on the LTS distributions most Linux users run -- the opposite of the vision's "whatever ffmpeg can read". The wasted rung stays silent, which the ladder already guarantees: only the winning rung's notes are reported | 2026-08-27 |
 
-### The one open decision, in full
+### The ffmpeg-floor decision, in full (resolved at the gate)
 
 The disposition specifier arrived in **ffmpeg 7.1**. The project states no ffmpeg
 floor today -- `docs/constitution.md`'s tech-stack row names the CLI without a
@@ -194,6 +194,9 @@ and join this PR's Scope, and `docs/roadmap.md`'s recorded verdict for this phas
 authored **on this branch after the gate decides and before the merge** -- a
 recorded foundation impact belongs to the plan PR (`docs/workflow.md`), not to an
 implementation issue.
+
+**Resolved at the gate on 2026-08-27: option 1.** `docs/constitution.md` and
+`README.md` carry the floor as of this commit.
 
 1. **Supported with degradation.** Record `ffmpeg >= 7.1` as the floor *for the
    fast path*, and state the cost below it plainly. Nothing breaks anywhere, and
@@ -233,10 +236,9 @@ Machine checks:
       same codec** is dropped with a note — the distinction the whole phase is for.
 - [ ] A test that `verify_success` does **not** report a carried picture as
       dropped, for each of the three targets.
-- [ ] Whichever floor option the gate picks produces a checkable artifact: under
-      option 1, the floor stated in `docs/constitution.md` and `README.md` and
-      nothing else; under option 2, a startup check with an actionable message
-      and a test driving it against a stubbed version banner.
+- [ ] The floor is stated in `docs/constitution.md` and `README.md`, and nowhere
+      enforced: no startup check, no version parsing. A test asserting the three
+      cheap attempts are unconditional -- the degradation must stay automatic.
 - [ ] A test that `ogg`, `opus` and `wav` are byte-for-byte unchanged in argv,
       and unchanged in notes apart from the removed standing note.
 - [ ] A test that no audio profile carries a **`cheap_attempt`** standing note,
@@ -322,3 +324,9 @@ New-Item -ItemType Directory -Force in
   outright: with no codec option covering the picture ffmpeg re-encodes it to the
   ipod muxer's default h264, which ipod then rejects. The cheap attempts are
   pinned in full rather than described as "gaining a map".
+- 2026-08-27: Gate chose supported-with-degradation. The floor is recorded in the
+  constitution and the README and enforced nowhere — below 7.1 the ladder does
+  the work at one wasted process per file, which is a performance cost on three
+  of seventeen targets rather than a correctness one. This also corrects
+  `docs/roadmap.md`'s seeded "constitution — none" verdict for this phase, which
+  the version floor made false.
