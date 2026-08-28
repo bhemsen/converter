@@ -18,6 +18,7 @@
 | 5 | image-formats | [spec-image-formats.md](specs/archive/spec-image-formats.md) | [#5](https://github.com/bhemsen/converter/milestone/5) |
 | 6 | stream-disposition | [spec-stream-disposition.md](specs/archive/spec-stream-disposition.md) | [#6](https://github.com/bhemsen/converter/milestone/6) |
 | 7 | lossy-source-notes | [spec-lossy-source-notes.md](specs/archive/spec-lossy-source-notes.md) | [#7](https://github.com/bhemsen/converter/milestone/7) |
+| 8 | within-stream-loss-notes | [spec-within-stream-loss-notes.md](specs/spec-within-stream-loss-notes.md) | [#8](https://github.com/bhemsen/converter/milestone/8) |
 
 A phase gets a Spec link once `/plan` drafts it, and a Milestone link once the
 spec is merged. The milestone (open/closed + issue progress) is where status
@@ -30,6 +31,7 @@ record -- phase 6 corrected a verdict's reason, phase 7 flipped one:
 
 - Phase 6 — Foundation impact: vision — none; constitution — **yes** (corrected at planning: the disposition selector arrived in ffmpeg 7.1, which the tech-stack row now records as the floor for the fast path); architecture — yes: Key flow 2's per-stream match gains a disposition branch, `docs/design/stream-decision.md` gains the node that distinguishes a picture from a video stream, and `docs/design/degradation-ladder.md` gains a third selector kind.
 - Phase 7 — Foundation impact: vision — none; constitution — yes: the notes convention and its test gate assume a note describes what *this* conversion gave up, and an advisory about loss the source already carried is a second kind that has to be defined; architecture — **none** (corrected at planning: cross-cutting codec data already lives in `converter/profiles.py` as a module-level frozenset — `TEXT_SUBTITLE_CODECS` is shared by `mp4`, `mov` and `webm` — so a lossy-codec set beside it needs no architectural change).
+- Phase 8 — Foundation impact: vision — none; constitution — none; architecture — yes: Key flow 1's success-side verification widens from structural verdicts to structural plus stream-property ones. **Five carriers, all named in the spec's Scope**: `docs/architecture.md` Key flow 1, `docs/design/degradation-ladder.md`, the `jobs` module docstring, the fourth restatement at `converter/jobs.py:249-251`, and `docs/design/stream-decision.md`, which additionally gains a third carve-out from the three-things rule.
 
 ## What each phase covers
 
@@ -58,6 +60,11 @@ record -- phase 6 corrected a verdict's reason, phase 7 flipped one:
    already-lossy source into a lossless target says so: the "40 MB FLAC from a
    128 kbit/s MP3" advisory. Deferred out of phase 3 because `Stream` carries no
    such notion and that phase was deliberately data-only.
+8. **within-stream-loss-notes** — Make the image targets' loss notes fire only
+   when the loss happened, and name the stream it happened to. Today `jpg`, `gif`
+   and `avif` state a format fact on every file, so an opaque JPEG is told its
+   transparency was not carried. Filed by #67's own PR as issue #101 rather than
+   dropped, and planned directly rather than seeded.
 
 ## Sequencing rationale
 
@@ -78,6 +85,10 @@ of each other and of phases 4 and 5. Both were deferred out of phase 3 by name,
 with their costs recorded in `docs/specs/archive/spec-audio-formats.md` rather than left
 to be rediscovered — and phase 6's cost turned out to be smaller than that
 deferral assumed.
+
+Phase 8 follows phase 5, whose image profiles it corrects. It is the first phase
+not seeded through `/loopkit:roadmap`: the PR that half-closed it filed the
+remainder as issue #101 rather than dropping it, and it was planned directly.
 
 There is deliberately no separate release or documentation phase. README changes
 belong to the phase that makes them necessary — phase 2 breaks the CLI, so phase 2
