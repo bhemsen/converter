@@ -31,19 +31,20 @@ others**, and the honest design says which. Measured:
 
 | Source reports | Verdict | Consequence |
 |---|---|---|
-| `yuvj420p`, `yuv420p`, `rgb24`, `gbrp`, … | definitely no alpha | note suppressed — **this is the reported defect, fixed** |
+| Any 1- or 3-component format: `yuvj420p`, `yuv420p`, `yuv420p10le`, `rgb24`, `nv12`, `gray`, … (184 of them) | no alpha component exists | note suppressed — **this is the reported defect, fixed** |
 | `rgba`, `bgra`, `yuva420p`, … | carries alpha | note fires, naming the stream |
 | `pal8` | *may* carry alpha — the name says nothing | note fires: over-reporting is the safe direction |
 | any `.gif` source | ffmpeg's gif decoder reports `bgra` **unconditionally**, opaque or not | note fires on every GIF source — unchanged from today, not improved |
+| `gbrp` from an `.avif` source | ffmpeg reports `gbrp` whether or not the file carried alpha | note suppressed, on decode-side grounds -- see the fact table. Not "definitely no alpha": the format has three components, but the *source file* may have had an alpha aux item ffmpeg never surfaces |
 
 The residuals are named rather than hidden. Over-reporting is chosen wherever the
 probe is not decisive, because the constitution forbids the other direction.
 
 ## Outcome
 
-- [ ] A source whose pixel format definitely carries no alpha emits **no**
-      transparency note for `jpg`, `gif` or `avif`. The reported case — an opaque
-      `yuvj420p` JPEG — is covered.
+- [ ] A source whose pixel format is a member of `ALPHA_FREE_PIX_FMTS` emits
+      **no** transparency note for `jpg`, `gif` or `avif`. The reported case — an
+      opaque `yuvj420p` JPEG — is covered.
 - [ ] A source that carries alpha still gets the note, naming the stream index
       and that stream's codec.
 - [ ] A source the probe cannot decide (`pal8`, any `.gif`) still gets the note,
@@ -105,10 +106,12 @@ probe is not decisive, because the constitution forbids the other direction.
   declaration, and the alpha-free pixel-format set is curated data in
   `profiles.py` — `converter/jobs.py`'s own docstring forbids it holding a
   format-specific fact.
-- Never report success for a conversion that silently dropped something — and,
-  its mirror, never announce a loss that did not happen. This phase exists
-  because the second half is currently violated; where the two conflict, the
-  first wins.
+- Never report success for a conversion that silently dropped something
+  (`docs/constitution.md`). Its mirror -- never announce a loss that did not
+  happen -- and the precedence between them are **this spec's own rule, not the
+  constitution's**: where they conflict, the constitution's half wins, which is why
+  every undecidable case here over-reports. Stated rather than smuggled in as a
+  quotation.
 - The test suite keeps passing with no ffmpeg installed.
 
 ## Prior art
@@ -118,9 +121,14 @@ probe is not decisive, because the constitution forbids the other direction.
   preservation) is the same discipline: state what is true of the file at hand,
   not of the format in general.
 - [Container/codec capability modelling (Phase 1)](../prior-art.md#containercodec-capability-modelling-phase-1)
-  — the method. `ffmpeg -pix_fmts` lists 267 formats with flags `I/O/H/P/B` and
-  **no alpha flag** (measured), so the alpha-free set is curated by hand, exactly
-  as the copy masks and `LOSSY_CODECS` are.
+  — the method, with one difference that must be stated rather than borrowed.
+  `ffmpeg -pix_fmts` lists 267 formats with flags `I/O/H/P/B` and **no alpha
+  flag** (measured), so the set is curated data in the same module as the copy
+  masks and `LOSSY_CODECS`. But its *failure mode inverts theirs*: `LOSSY_CODECS`
+  records that "a missing codec is a known, disclosable gap", where an omission
+  yields silence. An omission from the alpha-free set yields a **false note on an
+  ordinary file** -- the very defect this phase removes -- which is why membership
+  follows a checkable rule and is pinned by a test, rather than being hand-listed.
 
 ## Design
 
@@ -143,10 +151,10 @@ Measured against ffmpeg 9.0; the review is asked to falsify.
 | **`ffmpeg -pix_fmts` has no alpha flag**: 267 formats, flags `I/O/H/P/B` only | The alpha-free set is curated, like every other codec fact here |
 | **ffmpeg's gif decoder reports `bgra` for every GIF**, opaque or not — measured on a GIF built from a fully opaque PNG | Every `.gif` source over-reports. `.gif` is a first-class source suffix, so this is a whole format, not an edge case |
 | **`pal8` carries no alpha marker but can carry alpha**: a paletted PNG with real transparency reports `pal8`, and into `jpg` the alpha is genuinely destroyed | Excluding it would be a silent loss; including it over-reports on opaque paletted images. Over-reporting is the safe side |
-| **An AVIF source reports `gbrp` either way** — but this build cannot write alpha into AVIF at all: `-pix_fmt yuva420p` comes back as `yuv420p` | The theoretical false negative has no reachable input on this build. Recorded, not designed around |
+| **An AVIF source reports `gbrp` either way.** No AV1 decoder path in this build surfaces an alpha aux item, and the `mov` demuxer that reads AVIF exposes no option for one (measured by review; the encode side agrees -- `-pix_fmt yuva420p` comes back `yuv420p`) | Where an AVIF source did carry alpha, ffmpeg had already dropped it **at decode, before the engine saw the file**. Suppressing the note is then correct rather than a silent loss: this conversion did not take it away. The reachable-input argument the first draft used was encode-side and could not carry a decode-side question |
 | **The output side cannot be used.** An alpha PNG into GIF yields an output reporting `pix_fmt=bgra` while the channel is opaque (source α `0x7f`, output `0xff`); `jpg` (`yuvj444p`) and `avif` (`gbrp`) do report honestly | The verdict is source-measured ∧ target-declared. It also needs no output probe |
 | `png`, `tiff`, `bmp` and `webp` preserve alpha (`rgba`, `rgba`, `bgra`, `yuva420p`, α `0x7f` intact) | Only `jpg`, `gif` and `avif` declare the limitation |
-| **`nb_frames` is present for `mp4` and `gif`, absent for `mkv`, `png`, `jpg`** | A hybrid — use `nb_frames` where present — is a real third option for the frame note; see the open decision |
+| **`nb_frames` is present for `mp4` and `gif`, absent for `mkv`, `png`, `jpg`** -- in `-of json` the key is genuinely **omitted**, not `"N/A"`, exactly as with `pix_fmt` | A hybrid — use `nb_frames` where present — is a real third option for the frame note; see the open decision |
 | **`-count_packets` rides the same argv, so the process count is unchanged.** Median of 7: 38.9 MB/1 h → +88 ms; 149.8 MB → +101 ms; **1198 MB → +875 ms**. Roughly 0.7 ms per MB demuxed | The cost is not flat. And `probe_streams` is one function: the failure-side probe and the output-confirmation probe would pay it too, not only the source probe |
 | **`-count_frames` is 3x the plain probe** — it decodes | Never an option |
 | Today, an alpha PNG into `jpg`/`gif`/`avif` runs **1 ffmpeg + 1 ffprobe**, because `verify_success` returns `()` and `batch._verify_cheap_attempt` short-circuits before the output probe | The hook must sit after that gate, or the process count rises |
@@ -157,7 +165,7 @@ Measured against ffmpeg 9.0; the review is asked to falsify.
 |---|---|---|
 | The verdict is **source-measured ∧ target-declared**, never an output comparison | Measured: the output side reports GIF's alpha as preserved exactly where it was lost. Source-plus-declaration is correct for all three and needs no output probe | 2026-08-28 |
 | The condition is **"the source's pixel format is not in the curated alpha-free set"** — over-reporting wherever the probe is not decisive | The constitution forbids the silent-loss direction; `pal8` and every `.gif` source are the cases that forces. The reported defect (`yuvj420p`) is decisive and is fixed | 2026-08-28 |
-| `ALPHA_FREE_PIX_FMTS` is a curated module-level frozenset in `converter/profiles.py`, beside `LOSSY_CODECS` | `converter/jobs.py`'s docstring: the engine holds no format-specific fact. The same placement phase 7 recorded for its own curated set | 2026-08-28 |
+| `ALPHA_FREE_PIX_FMTS` is a module-level frozenset in `converter/profiles.py`, beside `LOSSY_CODECS`, **derived by a stated rule rather than hand-listed**: every pixel format ffmpeg reports with 1 or 3 components, minus `pal8`. Measured census of `ffmpeg -pix_fmts`: 59 four-component and 7 two-component (`ya8`, `ya16be/le`, `yaf16be/le`, `yaf32be/le`) formats carry alpha; 165 three-component and 20 one-component do not; 16 zero-component entries are hwaccel placeholders. That is **184 members** | Placement follows `jobs.py`'s docstring -- the engine holds no format-specific fact -- and phase 7's precedent. But the *failure mode inverts* that precedent and must be stated: `LOSSY_CODECS` documents "a missing codec is a known, disclosable gap", where an omission yields silence; an omission here yields a **false note on an ordinary file**, which is the defect this phase exists to remove. A hand-list of 184 entries would rot; the component rule is checkable, and a test pins the roster | 2026-08-28 |
 | **The boundary widens to: a profile whose cheap attempt forces a single declared encoder unconditionally may declare what that encoder cannot hold.** A copy-based cheap attempt gets no such note | The first draft argued "this asserts nothing about the encode" — refuted by `docs/specs/archive/spec-stream-disposition.md`, which already records that AVIF's notes are true of *this profile's forced pipeline*, "not of the AVIF format, which does support alpha and multiple frames elsewhere". Measured, the same holds for GIF: GIF89a has a transparent palette index and ffmpeg's encoder drops it anyway. So for two of three targets the declaration *is* an encoder claim — which is safe only because those profiles always run that encoder. `webp`'s `-c copy` cheap attempt is the case the rule must exclude, and a test pins it | 2026-08-28 |
 | The note names the stream index and codec, and is emitted from a new engine entry point called by `batch._verify_cheap_attempt` **after** its `if not predicted` gate. It never enters `confirm_drops` | Measured: returning it from `verify_success` sends every alpha source into the output probe, raising the process count and running `_surplus` arithmetic that is meaningless for a stream that was never a predicted drop | 2026-08-28 |
 | `jpg`'s "the image was re-encoded" half stays unconditional | Its cheap attempt forces its encoder for every input | 2026-08-28 |
@@ -233,7 +241,9 @@ Machine checks:
 - [ ] Each branch proven non-vacuous: inverting its condition must fail a test.
 
 Human milestone-QA gate. `$FF` is the absolute ffmpeg path from *This machine*;
-distinct stems throughout:
+distinct stems throughout. Note that `opaque-gif-src.gif` lives in the input
+tree, so a `--to gif` run also re-converts it to its own output -- expected, not a
+collision:
 
 ```text
 New-Item -ItemType Directory -Force in
@@ -242,15 +252,19 @@ New-Item -ItemType Directory -Force in
 & $FF -y -i in/alpha-src.png -vf "split[a][b];[a]palettegen=reserve_transparent=1[p];[b][p]paletteuse" -frames:v 1 in/pal8-src.png
 & $FF -y -i in/opaque-src.jpg -c:v gif in/opaque-gif-src.gif
 & $FF -y -f lavfi -i testsrc=size=160x120:rate=10:duration=2 -c:v libx264 in/multi-src.mp4
+& $FF -y -f lavfi -i testsrc=size=160x120:rate=10:duration=1 -c:v libx264 -pix_fmt yuv420p10le in/tenbit-src.mkv
 ```
 
 - [ ] `--to jpg in out` over `opaque-src.jpg`: **no** transparency note. This is
       the reported defect; check it first.
 - [ ] `--to jpg in out` over `alpha-src.png`: the note fires, naming the stream
       index and `png`.
-- [ ] `--to jpg in out` over `pal8-src.png` and `opaque-gif-src.gif`: the note
-      fires. Confirm this matches what the spec says it should do — these are the
-      documented over-reports, not defects.
+- [ ] `--to jpg`, `--to gif` and `--to avif` over `pal8-src.png` and
+      `opaque-gif-src.gif`: the note fires in all six. These are the documented
+      over-reports, not defects.
+- [ ] `--to jpg in out` over `tenbit-src.mkv` (`yuv420p10le`): **no** transparency
+      note. This is the case an incomplete `ALPHA_FREE_PIX_FMTS` regresses, and
+      the one a user notices first -- ordinary 10-bit video into an image.
 - [ ] `--to gif` and `--to avif` over `alpha-src.png` and `opaque-src.jpg`: same
       pattern. `gif` is the one an output-side check would get wrong.
 - [ ] `--to png in out` over `alpha-src.png`: no note, and `ffprobe` shows the
@@ -267,7 +281,7 @@ New-Item -ItemType Directory -Force in
 | An implementer reaches for the output-side comparison, as `confirm_drops` does | The GIF false negative is a fact row, a decision row and a dedicated test |
 | The note is hooked into `verify_success` and the process count rises | Measured today's count as 1 ffmpeg + 1 ffprobe, named the gate it must sit after, and pinned it with a test |
 | The widened boundary licenses a note on a copy-based attempt | The boundary is stated as forced-encoder-only, with a test on `webp`'s copy attempt |
-| A fifth restatement of the boundary is missed | Four are named in Scope, including `jobs.py:249-251`, which the first draft missed — the same omission `#38`'s follow-up commit exists for |
+| A restatement of the boundary is missed | **Five** carriers are named in Scope and repeated in `docs/roadmap.md`'s foundation-impact line: architecture Key flow 1, the ladder diagram, the `jobs` module docstring, `jobs.py:249-251`, and `stream-decision.md`. The first draft named three and the second four; review round 2 caught the roadmap line still carrying three, which is the copy a future planner reads first. Same omission `#38`'s follow-up commit exists for |
 | Over-reporting on `pal8` and `.gif` is read as a bug | Both are in the Outcome, the fact table and the QA gate as deliberate |
 | `-count_packets` costs more on real media than the table suggests | The table now runs to 1.2 GB with a per-MB figure, and the QA gate measures a >1 GB file |
 
@@ -289,3 +303,11 @@ New-Item -ItemType Directory -Force in
   half *is* an encoder-behaviour claim, since both formats support alpha
   elsewhere. The boundary is restated as forced-encoder-only, which is what
   actually makes it safe, and a copy-based attempt is excluded by test.
+- 2026-08-28: Review round 2 found the curation direction right but its precedent
+  wrong: an omission from `LOSSY_CODECS` yields silence, an omission from an
+  alpha-free set yields a false note on an ordinary file. The set is now derived
+  by a stated component rule (184 members) and pinned by a test, and the inverted
+  failure mode is written down rather than inherited by analogy.
+- 2026-08-28: Review round 2 also caught the roadmap's foundation-impact line
+  still naming three carriers of the boundary while Scope named five — falsifying
+  this spec's own risks row inside the PR that asserts it. Both now say five.
