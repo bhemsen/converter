@@ -86,6 +86,10 @@ with their costs recorded in `docs/specs/archive/spec-audio-formats.md` rather t
 to be rediscovered — and phase 6's cost turned out to be smaller than that
 deferral assumed.
 
+Phase 8 follows phase 5, whose image profiles it corrects. It is the first phase
+not seeded through `/loopkit:roadmap`: the PR that half-closed it filed the
+remainder as issue #101 rather than dropping it, and it was planned directly.
+
 There is deliberately no separate release or documentation phase. README changes
 belong to the phase that makes them necessary — phase 2 breaks the CLI, so phase 2
 fixes the README, and each coverage phase maintains its own format list. The
