@@ -53,9 +53,9 @@ probe is not decisive, because the constitution forbids the other direction.
       attempt and the selective rung. On `last_resort`, which holds none, a
       format-limit statement remains, and the spec says so rather than implying
       the note is conditional everywhere.
-- [ ] Whatever this phase does about `avif`'s frame-reduction note leaves a
-      statement true for every input, per the gate's decision — and the gate is
-      told plainly if that leaves an issue-#101 criterion unmet.
+- [ ] `avif`'s frame-reduction note reads as a format fact true for every input,
+      and no `-count_packets` enters any probe. Issue #101's acceptance criterion
+      3 is knowingly left unmet and recorded as such.
 - [ ] `GIF holds at most a 256-colour palette` is untouched — #67 already
       restated it as a format fact.
 - [ ] The number of ffprobe **processes** per conversion is unchanged.
@@ -67,8 +67,8 @@ probe is not decisive, because the constitution forbids the other direction.
 ### In scope
 
 - `converter/ffmpegtool.py`: a `pix_fmt` field on `Stream` and the matching entry
-  in `probe_streams`' existing query; plus, only under the gate's option 1,
-  `-count_packets` and a packet-count field.
+  in `probe_streams`' existing query. No `-count_packets` and no packet-count
+  field: the gate declined them.
 - `converter/profiles.py`: the generated `ALPHA_FREE_PIX_FMTS` frozenset beside
   `LOSSY_CODECS`, and the per-target declarations that replace the *cheap-attempt*
   static notes on `jpg`, `gif` and `avif`. Their `last_resort` tuples
@@ -180,9 +180,9 @@ Measured against ffmpeg 9.0; the review is asked to falsify.
 | **Per rung, because the ladder has three and only two hold a stream list.** **Cheap attempt**: a new engine entry point called by `batch._verify_cheap_attempt` **after** its `if not predicted` gate, never entering `confirm_drops`. **Selective rung**: it is built from the stream list, so it carries the conditional note too -- today it emits only `_reencode_note`, so a transparency loss there is *silent*, a second defect this phase closes. **`last_resort`**: reached only after a failure, so `probed` is already true and no stream list is available; it keeps a static *format-limit statement* under the new third carve-out | Measured: `--to jpg` over any multi-frame source fails both the cheap attempt and the selective rung (`image2: Cannot write more than one file with the same name`, exit 127 for both) and lands on `last_resort`, whose notes are a static tuple. Specifying only the cheap-attempt hook would have left the unconditional note firing on exactly the case the spec calls the one a user notices first. Returning the note from `verify_success` instead would send every alpha source into the output probe, raising the process count | 2026-08-28 |
 | `jpg`'s "the image was re-encoded" half stays unconditional | Its cheap attempt forces its encoder for every input | 2026-08-28 |
 | **`docs/design/stream-decision.md` gains a third carve-out**: a *format-limit statement* is not a per-stream verdict and is not bound by the three-things rule | The notes this phase keeps — `jpg`'s re-encode half, GIF's palette line, every `last_resort` note, and `AVIF holds a single frame` under option 2 — name neither index nor codec and fall under neither existing carve-out. `spec-stream-disposition.md` records them as an open violation; closing #101 while leaving it unnamed would be the same omission in a new place | 2026-08-28 |
-| OPEN — whether `avif`'s frame-reduction note becomes conditional, and at what cost | resolved at the spec-acceptance gate; see the note below | — |
+| **`avif`'s frame-reduction note stays a format fact**, reworded so it is true for every input ("AVIF holds a single frame"). No `-count_packets`, no packet-count field | Resolved at the gate on 2026-08-28. Free, and the same resolution #67 chose one issue earlier for GIF's palette note. The measured alternative cost 0.7 ms per MB on *every* probe in the system -- `probe_streams` is one function, so the failure-side and output-confirmation probes pay it too -- for a note only `avif` emits. **This leaves issue #101's acceptance criterion 3 unmet**, knowingly: that criterion is unhedged where its palette sibling is not, so #101 stays open on that point or is amended to record this decision | 2026-08-28 |
 
-### The one open decision, in full
+### The frame-note decision, in full (resolved at the gate)
 
 Transparency rides the existing query for nothing. The frame note does not.
 
@@ -200,6 +200,8 @@ Roughly **0.7 ms per MB demuxed**; a 4 GB rip is about 3 s per file. And
 failure-side probe and the output-confirmation probe too, not only by the source
 probe on success. All 17 profiles declare `partial_mapping=True`, so every
 conversion is probed.
+
+**Resolved at the gate on 2026-08-28: option 2, the format fact.**
 
 1. **Take the cost; make the frame note conditional.** Closes issue #101 fully.
    The price is the table above, on every probe in the system.
@@ -253,8 +255,9 @@ Machine checks:
       deleted: `tests/test_argv.py::test_a_codec_outside_the_copy_mask_produces_no_note`
       and `::test_no_profile_invents_a_loss_for_a_source_it_fully_maps`, the
       latter gaining the image profiles to its parametrisation.
-- [ ] Under option 1 only: a single-frame source into `avif` emits no frame note
-      and a multi-frame one does, naming the stream.
+- [ ] A test that no probe argv contains `-count_packets`, and that `avif`'s
+      frame note is identical for a single-frame and a multi-frame source -- the
+      gate chose the format fact, so the two must not diverge.
 - [ ] Each branch proven non-vacuous: inverting its condition must fail a test.
 
 Human milestone-QA gate. `$FF` is the absolute ffmpeg path from *This machine*;
@@ -298,9 +301,11 @@ New-Item -ItemType Directory -Force in
       pattern. `gif` is the one an output-side check would get wrong.
 - [ ] `--to png in out` over `alpha-src.png`: no note, and `ffprobe` shows the
       alpha survived.
-- [ ] `--to avif in out` over `multi-src.mp4` behaves as the gate decided.
-- [ ] Time a conversion of a **large** video (>1 GB) before and after, and record
-      the probe cost observed against the table above.
+- [ ] `--to avif in out` over `multi-src.mp4` and over a single-frame source: the
+      frame note reads the same in both, as a format fact.
+- [ ] Confirm the probe cost is **unchanged** against a large (>1 GB) video: the
+      gate declined `-count_packets`, so the table above is the cost avoided, not
+      a cost to verify.
 - [ ] A second run over any converted tree reports `0 converted`, exit 0.
 
 ## Risks and mitigations
@@ -353,3 +358,8 @@ New-Item -ItemType Directory -Force in
   exactly the case this spec calls the one a user notices first. The note is now
   specified per rung, and the QA fixture changed to one that actually exercises
   the cheap attempt.
+- 2026-08-28: Gate chose the format fact for `avif`'s frame note. The transparency
+  half — the reported defect — is fixed regardless; what is declined is
+  `-count_packets` on every probe in the system for one target's note. Issue #101's
+  acceptance criterion 3 is knowingly left unmet, which is recorded here rather
+  than quietly reworded, so #101 stays open on that point or is amended.
