@@ -68,7 +68,7 @@ The internal import graph is acyclic today and must stay that way:
    `avif`'s `Profile.alpha_unsupported`, `converter.jobs.transparency_notes`,
    `docs/specs/spec-within-stream-loss-notes.md`). A copy-based cheap attempt
    (`webp`) earns no such note — that is the boundary's limit.
-   That reading is a *prediction* from the mapping, so a run that is about to
+   That structural reading is a *prediction* from the mapping, so a run that is about to
    name a loss spends one further `ffprobe`, on the output this time, and keeps
    only the drops the written file does not in fact contain — MP4 and MOV put a
    `tmcd` timecode track back that no selector mapped (issue #66). A conversion

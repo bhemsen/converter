@@ -75,18 +75,24 @@ flowchart TD
   names a stream index or the stream's own codec, and none is a per-stream
   verdict at all — each states what *this profile's forced pipeline* always
   does, true of every conversion through that pipeline regardless of what
-  that particular input carried, and **not** of the target format itself,
-  which may hold more elsewhere — GIF supports more colours and alpha, and
-  AVIF supports alpha and multiple frames, outside the one pipeline these
-  profiles force (`docs/specs/archive/spec-stream-disposition.md` records
-  both that framing, for AVIF's notes, and these notes as the open violation
-  of the rule this carve-out now closes). This is the shape the widened
-  success-side boundary licenses: a profile whose cheap attempt forces a
-  single declared encoder unconditionally, for every input, may declare what
-  that encoder cannot hold — as this format-wide statement where the claim
-  is not about any one stream, or, where the source's probed properties let
-  it name one, as an ordinary per-stream note bound by this rule instead
-  (`jpg`/`gif`/`avif`'s transparency note,
+  that particular input carried. For GIF's and AVIF's colour and frame
+  limits specifically, that is **not** also a claim about the target format
+  itself, which may hold more elsewhere — GIF supports more colours and
+  alpha, and AVIF supports alpha and multiple frames, outside the one
+  pipeline these profiles force
+  (`docs/specs/archive/spec-stream-disposition.md` records both that
+  framing, for AVIF's notes, and these notes as the open violation of the
+  rule this carve-out now closes). JPG's own transparency clause is
+  different: JPEG genuinely holds no alpha channel at all, so that one *is*
+  a fact about the format, not only about this pipeline — it still belongs
+  in this carve-out on the same footing as the other two, since it likewise
+  names no index, no codec, and no per-stream verdict. This is the shape the
+  widened success-side boundary licenses: a profile whose cheap attempt
+  forces a single declared encoder unconditionally, for every input, may
+  declare what that encoder cannot hold — as this format-wide statement
+  where the claim is not about any one stream, or, where the source's
+  probed properties let it name one, as an ordinary per-stream note bound by
+  this rule instead (`jpg`/`gif`/`avif`'s transparency note,
   `converter.jobs.transparency_notes`,
   `docs/specs/spec-within-stream-loss-notes.md`). `webp`'s copy-based cheap
   attempt forces no such pipeline and so licenses neither kind of note on

@@ -579,7 +579,7 @@ New-Item -ItemType Directory -Force in
 - 2026-09-14 (issue #106): Confirmed, not merely trusted, that
   `tests/test_argv.py::test_a_codec_outside_the_copy_mask_produces_no_note`
   and `::test_no_profile_invents_a_loss_for_a_source_it_fully_maps` are
-  narrowed rather than deleted, and that the latter's parametrisation does
-  carry all seven image profiles (`MP4, WAV, MKV, MOV, WEBM, PNG, JPG, TIFF,
-  BMP, GIF, WEBP, AVIF`) alongside the two shipped ones -- issue #105's own
-  report of this was accurate.
+  narrowed rather than deleted, and that the latter's parametrisation now
+  spans all twelve profiles (`MP4, WAV, MKV, MOV, WEBM, PNG, JPG, TIFF, BMP,
+  GIF, WEBP, AVIF`) -- the five originally shipped plus all seven image
+  profiles -- issue #105's own report of this was accurate.

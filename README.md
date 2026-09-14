@@ -218,11 +218,14 @@ note    Show.S01E02.mkv: subtitle stream 2 (hdmv_pgs_subtitle) dropped: bitmap s
   whether or not the file carried alpha, so the tool cannot tell and stays
   silent here — the one place it under-reports rather than over-reports.
   GIF's 256-colour palette limit and AVIF's single-frame limit are unrelated
-  to this and still state a format fact on every conversion regardless of
-  the source, since counting colours or frames would cost a decode or an
-  extra probe this tool does not spend. Step 3, reached only once the faster
-  paths have failed, never gets to look at the source's streams at all, so
-  it restates every one of these limits as fixed text instead.
+  to this and still fire on every conversion regardless of the source: each
+  states what this tool's GIF or AVIF pipeline always does — ffmpeg's GIF
+  encoder quantises to a single 256-entry palette, and its AVIF muxer keeps
+  one frame no matter what is asked of it — not what those formats can hold
+  elsewhere, which is more. Counting colours or frames would cost a decode
+  or an extra probe this tool does not spend. Step 3, reached only once the
+  faster paths have failed, never gets to look at the source's streams at
+  all, so it restates every one of these limits as fixed text instead.
 * **`--to opus` can hand you a `.opus` file that is actually Vorbis.** A
   Vorbis source (typically a `.ogg`/`.oga` file) is stream-copied into the
   `.opus` container without transcoding — genuinely lossless, but `.opus` is a

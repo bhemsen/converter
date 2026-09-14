@@ -15,9 +15,9 @@ declared encoder unconditionally, for every input, may declare what that
 encoder cannot hold (``Profile.alpha_unsupported``,
 ``docs/specs/spec-within-stream-loss-notes.md``) -- an encoder claim the
 profile itself makes, not a codec-level verdict this module infers about what
-the attempt did, and sound only because such a profile has no copy branch that
-could have avoided it. A copy-based cheap attempt (``webp``) declares no such
-field and earns no such note.
+the attempt did, and sound only because that attempt has no copy branch it
+could have taken instead. A copy-based cheap attempt (``webp``) declares no
+such field and earns no such note.
 
 See ``docs/design/degradation-ladder.md`` for the order of attempts this module
 builds, ``docs/design/stream-decision.md`` for how one stream's fate is decided
