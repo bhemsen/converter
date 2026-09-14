@@ -256,7 +256,8 @@ Machine checks:
 
 Human milestone-QA gate. `$FF` is the absolute ffmpeg path from *This machine*.
 Every fixture has a **distinct stem**, so a single `--to <fmt> in out` run does
-not collide (`docs/specs/spec-image-formats.md` and commit `a6b1342` record why):
+not collide (`docs/specs/archive/spec-image-formats.md` and commit `a6b1342`
+record why):
 
 ```text
 New-Item -ItemType Directory -Force in

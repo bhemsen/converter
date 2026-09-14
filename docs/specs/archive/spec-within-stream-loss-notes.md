@@ -603,16 +603,25 @@ New-Item -ItemType Directory -Force in
   per-rung decision above specifies. Recorded here so a future reader meets it
   as a known consequence rather than rediscovering it as a bug.
 - 2026-09-14 (milestone QA gate): A defect found while reviewing #106 was
-  referred out rather than fixed inside this phase. The comment above
-  `converter/jobs.py`'s `_LOSSY_SOURCE_ADVISORY_TARGETS` rests on the premise
-  that `wav`, `png`, `tiff` and `bmp` "always succeed their cheap attempt",
-  which is false for `png`, `tiff` and `bmp`: the image2 muxer refuses a
-  multi-frame source or a second video stream, as `converter/profiles.py`'s
-  own comment records, so their cheap attempt can fail and reach the selective
-  rung. The text is phase 7's and predates this milestone, so correcting it
-  here would have widened #106 beyond the boundary it was scoped to.
-- 2026-09-14 (milestone QA gate): Issue #101 closed rather than left open on
-  its unmet third criterion. The gate's choice of the format-fact wording for
-  `avif`'s frame note is recorded in that issue's closing comment, so the
-  decision is discoverable from the issue a future reader starts at, not only
-  from this log.
+  referred out to issue #111 rather than fixed inside this phase. The comment
+  above `converter/jobs.py`'s `_LOSSY_SOURCE_ADVISORY_TARGETS` rests on the
+  premise that `wav`, `png`, `tiff` and `bmp` "always succeed their cheap
+  attempt", which is false for `png`, `tiff` and `bmp`: the image2 muxer
+  refuses a multi-frame source or a second video stream, as
+  `converter/profiles.py`'s own comment records, so their cheap attempt can
+  fail and reach the selective rung. The premise is load-bearing -- the
+  comment's "so" draws its whole conclusion from it -- which is why #111 asks
+  for the conclusion to be re-derived rather than the sentence patched. The
+  text is phase 7's and predates this milestone, so correcting it here would
+  have widened #106 beyond the five carriers it was scoped to; the review of
+  PR #110 rightly noted that this makes the follow-up more important, not
+  less, since PR #109 was already editing the same comment block two lines
+  below.
+- 2026-09-14 (milestone QA gate): Issue #101, which this phase exists to
+  close, is closed as completed: two of its three acceptance criteria are met
+  and the third -- a conditional frame-reduction note for `avif` -- is
+  recorded in its closing comment as declined at the planning gate, with the
+  measured `-count_packets` cost that decided it. The decision is therefore
+  discoverable from the issue a future reader starts at, not only from this
+  log. This supersedes PR #102's "issue #101 remains open by design", which
+  was accurate before this phase ran.
