@@ -82,7 +82,7 @@ class Stream:
     #: ``codec_name``/``codec_tag`` above do. Feeds the within-stream
     #: transparency verdict against
     #: :data:`converter.profiles.ALPHA_FREE_PIX_FMTS`
-    #: (docs/specs/spec-within-stream-loss-notes.md, issue #105).
+    #: (docs/specs/archive/spec-within-stream-loss-notes.md, issue #105).
     pix_fmt: str = ""
 
 
@@ -265,7 +265,7 @@ def probe_streams(tools: Tools, src: str | os.PathLike[str]) -> list[Stream]:
             # One query, one process: an extra field costs nothing here, and
             # codec_tag_string is the only thing that distinguishes two data
             # tracks ffprobe reports no codec name for. pix_fmt rides the same
-            # free query (docs/specs/spec-within-stream-loss-notes.md) -- it
+            # free query (docs/specs/archive/spec-within-stream-loss-notes.md) -- it
             # costs nothing extra either, unlike -count_packets, which the
             # spec's own measurements ruled out. stream_disposition= is a
             # separate entry clause because disposition flags arrive nested

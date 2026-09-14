@@ -124,11 +124,11 @@ probe is not decisive, because the constitution forbids the other direction.
 
 ## Prior art
 
-- [Image conversion through ffmpeg (Phase 5)](../prior-art.md#image-conversion-through-ffmpeg-phase-5)
+- [Image conversion through ffmpeg (Phase 5)](../../prior-art.md#image-conversion-through-ffmpeg-phase-5)
   — the concern that produced these notes. Its AVOID (never promise EXIF/ICC
   preservation) is the same discipline: state what is true of the file at hand,
   not of the format in general.
-- [Container/codec capability modelling (Phase 1)](../prior-art.md#containercodec-capability-modelling-phase-1)
+- [Container/codec capability modelling (Phase 1)](../../prior-art.md#containercodec-capability-modelling-phase-1)
   — the method, with one difference that must be stated rather than borrowed.
   Unlike a copy mask, this set has an authoritative source: `ffprobe
   -show_pixel_formats` reports `flags.alpha` per format. It is still curated data
@@ -583,3 +583,45 @@ New-Item -ItemType Directory -Force in
   spans all twelve profiles (`MP4, WAV, MKV, MOV, WEBM, PNG, JPG, TIFF, BMP,
   GIF, WEBP, AVIF`) -- the five originally shipped plus all seven image
   profiles -- issue #105's own report of this was accurate.
+- 2026-09-14 (milestone QA gate): Accepted. The smoke test ran all seven
+  fixtures of the Verification block against ffmpeg 9.0 through the installed
+  CLI. Every fixture reported the pixel format this spec's fact table predicts,
+  including the two that make the over-reporting deliberate rather than
+  accidental: a GIF built from a fully opaque JPEG still reports `bgra`, and
+  the paletted PNG still reports `pal8`. The reported defect is gone
+  (`opaque-src.jpg` into `jpg` emits only the re-encode half), the widened
+  boundary holds (`webp`, `tiff`, `bmp` emit no transparency note for an
+  `rgba` source, and `png` carries the alpha through intact), the selective
+  rung now names the loss it used to swallow, and a second run over a
+  converted tree reports `0 converted` at exit 0.
+- 2026-09-14 (milestone QA gate): The residual accepted with eyes open. A
+  source that reaches `last_resort` still receives the unconditional
+  transparency statement even when its pixel format is alpha-free --
+  `multi-src.mp4` (`yuv444p`) into `jpg` is the case, and it is formally the
+  shape of the defect this phase set out to remove. It survives because that
+  rung runs only after a failure and never holds a stream list, exactly as the
+  per-rung decision above specifies. Recorded here so a future reader meets it
+  as a known consequence rather than rediscovering it as a bug.
+- 2026-09-14 (milestone QA gate): A defect found while reviewing #106 was
+  referred out to issue #111 rather than fixed inside this phase. The comment
+  above `converter/jobs.py`'s `_LOSSY_SOURCE_ADVISORY_TARGETS` rests on the
+  premise that `wav`, `png`, `tiff` and `bmp` "always succeed their cheap
+  attempt", which is false for `png`, `tiff` and `bmp`: the image2 muxer
+  refuses a multi-frame source or a second video stream, as
+  `converter/profiles.py`'s own comment records, so their cheap attempt can
+  fail and reach the selective rung. The premise is load-bearing -- the
+  comment's "so" draws its whole conclusion from it -- which is why #111 asks
+  for the conclusion to be re-derived rather than the sentence patched. The
+  text is phase 7's and predates this milestone, so correcting it here would
+  have widened #106 beyond the five carriers it was scoped to; the review of
+  PR #110 rightly noted that this makes the follow-up more important, not
+  less, since PR #109 was already editing the same comment block two lines
+  below.
+- 2026-09-14 (milestone QA gate): Issue #101, which this phase exists to
+  close, is closed as completed: two of its three acceptance criteria are met
+  and the third -- a conditional frame-reduction note for `avif` -- is
+  recorded in its closing comment as declined at the planning gate, with the
+  measured `-count_packets` cost that decided it. The decision is therefore
+  discoverable from the issue a future reader starts at, not only from this
+  log. This supersedes PR #102's "issue #101 remains open by design", which
+  was accurate before this phase ran.
