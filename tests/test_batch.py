@@ -1111,11 +1111,14 @@ class TestLossySourceAdvisory:
     @pytest.mark.parametrize("profile", [PNG, TIFF, BMP], ids=lambda p: p.name)
     def test_the_other_lossless_targets_stay_silent(self, profile):
         """The accepted inconsistency (spec Prior decisions, resolved at the
-        gate): only `flac` carries the advisory. `wav`, `png`, `tiff` and `bmp`
-        always succeed their cheap attempt in practice, but even called
-        directly their selective rung must still report nothing for a lossy
-        video source -- pinned per profile so a change scoped too widely to
-        `jobs.py` cannot silently start naming any of the other four.
+        gate): only `flac` carries the advisory, and that is a scope decision
+        rather than a structural necessity (issue #111). These three do reach
+        their selective rung in practice -- their image2 muxer refuses a second
+        video stream, so such a source fails the cheap attempt and succeeds
+        here -- which is exactly why the silence needs pinning per profile: it
+        rests on the gate's choice alone, not on the rung being unreachable, so
+        a change scoped too widely to `jobs.py` could silently start naming any
+        of the other four.
         """
         streams = [Stream(0, "video", "mjpeg")]
 

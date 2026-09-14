@@ -480,3 +480,30 @@ New-Item -ItemType Directory -Force in
   since both concern that milestone's material. Issue #101 (the
   `jpg`/`gif`/`avif` within-stream notes still firing unconditionally and
   naming no stream, tracked against milestone 6) remains open by design.
+- 2026-09-14 (issue #111, after the fact): This spec's fact table and its scope
+  decision both rest on a premise that is false for three of the four targets
+  they apply it to. "`wav`, `png`, `tiff` and `bmp` always encode in their cheap
+  attempt, so a lossy source *succeeds* at rung 1" holds for `wav` alone. The
+  image2 muxer behind `png`, `tiff` and `bmp` refuses a second video stream, so
+  such a source fails their cheap attempt and **succeeds on the selective
+  rung** -- the rung this advisory lives on. Measured at phase 8's QA gate,
+  where a two-video-stream source into `png` landed there and printed the
+  per-stream drop note. The rows are left as written, because they record what
+  was believed when the gate decided; this entry is the correction, and
+  `converter/jobs.py`'s comment above `_LOSSY_SOURCE_ADVISORY_TARGETS` now
+  states it rather than repeating the premise.
+- 2026-09-14 (issue #111): The conclusion is unchanged -- `flac` only -- but it
+  now rests on the grounds the gate actually weighed rather than on a
+  reachability claim that does not hold. "The scope decision, in full" already
+  records them: widening to all five would still have to widen the success-side
+  verification for `wav` (the one target the premise was true of), costing
+  amendments to `docs/architecture.md` Key flow 1 and
+  `docs/design/degradation-ladder.md` plus a narrowed boundary test, and it
+  would add an advisory to `--to png` from a JPEG -- correct, but judged more
+  noise than an image batch wants. What changes is the standing of the
+  confinement: it is a scope decision the gate made, not a structural
+  impossibility, so re-opening it needs only a new decision, not new machinery.
+  No behaviour changed, and the test that pins the three targets' silence
+  (`tests/test_batch.py::TestLossySourceAdvisory::test_the_other_lossless_targets_stay_silent`)
+  is unchanged apart from its rationale -- it was already written to assert the
+  silence directly rather than to lean on the rung being unreachable.

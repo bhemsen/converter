@@ -273,11 +273,32 @@ def _build_selective(profile: Profile, streams: Sequence[Stream]) -> Attempt | N
     return Attempt("selective", (*maps, *codecs), tuple(notes))
 
 
-#: The only target this phase's advisory covers (Prior decisions,
-#: spec-lossy-source-notes.md, "Only flac carries the advisory"). The other
-#: four lossless targets (`wav`, `png`, `tiff`, `bmp`) always succeed their
-#: cheap attempt, so the only place they could carry a codec-level statement is
-#: the success-side verification -- and :func:`verify_success` itself is
+#: The only target this advisory covers (Prior decisions,
+#: spec-lossy-source-notes.md, "Only flac carries the advisory"). The
+#: confinement is a **scope decision**, not a structural necessity, and issue
+#: #111 exists because this comment used to claim otherwise -- that the other
+#: four lossless targets "always succeed their cheap attempt", so the advisory
+#: could only ever come from the success-side verification. That holds for
+#: `wav`, whose `-map 0:a:0` cheap attempt succeeds for any source carrying
+#: audio. It is false for `png`, `tiff` and `bmp`: their image2 muxer refuses a
+#: second video stream, so such a source fails the cheap attempt and *succeeds*
+#: on the selective rung -- the very rung this advisory lives on. Measured at
+#: phase 8's QA gate, where a two-video-stream source into `png` landed there
+#: and printed the per-stream drop note; a multi-frame source fails that rung
+#: too and wins on `last_resort`, which spec-lossy-source-notes.md already
+#: recorded as a known gap. The suite stubs the subprocess boundary, so that
+#: reachability is an ffmpeg fact evidenced at the gate, not one a test can pin.
+#:
+#: The conclusion survives on the grounds the gate actually weighed
+#: (spec-lossy-source-notes.md, "The scope decision, in full"): widening to all
+#: five would still have to widen the success-side verification for `wav`,
+#: costing amendments to `docs/architecture.md` Key flow 1 and
+#: `docs/design/degradation-ladder.md`, and it would add an advisory to
+#: `--to png` from a JPEG -- correct, but judged more noise than an image batch
+#: wants. The accepted cost is the inconsistency the gate recorded: the same MP3
+#: says something on the way to FLAC and nothing on the way to WAV.
+#:
+#: :func:`verify_success` itself is
 #: unchanged, still reading only the structural verdicts of
 #: `stream-decision.md`, never a codec (issue #18). The boundary around it
 #: widened since (spec-within-stream-loss-notes.md, #106): a profile whose
