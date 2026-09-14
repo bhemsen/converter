@@ -1236,18 +1236,32 @@ PNG = Profile(
 #   ordinary opaque source. That closes it for the two rungs that ever hold a
 #   stream list -- the transparency clause is gone from the cheap attempt's
 #   own `notes` tuple below on all three profiles. `last_resort`, which never
-#   sees a stream list, is deliberately left out of that widening and keeps
-#   its old combined wording verbatim (spec-within-stream-loss-notes.md's
-#   Outcome and Decision log) -- so the transparency clause is still visible
-#   below, on that one rung only. The colour-count and frame-count thirds
-#   stay exactly as #67 left them everywhere: counting distinct colours needs
-#   a decode pass, and naming a frame count would need `-count_packets`,
-#   which this issue's own gate measured and declined
-#   (spec-within-stream-loss-notes.md's Decision log) -- both remain
-#   unconditional, index-less standing notes. That spec records them as an
-#   accepted deviation from stream-decision.md's "every note names three
-#   things" rule rather than a carve-out that document itself grants yet --
-#   #106 is where stream-decision.md is amended to say so.
+#   sees a stream list, is deliberately left out of that widening
+#   (spec-within-stream-loss-notes.md's Outcome and Decision log): its
+#   transparency clause stands below on all three profiles exactly as
+#   before, in JPG's and GIF's case verbatim -- AVIF's is verbatim too, but
+#   sits alongside a frame-count clause this same issue *did* reword (next
+#   paragraph), so "verbatim" describes the transparency half of that rung
+#   only, not the whole tuple.
+#
+#   The colour-count and frame-count thirds of half two are unfixed by this
+#   issue everywhere they appear -- neither names a stream index or codec,
+#   and both stay format facts about the *shape* of what the profile can
+#   hold rather than a per-stream verdict. Their *text* is not frozen: #67
+#   already reworded GIF's palette line once (above), and this issue rewords
+#   AVIF's frame line for the same reason, in both its `cheap_attempt` and
+#   its `last_resort` tuple -- "a multi-frame source is reduced to a single
+#   frame" was an action claim measured false for a source already holding
+#   one frame, so it becomes "AVIF holds a single frame" here, the same
+#   fact-not-action shape GIF's line already has. Counting distinct colours
+#   needs a decode pass, and naming a frame count would need
+#   `-count_packets`, which this issue's own gate measured and declined
+#   (spec-within-stream-loss-notes.md's Decision log) -- so both stay
+#   unconditional, index-less standing notes regardless of wording. That spec
+#   records them as an accepted deviation from stream-decision.md's "every
+#   note names three things" rule rather than a carve-out that document
+#   itself grants yet -- #106 is where stream-decision.md is amended to say
+#   so.
 #
 # Retiring the colour-count and frame-count notes outright, leaving that
 # within-stream loss unsaid entirely, would violate docs/constitution.md's
@@ -1377,8 +1391,11 @@ BMP = Profile(
 #: instead -- the cheap attempt then always wins and both standing notes always
 #: print. Measured, this costs `gif` only CPU (a GIF source re-encodes through
 #: `-c:v gif` pixel-identically) and costs `avif` a real generation loss plus
-#: several seconds per already-AVIF file, accepted so its transparency and
-#: frame losses are named rather than left silent.
+#: several seconds per already-AVIF file, accepted so its frame loss is named
+#: rather than left silent (issue #105: an already-AVIF source's transparency
+#: is *not* named here -- its `gbrp` pix_fmt correctly suppresses that note,
+#: since no AV1 decode path in this build ever surfaces its alpha in the
+#: first place; see `ALPHA_FREE_PIX_FMTS`'s own comment).
 #:
 #: All three still declare `stream_limit=1`: none of these muxers holds more
 #: than one video *stream* (a second one -- cover art beside an animation --
@@ -1393,21 +1410,21 @@ GIF = Profile(
     cheap_attempt=Attempt(
         label="force-encode",
         options=flags("-map 0:v? -c:v gif"),
-        # Standing notes, not fallback-branch ones: this cheap attempt always
+        # Standing note, not a fallback-branch one: this cheap attempt always
         # wins (it forces the encoder unconditionally), so it is the only rung
         # whose notes are ever actually reported for the overwhelming majority
         # of inputs -- the same shape JPG's cheap-attempt note is. Retained
         # unconditionally -- issue #67, see the module-level comment above JPG
-        # for why: both are a within-stream loss no per-stream drop note can
-        # replace. Both wordings are format facts, true of every conversion to
-        # GIF regardless of what the source held -- not a claim that *this*
-        # file's transparency or colour count was actually reduced (issue #67
-        # review: an already-GIF, already <=256-colour source re-encodes
-        # pixel-identically, measured, so "colours are reduced" would have
-        # been a false claim of an action that did not happen for that file;
-        # "holds at most" makes the same point as a limit instead).
-        # Issue #105: the transparency line that used to stand alongside the
-        # palette one moved off this static tuple -- it is now conditional on
+        # for why: it is a within-stream loss no per-stream drop note can
+        # replace. Worded as a format fact, true of every conversion to GIF
+        # regardless of what the source held -- not a claim that *this* file's
+        # colour count was actually reduced (issue #67 review: an already-GIF,
+        # already <=256-colour source re-encodes pixel-identically, measured,
+        # so "colours are reduced" would have been a false claim of an action
+        # that did not happen for that file; "holds at most" makes the same
+        # point as a limit instead).
+        # Issue #105: a transparency line used to stand alongside this one --
+        # it moved off this static tuple entirely, and is now conditional on
         # the source's measured pix_fmt (alpha_unsupported below,
         # converter.jobs.transparency_notes). Every .gif source still fires
         # it: ffmpeg's gif decoder reports bgra unconditionally, opaque or
@@ -1489,12 +1506,12 @@ AVIF = Profile(
     cheap_attempt=Attempt(
         label="force-encode",
         options=flags("-map 0:v? -c:v libaom-av1 -crf:v 30 -still-picture 1"),
-        # Standing notes: the cheap attempt always wins (forced encoder), so
+        # Standing note: the cheap attempt always wins (forced encoder), so
         # this is the only place AVIF's one silent loss this phase cannot
         # avoid -- the muxer keeps one frame no matter what is asked of it --
         # is ever actually named. Retained unconditionally -- issue #67, see
-        # the module-level comment above JPG for why: both are a
-        # within-stream loss no per-stream drop note can replace. Measured: a
+        # the module-level comment above JPG for why: it is a within-stream
+        # loss no per-stream drop note can replace. Measured: a
         # single-frame, alpha-less source still prints this note. Reworded
         # (issue #101/#105) to read as a format fact true of every input,
         # single-frame or not, rather than an action that happened to this

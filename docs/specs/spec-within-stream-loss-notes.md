@@ -383,9 +383,10 @@ New-Item -ItemType Directory -Force in
   nothing else wrong into `_confirm_against_output` for a probe it does not
   need. Implemented as the issue's own suggested shape: `within =
   engine.transparency_notes(...)` computed once, unconditionally, then
-  returned on *both* paths -- `return within` on the early return, the
-  confirmed drops plus `within` on the other (see the 2026-09-14 review-round
-  1 entry below for the final argument order). Pinned by
+  returned on *both* paths -- `return within` on the early return,
+  `(*_confirm_against_output(...), *within)` on the other (the argument
+  order shipped is the reverse of the first draft; see the review-round 1
+  entry below for why). Pinned by
   `tests/test_batch.py::TestTransparencyNote`, including one test
   (`test_alpha_note_survives_the_confirm_against_output_path`) built
   specifically because every other test in that class takes the early-return
@@ -462,19 +463,29 @@ New-Item -ItemType Directory -Force in
     finding) is updated, not left stale as first decided: it now says
     plainly that issue #105 closed the transparency third of "half two" for
     the two rungs that ever hold a stream list (naming index and codec,
-    conditional on the source), while `last_resort` keeps the old combined
-    wording verbatim on all three profiles (it never sees a stream list),
-    and the colour-count and frame-count thirds remain exactly as #67 left
-    them everywhere -- unconditional, index-less standing notes, recorded as
-    an accepted deviation from `stream-decision.md`'s "every note names
-    three things" rule rather than a carve-out that document grants yet
-    (that amendment is #106's job). The comment sits directly above the
-    three profiles this issue rewrites, in a file this issue already edits
-    heavily; leaving it to state the opposite of what the code beneath it
-    now does was a defect in this issue's own diff, not a restatement
-    belonging to #106's five carriers (`README.md`, architecture, the ladder
-    diagram, `stream-decision.md`, and the boundary comment above
-    `_LOSSY_SOURCE_ADVISORY_TARGETS` -- all still untouched).
+    conditional on the source), while `last_resort` -- which never sees a
+    stream list -- keeps its transparency clause exactly as before on all
+    three profiles, verbatim for `jpg` and `gif`. Not verbatim for `avif`:
+    its `last_resort` tuple sits alongside a frame-count clause this same
+    issue *does* reword (see the next bullet), so the comment is careful to
+    scope "verbatim" to the transparency half of that one tuple, not the
+    whole thing -- round 3 caught the first draft of this fix overclaiming
+    "all three ... verbatim" and "everywhere" past that boundary. The
+    colour-count and frame-count thirds of half two stay unfixed by this
+    issue in the sense that matters for half two -- neither names a stream
+    index or codec, anywhere -- but their *text* is not frozen: #67 already
+    reworded GIF's palette line once, and this issue rewords AVIF's frame
+    line the same way, in both its `cheap_attempt` and its `last_resort`
+    tuple. Both remain unconditional, index-less standing notes regardless
+    of wording, recorded as an accepted deviation from `stream-decision.md`'s
+    "every note names three things" rule rather than a carve-out that
+    document grants yet (that amendment is #106's job). The comment sits
+    directly above the three profiles this issue rewrites, in a file this
+    issue already edits heavily; leaving it to state the opposite of what
+    the code beneath it now does was a defect in this issue's own diff, not
+    a restatement belonging to #106's five carriers (`README.md`,
+    architecture, the ladder diagram, `stream-decision.md`, and the boundary
+    comment above `_LOSSY_SOURCE_ADVISORY_TARGETS` -- all still untouched).
   - Two non-blocking findings addressed too: the transparency note's
     position in the returned tuple used to differ between the cheap-attempt
     hook (before any confirmed drop) and the selective rung (after); both now
@@ -515,3 +526,26 @@ New-Item -ItemType Directory -Force in
     return statement as `(*within, *_confirm_against_output(...))`, the
     order before the note-ordering fix that same round also made -- fixed to
     point at this entry instead of repeating a since-reversed order.
+- 2026-09-14 (issue #105, review round 3): round 2's own fix traded its two
+  false claims for a new one of the same class, caught by a third fresh
+  reviewer. "`last_resort` ... keeps its old combined wording verbatim" and
+  "the colour-count and frame-count thirds stay exactly as #67 left them
+  everywhere" are both true for `jpg` and `gif`, but false for `avif`: this
+  issue reworded `avif`'s frame-count note's *text* -- "a multi-frame source
+  is reduced to a single frame" to "AVIF holds a single frame" -- in **both**
+  its `cheap_attempt` and its `last_resort` tuple, per the spec's own
+  Outcome bullet 5 and the entry two above. "Verbatim" and "everywhere" both
+  overshot past that boundary. Corrected in the comment above `JPG` and in
+  this log's round-2 entry above: `last_resort`'s transparency clause is
+  verbatim on all three profiles, but the frame-count clause's *wording* is
+  not frozen anywhere, only its unconditional, index-less *shape* is.
+  Two more comments of the same "both"/"everywhere" class, missed by rounds
+  1 and 2 because they sit above the `notes=` tuples rather than above the
+  module-level finding, were caught in the same pass: GIF's and AVIF's own
+  cheap-attempt comments each said "both are a within-stream loss no
+  per-stream drop note can replace" when each tuple now holds exactly one
+  note (the transparency line moved out from beside it) -- reworded to
+  singular. And the trio comment above `GIF` said `avif`'s generation-loss
+  cost "named" its transparency loss for every already-AVIF file, which is
+  now the one case that note deliberately suppresses (`gbrp`) -- reworded to
+  scope that sentence to the frame loss alone.
