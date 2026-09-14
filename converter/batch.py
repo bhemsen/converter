@@ -108,6 +108,13 @@ def _verify_cheap_attempt(profile: Profile, task: Task, tools: Tools) -> tuple[s
     whose cheap attempt maps the source exhaustively needs no verification and
     never gets here, so the common case keeps its probe-free happy path
     (``docs/design/degradation-ladder.md``).
+
+    The within-stream transparency verdict (``engine.transparency_notes``,
+    issue #105) is computed separately from ``predicted`` and returned on
+    *both* paths below, early return included -- it must never become part of
+    ``predicted``, or an alpha source with nothing structurally dropped would
+    be sent into :func:`_confirm_against_output` for a second probe it does
+    not need (spec-within-stream-loss-notes.md's Trap 1).
     """
     if not engine.needs_verification(profile):
         return ()
@@ -121,10 +128,13 @@ def _verify_cheap_attempt(profile: Profile, task: Task, tools: Tools) -> tuple[s
         # A run whose completeness could not be established must not read as a
         # plain success either (``docs/constitution.md``).
         return (f"could not verify which source streams were kept: {exc}",)
+    within = engine.transparency_notes(profile, streams)
     predicted = engine.verify_success(profile, streams)
     if not predicted:
-        return ()
-    return _confirm_against_output(profile, task, tools, streams, predicted)
+        return within
+    # Confirmed structural drops lead, the within-stream note follows -- the
+    # same order `jobs.retries` already uses for its own selective rung.
+    return (*_confirm_against_output(profile, task, tools, streams, predicted), *within)
 
 
 def _attempt_conversion(profile: Profile, task: Task, tools: Tools, *, overwrite: bool) -> Result:

@@ -2187,7 +2187,13 @@ class TestImageProfileArgvPinning:
         ]
 
     def test_jpg_copyable_source_on_the_selective_rung(self):
-        streams = [Stream(0, "video", "mjpeg"), Stream(1, "video", "h264")]
+        # pix_fmt is alpha-free (mjpeg never carries one) so this stays a pure
+        # codec-copy pin, unaffected by the transparency note -- see
+        # TestTransparencyNotes for that note's own coverage.
+        streams = [
+            Stream(0, "video", "mjpeg", pix_fmt="yuvj420p"),
+            Stream(1, "video", "h264"),
+        ]
         selective = jobs.retries(JPG, streams)[0]
 
         argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.jpg")
@@ -2211,8 +2217,13 @@ class TestImageProfileArgvPinning:
 
     def test_jpg_non_copyable_source_on_the_selective_rung(self):
         """The re-encode note is now reachable, unlike png/tiff/bmp: jpg is the
-        one image2 target whose fallback is declared lossy."""
-        streams = [Stream(0, "video", "h264"), Stream(1, "video", "h264")]
+        one image2 target whose fallback is declared lossy. pix_fmt is
+        alpha-free -- an ordinary opaque h264 source -- so this stays a pure
+        codec pin; see TestTransparencyNotes for the note's own coverage."""
+        streams = [
+            Stream(0, "video", "h264", pix_fmt="yuv420p"),
+            Stream(1, "video", "h264"),
+        ]
         selective = jobs.retries(JPG, streams)[0]
 
         argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.jpg")
@@ -2485,7 +2496,13 @@ class TestAnimatedProfileArgvPinning:
         ]
 
     def test_gif_copyable_source_on_the_selective_rung(self):
-        streams = [Stream(0, "video", "gif"), Stream(1, "video", "h264")]
+        """A stream copy is a decided case, not an undecidable one: whatever
+        alpha the source held survives byte-for-byte, so the note stays
+        suppressed here even though ``bgra`` (what ffmpeg's gif decoder
+        always reports for a `.gif` source) is not alpha-free. See
+        `TestTransparencyNotes` for the copy-branch exclusion in isolation,
+        and its non-copy sibling below for the case where it does fire."""
+        streams = [Stream(0, "video", "gif", pix_fmt="bgra"), Stream(1, "video", "h264")]
         selective = jobs.retries(GIF, streams)[0]
 
         argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.gif")
@@ -2508,7 +2525,12 @@ class TestAnimatedProfileArgvPinning:
         assert selective.notes == ("video stream 1 (h264) dropped: GIF holds 1 video stream",)
 
     def test_gif_non_copyable_source_on_the_selective_rung(self):
-        streams = [Stream(0, "video", "h264"), Stream(1, "video", "h264")]
+        # pix_fmt is alpha-free -- an ordinary opaque h264 source -- so this
+        # stays a pure codec pin; see TestTransparencyNotes for the note.
+        streams = [
+            Stream(0, "video", "h264", pix_fmt="yuv420p"),
+            Stream(1, "video", "h264"),
+        ]
         selective = jobs.retries(GIF, streams)[0]
 
         argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.gif")
@@ -2682,7 +2704,14 @@ class TestAnimatedProfileArgvPinning:
         ]
 
     def test_avif_copyable_source_on_the_selective_rung(self):
-        streams = [Stream(0, "video", "av1"), Stream(1, "video", "h264")]
+        # pix_fmt is alpha-free -- an ordinary opaque av1 source -- so this
+        # stays a pure codec-copy pin; see TestTransparencyNotes for the
+        # AVIF-specific gbrp-suppression case (a real .avif source's own
+        # decode-side fact) and the alpha-fires case.
+        streams = [
+            Stream(0, "video", "av1", pix_fmt="yuv420p"),
+            Stream(1, "video", "h264"),
+        ]
         selective = jobs.retries(AVIF, streams)[0]
 
         argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.avif")
@@ -2705,7 +2734,12 @@ class TestAnimatedProfileArgvPinning:
         assert selective.notes == ("video stream 1 (h264) dropped: AVIF holds 1 video stream",)
 
     def test_avif_non_copyable_source_on_the_selective_rung(self):
-        streams = [Stream(0, "video", "h264"), Stream(1, "video", "h264")]
+        # pix_fmt is alpha-free -- an ordinary opaque h264 source -- so this
+        # stays a pure codec pin; see TestTransparencyNotes for the note.
+        streams = [
+            Stream(0, "video", "h264", pix_fmt="yuv420p"),
+            Stream(1, "video", "h264"),
+        ]
         selective = jobs.retries(AVIF, streams)[0]
 
         argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.avif")
@@ -2761,7 +2795,7 @@ class TestAnimatedProfileArgvPinning:
         ]
         assert last_resort.notes == (
             "transparency is not carried by AVIF",
-            "a multi-frame source is reduced to a single frame",
+            "AVIF holds a single frame",
             "non-video streams, and any video stream beyond the first, are not carried into AVIF",
         )
 
@@ -2842,7 +2876,9 @@ class TestSuccessSideVerification:
         assert notes == ("audio stream 1 (opus) dropped: WAV holds 1 audio stream",)
 
     @pytest.mark.parametrize(
-        "profile", [MP4, WAV, MKV, MOV, WEBM], ids=lambda profile: profile.label
+        "profile",
+        [MP4, WAV, MKV, MOV, WEBM, PNG, JPG, TIFF, BMP, GIF, WEBP, AVIF],
+        ids=lambda profile: profile.label,
     )
     def test_no_profile_invents_a_loss_for_a_source_it_fully_maps(self, profile):
         """One stream of each type the profile declares a rule for, and never more
@@ -2854,6 +2890,15 @@ class TestSuccessSideVerification:
         shipped profile (modulo `MOV`'s force-failure exemption for
         `attachment`) -- if that equality ever broke, this source would
         silently stop matching what the cheap attempt actually maps.
+
+        Narrowed for issue #105 to also carry the seven image profiles: the
+        stream this builds has no ``pix_fmt`` set (defaults to ``""``, which
+        is not a member of ``ALPHA_FREE_PIX_FMTS``), so for jpg/gif/avif this
+        doubles as proof that ``verify_success`` itself never grew an opinion
+        about transparency -- that verdict lives only in the separate
+        ``jobs.transparency_notes`` (Trap 1, spec-within-stream-loss-notes.md:
+        hooking the note into ``verify_success`` would resend every alpha
+        source through the output probe).
         """
         streams = [Stream(i, kind, "whatever") for i, kind in enumerate(profile.rules)]
 
@@ -2861,10 +2906,186 @@ class TestSuccessSideVerification:
 
     def test_a_codec_outside_the_copy_mask_produces_no_note(self):
         """Codec-level verdicts are out of scope here: the attempt exited 0, so
-        the stream was carried over whatever the copy mask says."""
+        the stream was carried over whatever the copy mask says. Narrowed for
+        issue #105: this boundary now has a second, pixel-format-level
+        sibling (``jobs.transparency_notes``), and this test stays scoped to
+        proving ``verify_success`` itself does not consult a codec -- or, by
+        the same reasoning, a ``pix_fmt`` -- at all."""
         streams = [Stream(0, "video", "vp8"), Stream(1, "subtitle", "dvd_subtitle")]
 
         assert jobs.verify_success(MP4, streams) == ()
+
+
+#: The three targets that declare `alpha_unsupported`, paired with a codec
+#: name each one's copy mask actually accepts -- so a test can exercise the
+#: copy branch too, not just the always-present fallback one.
+ALPHA_UNSUPPORTED_CASES = [(JPG, "mjpeg"), (GIF, "gif"), (AVIF, "av1")]
+
+
+class TestTransparencyNotes:
+    """`jobs.transparency_notes` (spec-within-stream-loss-notes.md, #105): the
+    within-stream alpha verdict -- source-measured (`Stream.pix_fmt` against
+    `ALPHA_FREE_PIX_FMTS`) and target-declared (`Profile.alpha_unsupported`),
+    never an output comparison."""
+
+    @pytest.mark.parametrize("profile,codec", ALPHA_UNSUPPORTED_CASES, ids=lambda v: str(v))
+    def test_alpha_source_fires_naming_stream_and_codec(self, profile, codec):
+        """The headline case (spec Verification): an alpha source into
+        jpg/gif/avif names the stream index and codec."""
+        streams = [Stream(0, "video", codec, pix_fmt="rgba")]
+
+        notes = jobs.transparency_notes(profile, streams)
+
+        assert notes == (
+            f"video stream 0 ({codec}) may carry transparency, which {profile.label} cannot hold",
+        )
+
+    @pytest.mark.parametrize("profile,codec", ALPHA_UNSUPPORTED_CASES, ids=lambda v: str(v))
+    def test_opaque_source_emits_no_note(self, profile, codec):
+        """The reported defect this issue fixes: an ordinary opaque
+        `yuvj420p` source (a plain JPEG, e.g.) must not be told its
+        transparency was not carried."""
+        streams = [Stream(0, "video", codec, pix_fmt="yuvj420p")]
+
+        assert jobs.transparency_notes(profile, streams) == ()
+
+    @pytest.mark.parametrize("profile,codec", ALPHA_UNSUPPORTED_CASES, ids=lambda v: str(v))
+    def test_pal8_source_over_reports_deliberately(self, profile, codec):
+        """`pal8` carries no alpha marker but *can* carry alpha (a paletted
+        PNG with real transparency reports `pal8`) -- over-reporting is the
+        safe side the constitution requires when the probe cannot decide."""
+        streams = [Stream(0, "video", codec, pix_fmt="pal8")]
+
+        assert jobs.transparency_notes(profile, streams) != ()
+
+    @pytest.mark.parametrize("profile,codec", ALPHA_UNSUPPORTED_CASES, ids=lambda v: str(v))
+    def test_gif_decoded_source_over_reports_even_when_opaque(self, profile, codec):
+        """ffmpeg's gif decoder reports `bgra` unconditionally for a `.gif`
+        source, opaque or not (Prior decisions, measured against ffmpeg 9.0)
+        -- unchanged from before this issue, and deliberate rather than a
+        regression."""
+        streams = [Stream(0, "video", codec, pix_fmt="bgra")]
+
+        assert jobs.transparency_notes(profile, streams) != ()
+
+    def test_gbrp_from_an_avif_source_suppresses(self):
+        """The one decode-side suppression (Prior decisions): no AV1 decode
+        path in this build surfaces an alpha aux item for an AVIF source, so
+        `gbrp` means this conversion did not take anything away -- the note
+        would be reporting a loss that happened at decode, before this
+        engine ever saw the file."""
+        streams = [Stream(0, "video", "av1", pix_fmt="gbrp")]
+
+        assert jobs.transparency_notes(AVIF, streams) == ()
+
+    @pytest.mark.parametrize("profile", [PNG, TIFF, BMP, WEBP], ids=lambda profile: profile.label)
+    def test_alpha_preserving_targets_never_fire(self, profile):
+        """png/tiff/bmp/webp keep alpha (measured) and declare
+        `alpha_unsupported=False`, so an alpha source earns no note through
+        them -- guarded at the profile level, not by inspecting `pix_fmt`."""
+        streams = [Stream(0, "video", "png", pix_fmt="rgba")]
+
+        assert jobs.transparency_notes(profile, streams) == ()
+
+    def test_a_copy_based_cheap_attempt_never_fires(self):
+        """`webp` is the guard on the widened boundary named in the spec's
+        Prior decisions: its cheap attempt is a bare `-c copy`, which
+        asserts nothing about any encoder's behaviour, so it must never
+        carry this note even for a genuinely alpha-bearing source."""
+        streams = [Stream(0, "video", "webp", pix_fmt="rgba")]
+
+        assert jobs.transparency_notes(WEBP, streams) == ()
+
+    def test_only_a_surviving_stream_earns_the_note(self):
+        """A structurally dropped stream already carries its own D2 note from
+        `_structural_drop`; it must not also gain a second, alpha one. Mirrors
+        the QA gate's `twovid-src.mkv` shape: the alpha stream is kept
+        (index 0), a second, opaque video stream is dropped for
+        `stream_limit=1` (index 1) -- only the surviving one is named."""
+        streams = [
+            Stream(0, "video", "png", pix_fmt="rgba"),
+            Stream(1, "video", "png", pix_fmt="yuv420p"),
+        ]
+
+        notes = jobs.transparency_notes(JPG, streams)
+
+        assert notes == ("video stream 0 (png) may carry transparency, which JPG cannot hold",)
+
+    def test_the_alpha_stream_being_the_dropped_one_earns_no_note_either(self):
+        """Non-vacuity of the survival guard, the other direction: when the
+        *alpha* stream is the one `stream_limit` drops, no note fires at all
+        -- proving the guard is keyed on survival, not on stream order."""
+        streams = [
+            Stream(0, "video", "png", pix_fmt="yuv420p"),
+            Stream(1, "video", "png", pix_fmt="rgba"),
+        ]
+
+        assert jobs.transparency_notes(JPG, streams) == ()
+
+    def test_inverting_alpha_unsupported_changes_the_verdict(self):
+        """Non-vacuity of the profile-level guard: the identical alpha stream
+        earns a note only while the profile declares it."""
+        streams = [Stream(0, "video", "mjpeg", pix_fmt="rgba")]
+
+        assert jobs.transparency_notes(JPG, streams) != ()
+        assert jobs.transparency_notes(replace(JPG, alpha_unsupported=False), streams) == ()
+
+    def test_the_cheap_attempt_entry_point_does_not_exclude_copies(self):
+        """`transparency_notes` (the cheap-attempt entry point) is
+        deliberately asymmetric with the selective rung's own verdict: the
+        cheap attempt forces its own encoder unconditionally for every
+        `alpha_unsupported` profile -- that is the field's own precondition
+        -- so there is no copy branch to exclude here, even though `mjpeg`
+        happens to match JPG's copy mask."""
+        streams = [Stream(0, "video", "mjpeg", pix_fmt="rgba")]
+
+        assert jobs.transparency_notes(JPG, streams) != ()
+
+    def test_a_non_video_stream_kept_under_a_hypothetical_rule_earns_no_note(self):
+        """Defensive, correct by construction rather than by coincidence of
+        today's roster (no shipped `alpha_unsupported` profile declares a
+        non-video rule): `pix_fmt` is only ever meaningful for a video
+        stream, so a kept audio stream must never earn this note."""
+        streams = [Stream(0, "audio", "aac")]
+
+        assert jobs.transparency_notes(replace(FLAC, alpha_unsupported=True), streams) == ()
+
+    def test_selective_rung_excludes_a_copied_stream_from_the_note(self):
+        """A copy is a *decided* case, not one of the undecidable ones this
+        phase's over-reporting rule is for: whatever alpha `mjpeg` (JPG's own
+        copy-mask codec) held survives byte-for-byte on `-c:v copy`, so the
+        note must not fire for it even though its `pix_fmt` is not
+        alpha-free. Only the drop note for the second, non-surviving stream
+        stands. Contrast with the non-copy sibling below, which mirrors the
+        QA gate's `twovid-src.mkv` shape and does carry the note."""
+        streams = [
+            Stream(0, "video", "mjpeg", pix_fmt="rgba"),
+            Stream(1, "video", "h264", pix_fmt="yuv420p"),
+        ]
+
+        selective = jobs.retries(JPG, streams)[0]
+
+        assert selective.notes == ("video stream 1 (h264) dropped: JPG holds 1 video stream",)
+
+    def test_selective_rung_also_carries_a_re_encode_note_when_one_applies(self):
+        """The second defect this issue closes: today the selective rung
+        emits no transparency note at all. This mirrors the QA gate's actual
+        `twovid-src.mkv` fixture (both streams written with `-c:v png`,
+        neither matching JPG's `mjpeg` copy mask): the surviving stream is
+        re-encoded *and* may carry transparency, so both notes stand side by
+        side rather than one crowding out the other."""
+        streams = [
+            Stream(0, "video", "png", pix_fmt="rgba"),
+            Stream(1, "video", "h264", pix_fmt="yuv420p"),
+        ]
+
+        selective = jobs.retries(JPG, streams)[0]
+
+        assert selective.notes == (
+            "video stream 0 (png) re-encoded to mjpeg",
+            "video stream 1 (h264) dropped: JPG holds 1 video stream",
+            "video stream 0 (png) may carry transparency, which JPG cannot hold",
+        )
 
 
 class TestConfirmDrops:

@@ -373,3 +373,179 @@ New-Item -ItemType Directory -Force in
   parses absence the same way `codec_name`/`codec_tag` already do --
   `str(raw.get("pix_fmt", ""))` -- so a non-video stream's missing key reads
   as `""`, never the CSV writer's `"N/A"`, with no new branch needed.
+- 2026-09-14 (issue #105): Trap 1's hook placement, resolved as the issue's
+  own fallback reading rather than its literal one. Read literally ("append
+  after the `if not predicted: return ()` gate"), the note would never fire
+  for the spec's own headline case -- an alpha PNG into `jpg`, where nothing
+  is structurally dropped so `predicted` is empty and the function returns on
+  the early path. The real constraint is the *process count*: the note must
+  never become part of `predicted`, or it would route an alpha source with
+  nothing else wrong into `_confirm_against_output` for a probe it does not
+  need. Implemented as the issue's own suggested shape: `within =
+  engine.transparency_notes(...)` computed once, unconditionally, then
+  returned on *both* paths -- `return within` on the early return,
+  `(*_confirm_against_output(...), *within)` on the other (the argument
+  order shipped is the reverse of the first draft; see the review-round 1
+  entry below for why). Pinned by
+  `tests/test_batch.py::TestTransparencyNote`, including one test
+  (`test_alpha_note_survives_the_confirm_against_output_path`) built
+  specifically because every other test in that class takes the early-return
+  path and so cannot prove the note survives the *other* branch -- caught by
+  mutation-testing this hook before handing it to review, as instructed.
+- 2026-09-14 (issue #105): Trap 2 established, not assumed. The hazard
+  `_lossy_source_notes`'s docstring names is that folding a note into
+  `_build_selective`'s own `notes` list can flip
+  `if profile.explicit_streams and not notes: return None` for a profile that
+  sets `explicit_streams` (`wav` is the case on record). None of `jpg`, `gif`
+  or `avif` -- the only profiles this issue's field touches -- sets
+  `explicit_streams` (all three are blind, `-map 0:v?`, per
+  `docs/design/degradation-ladder.md`'s cheapest-first shape), so the hazard
+  cannot manifest for this issue's own targets; pinned by
+  `tests/test_profiles.py::TestAlphaUnsupportedField::
+  test_none_of_the_three_also_declares_explicit_streams` so a future profile
+  cannot combine the two flags unnoticed. The new `jobs.transparency_notes`
+  is still kept entirely outside `_build_selective`, appended in `retries`
+  exactly where `_lossy_source_notes` already is, rather than relying on
+  today's roster to keep it safe: `_build_selective` already decided
+  `None`-or-`Attempt` before either note-pass ever runs, so nothing appended
+  afterward can resurrect a rung that pass skipped, for any profile, present
+  or future -- safe by construction, not by the coincidence that no profile
+  happens to combine the two flags today.
+- 2026-09-14 (issue #105): `Profile.alpha_unsupported` is the new declared
+  field (default `False`); `converter.jobs.transparency_notes` is the new
+  engine entry point. The transparency note reads
+  `"{kind} stream {index} ({codec}) may carry transparency, which {label}
+  cannot hold"`, matching `_drop_note`/`_reencode_note`'s "name index, name
+  codec" shape. `avif`'s frame note is reworded to `"AVIF holds a single
+  frame"` in both its `cheap_attempt` and its `last_resort` tuple; its
+  `description` field is untouched, as scoped. `jpg`'s cheap-attempt standing
+  note narrows to `"the image was re-encoded"` and `gif`'s to `"GIF holds at
+  most a 256-colour palette"` -- both profiles' `last_resort` tuples keep the
+  old combined wording verbatim, since that rung never sees a stream list.
+  `tests/test_argv.py::test_a_codec_outside_the_copy_mask_produces_no_note`
+  and `::test_no_profile_invents_a_loss_for_a_source_it_fully_maps` are kept,
+  not deleted -- the latter's parametrisation now also carries the seven
+  image profiles, doubling as proof that `verify_success` itself grew no
+  opinion about `pix_fmt`.
+- 2026-09-14 (issue #105, review round 1): four defects found by a fresh
+  reviewer given the diff and the three traps, all fixed before merge:
+  - **A real behavioural bug**, not a documentation one: `jobs.transparency_notes`
+    fired even for a stream the selective rung *copies* verbatim on a
+    copy-mask hit (`-c:v copy`), which cannot have dropped anything --
+    reachable for a real `gif`- or `av1`-coded stream that survives the
+    selective rung by copy rather than by fallback encode. A stream copy is
+    a *decided* case, not one of the undecidable ones this phase's
+    over-reporting rule exists for (`pal8`, `.gif`'s source-side ambiguity),
+    so excluding it is not a new over-report exemption, it is removing a
+    false one -- the same class of defect commit `760b296` (issue #97) fixed
+    for `_lossy_source_notes`'s cover-art case. Fixed by splitting the
+    verdict into two entry points sharing one core (`jobs._alpha_notes`):
+    `transparency_notes` for the cheap attempt (which forces its encoder
+    unconditionally for every `alpha_unsupported` profile, so no copy branch
+    exists to exclude) and `jobs._selective_transparency_notes` for the
+    selective rung (which excludes a copy-mask hit, mirroring
+    `_lossy_source_notes`'s own exclusion). `tests/test_argv.py`'s
+    `test_gif_copyable_source_on_the_selective_rung`,
+    `test_selective_rung_excludes_a_copied_stream_from_the_note` and
+    `test_batch.py`'s `test_selective_rung_excludes_a_copied_stream_end_to_end`
+    pin the fix; `test_the_cheap_attempt_entry_point_does_not_exclude_copies`
+    pins that the two entry points stay deliberately asymmetric.
+  - `jobs.transparency_notes`'s own docstring wrongly restated the literal
+    (wrong) Trap-1 reading it was written to avoid -- "after its
+    `if not predicted: return ()` gate" -- when the call actually sits
+    *before* that gate, computed separately, and the gate itself no longer
+    reads `return ()`. Reworded to match `batch.py`'s own accurate wording.
+  - `Profile.alpha_unsupported`'s docstring carried a sentence with no
+    predicate ("sound only under the same widened boundary a profile whose
+    `cheap_attempt` forces..."). Reworded to state the rule plainly, and
+    extended to mention the copy exclusion above.
+  - The module comment above `JPG` in `profiles.py` (issue #67's "half two"
+    finding) is updated, not left stale as first decided: it now says
+    plainly that issue #105 closed the transparency third of "half two" for
+    the two rungs that ever hold a stream list (naming index and codec,
+    conditional on the source), while `last_resort` -- which never sees a
+    stream list -- keeps its transparency clause exactly as before on all
+    three profiles, verbatim for `jpg` and `gif`. Not verbatim for `avif`:
+    its `last_resort` tuple sits alongside a frame-count clause this same
+    issue *does* reword (see the next bullet), so the comment is careful to
+    scope "verbatim" to the transparency half of that one tuple, not the
+    whole thing -- round 3 caught the first draft of this fix overclaiming
+    "all three ... verbatim" and "everywhere" past that boundary. The
+    colour-count and frame-count thirds of half two stay unfixed by this
+    issue in the sense that matters for half two -- neither names a stream
+    index or codec, anywhere -- but their *text* is not frozen: #67 already
+    reworded GIF's palette line once, and this issue rewords AVIF's frame
+    line the same way, in both its `cheap_attempt` and its `last_resort`
+    tuple. Both remain unconditional, index-less standing notes regardless
+    of wording, recorded as an accepted deviation from `stream-decision.md`'s
+    "every note names three things" rule rather than a carve-out that
+    document grants yet (that amendment is #106's job). The comment sits
+    directly above the three profiles this issue rewrites, in a file this
+    issue already edits heavily; leaving it to state the opposite of what
+    the code beneath it now does was a defect in this issue's own diff, not
+    a restatement belonging to #106's five carriers (`README.md`,
+    architecture, the ladder diagram, `stream-decision.md`, and the boundary
+    comment above `_LOSSY_SOURCE_ADVISORY_TARGETS` -- all still untouched).
+  - Two non-blocking findings addressed too: the transparency note's
+    position in the returned tuple used to differ between the cheap-attempt
+    hook (before any confirmed drop) and the selective rung (after); both now
+    put a structural note first and the alpha note last. And `_alpha_notes`
+    now skips a kept stream whose `codec_type` is not `"video"` -- unreachable
+    for any profile shipped today (only `jpg`/`gif`/`avif` declare
+    `alpha_unsupported`, and all three declare a video-only rule set), but
+    correct by construction rather than by coincidence of today's roster,
+    pinned by `test_a_non_video_stream_kept_under_a_hypothetical_rule_earns_no_note`.
+- 2026-09-14 (issue #105, review round 2): the round-1 comment rewrite above
+  `JPG` in `profiles.py` replaced four false claims with two new ones of the
+  same class, plus left two neighbouring comments stale by the same PR's own
+  change -- a fresh reviewer given the diff caught what the previous
+  self-review pass missed. All comment-only, no code or test change needed;
+  the behaviour, tests and process-count contract were independently
+  confirmed correct by mutation-testing every changed branch in isolation.
+  - The comment claimed "the transparency line no longer stands in the notes
+    tuples below at all" -- false, it still stands in all three `last_resort`
+    tuples (the rung that never sees a stream list, deliberately excluded
+    from this issue's widening per the Outcome and the entries above).
+    Reworded to say the clause is gone from the *cheap attempt's* `notes`
+    tuple specifically, and that `last_resort` keeps it on purpose.
+  - The comment attributed the colour-count/frame-count residual to "the
+    format-limit statement carve-out `docs/design/stream-decision.md`
+    names" -- that document names no such carve-out; the term lives only in
+    this spec, and the file itself is #106's territory to amend, untouched
+    by this issue. Reworded to record the residual as an accepted deviation
+    from that document's existing "every note names three things" rule,
+    with the amendment left to #106 rather than claimed early. The same
+    misattribution in this log's own round-1 entry above is corrected too.
+  - Two neighbouring comments -- above JPG's and GIF's `last_resort` --
+    described the combined re-encode-plus-transparency wording there as
+    simply "the cheap attempt's own standing note[s]" repeated. False as of
+    this issue's own change: the cheap attempt's note narrowed to just the
+    re-encode half, so `last_resort`'s wording is no longer identical to
+    it, only descended from it. Both reworded to say so.
+  - Non-blocking: the spec's own round-1 entry above quoted the shipped
+    return statement as `(*within, *_confirm_against_output(...))`, the
+    order before the note-ordering fix that same round also made -- fixed to
+    point at this entry instead of repeating a since-reversed order.
+- 2026-09-14 (issue #105, review round 3): round 2's own fix traded its two
+  false claims for a new one of the same class, caught by a third fresh
+  reviewer. "`last_resort` ... keeps its old combined wording verbatim" and
+  "the colour-count and frame-count thirds stay exactly as #67 left them
+  everywhere" are both true for `jpg` and `gif`, but false for `avif`: this
+  issue reworded `avif`'s frame-count note's *text* -- "a multi-frame source
+  is reduced to a single frame" to "AVIF holds a single frame" -- in **both**
+  its `cheap_attempt` and its `last_resort` tuple, per the spec's own
+  Outcome bullet 5 and the entry two above. "Verbatim" and "everywhere" both
+  overshot past that boundary. Corrected in the comment above `JPG` and in
+  this log's round-2 entry above: `last_resort`'s transparency clause is
+  verbatim on all three profiles, but the frame-count clause's *wording* is
+  not frozen anywhere, only its unconditional, index-less *shape* is.
+  Two more comments of the same "both"/"everywhere" class, missed by rounds
+  1 and 2 because they sit above the `notes=` tuples rather than above the
+  module-level finding, were caught in the same pass: GIF's and AVIF's own
+  cheap-attempt comments each said "both are a within-stream loss no
+  per-stream drop note can replace" when each tuple now holds exactly one
+  note (the transparency line moved out from beside it) -- reworded to
+  singular. And the trio comment above `GIF` said `avif`'s generation-loss
+  cost "named" its transparency loss for every already-AVIF file, which is
+  now the one case that note deliberately suppresses (`gbrp`) -- reworded to
+  scope that sentence to the frame loss alone.
