@@ -72,22 +72,27 @@ flowchart TD
   distinction). A **format-limit statement** is exempt on a third footing:
   `jpg`'s "the image was re-encoded", GIF's "GIF holds at most a 256-colour
   palette", "AVIF holds a single frame", and every `last_resort` note. None
-  names a stream index or a codec, and none is a per-stream verdict at all —
-  each states what the *target format* can hold, true of the profile for
-  every input regardless of what that particular input carried
-  (`docs/specs/archive/spec-stream-disposition.md` records this first, for
-  AVIF's notes). This is the shape the widened success-side boundary
+  names a stream index or the stream's own codec, and none is a per-stream
+  verdict at all — each states what *this profile's forced pipeline* always
+  does, true of every conversion through that profile regardless of what
+  that particular input carried, and **not** of the target format itself,
+  which may hold more elsewhere — GIF and AVIF both support alpha, and AVIF
+  supports multiple frames, outside the one pipeline these profiles force
+  (`docs/specs/archive/spec-stream-disposition.md` records both that framing,
+  for AVIF's notes, and these notes as the open violation of the rule this
+  carve-out now closes). This is the shape the widened success-side boundary
   licenses: a profile whose cheap attempt forces a single declared encoder
   unconditionally, for every input, may declare what that encoder cannot
   hold — as this format-wide statement where the claim is not about any one
   stream, or, where the source's probed properties let it name one, as an
   ordinary per-stream note bound by this rule instead (`jpg`/`gif`/`avif`'s
   transparency note, `converter.jobs.transparency_notes`,
-  `docs/specs/spec-within-stream-loss-notes.md`). A `last_resort` attempt
-  never sees a stream list at all, so every note it carries — the
-  transparency clause included — is necessarily this third kind, not the
-  conditional per-stream one the cheap attempt and the selective rung can
-  produce.
+  `docs/specs/spec-within-stream-loss-notes.md`). A copy-based cheap attempt
+  (`webp`) forces no such pipeline and so licenses neither kind of note. A
+  `last_resort` attempt never sees a stream list at all, so every note it
+  carries — the transparency clause included — is necessarily this third
+  kind, not the conditional per-stream one the cheap attempt and the
+  selective rung can produce.
 - **A re-encode that gives up nothing carries no note.** Decoding to a container's
   only codec is the definition of that target format, not a loss — WAV's PCM rule
   declares no note, MP4's `aac` and `h264` fallbacks do. Whether the note exists

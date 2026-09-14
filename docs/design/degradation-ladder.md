@@ -118,7 +118,7 @@ flowchart TD
   single declared encoder unconditionally, for every input, may declare what
   that encoder cannot hold, because there is no copy branch that attempt could
   have taken instead — an encoder claim the profile itself makes, not a
-  codec-level verdict this module infers about what the attempt did (`jpg`,
+  codec-level verdict the engine infers about what the attempt did (`jpg`,
   `gif` and `avif`'s `Profile.alpha_unsupported`,
   `converter.jobs.transparency_notes`,
   `docs/specs/spec-within-stream-loss-notes.md`). A copy-based cheap attempt
