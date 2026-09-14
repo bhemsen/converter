@@ -81,16 +81,20 @@ class Profile:
 
     ``alpha_unsupported`` says whether this profile's forced encoder cannot
     hold an alpha channel. Declared, not derived, for the same reason the two
-    booleans above are -- and sound only under the same widened boundary a
-    profile whose ``cheap_attempt`` forces a single declared encoder
-    unconditionally: a copy-based cheap attempt (``webp``) asserts nothing
-    about any encoder's behaviour, so it must never declare this
+    booleans above are -- but sound only under a narrower boundary than
+    theirs: **only** a profile whose ``cheap_attempt`` forces a single
+    declared encoder unconditionally, for every input, may declare this. A
+    copy-based cheap attempt (``webp``) asserts nothing about any encoder's
+    behaviour, so it must never declare it
     (``docs/specs/spec-within-stream-loss-notes.md``, issue #105). A source
     stream whose probed ``pix_fmt`` (``converter.ffmpegtool.Stream``) is not a
     member of ``ALPHA_FREE_PIX_FMTS`` then earns the within-stream
-    transparency note wherever it survives this profile's rules -- the cheap
-    attempt and the selective rung alike
-    (``converter.jobs.transparency_notes``). ``False`` by default; only
+    transparency note wherever it survives this profile's rules *and* is not
+    itself a stream copy -- the cheap attempt (``converter.jobs.transparency_notes``)
+    and the selective rung (``converter.jobs._selective_transparency_notes``)
+    alike, the latter excluding a copy-mask hit the same way the boundary
+    above already excludes a wholly copy-based profile: a literal copy cannot
+    drop what a decode-encode round-trip might. ``False`` by default; only
     ``jpg``, ``gif`` and ``avif`` declare it true.
 
     ``name`` is the registry key and the ``--to`` token (``"mp4"``); ``label``
@@ -1202,48 +1206,47 @@ PNG = Profile(
 
 # Issue #67, docs/specs/archive/spec-stream-disposition.md: the QA finding this issue
 # was filed against reads "standing notes fire when nothing was lost **and
-# name no stream**" -- this covers JPG's, GIF's and AVIF's standing notes
-# below (transparency, colour palette, frame reduction). Review round 2 of
-# this PR flagged the summary this comment used to open with ("neither half
-# is fixed here") as false about this PR's own contents, since half one is
-# fixed for the one note that actually needed it -- restated precisely below.
+# name no stream**" -- this covered JPG's, GIF's and AVIF's standing notes
+# below (transparency, colour palette, frame reduction) and recorded two
+# separate halves of it, only one of which #67 itself fixed.
 #
-# * Half one -- firing when nothing was lost. Four of the five notes are
-#   worded as claims about what *this profile's pipeline always does*
-#   ("transparency is not carried by JPEG" -- true of JPEG the format;
-#   AVIF's own notes are true of this profile's forced
-#   "-still-picture 1"/no-alpha pipeline specifically, not of the AVIF format,
-#   which does support alpha and multiple frames elsewhere), true of every
-#   conversion through that profile regardless of what the source held -- not
-#   a claim that *this* file's transparency was dropped, so they do not
-#   over-report the way the retired MKV/WEBM notes did. Half one's one real
-#   defect was GIF's "colours are reduced to GIF's 256-colour palette", worded
-#   as an action rather than a fact; measured, an already-GIF,
-#   already-<=256-colour source re-encodes pixel-identically, so that wording
-#   was a genuine false claim for that file (unlike its four siblings). It is
-#   fixed below, reworded to the same fact-not-action shape as the rest; the
-#   other four needed no change.
-# * Half two -- naming a stream index and codec. None of the five names one,
-#   and this half is not fixed for any of them, only recorded. None of these
-#   is a per-stream drop: the video stream itself is still mapped and kept,
-#   only something inside it (an alpha channel, a colour count, a frame
-#   count) is gone. `jobs.verify_success`/`_structural_drop` only ever
-#   reasons about whether a stream was mapped at all (D1/D2 of
-#   stream-decision.md), so it has no opinion on what survived inside one,
-#   and a profile's `notes` tuple is static data with no access to the
-#   source's probed streams at all -- naming an index and codec here would
-#   need both a `pix_fmt`/frame-count field on `Stream`
-#   (converter/ffmpegtool.py) and new decision logic in `jobs.py`'s engine to
-#   compare a kept stream's measured properties against what its target
-#   actually holds. Both are out of this issue's file boundary (`jobs.py` was
-#   read-only for this work), so the gap is recorded as a finding for a
-#   follow-up issue rather than attempted piecemeal.
+# * Half one -- firing when nothing was lost. Worded as claims about what
+#   *this profile's pipeline always does* ("GIF holds at most a 256-colour
+#   palette", "AVIF holds a single frame" -- true of this profile's forced
+#   pipeline specifically, not of the GIF/AVIF formats, which support more
+#   colours and more frames elsewhere), true of every conversion through that
+#   profile regardless of what the source held -- not a claim that *this*
+#   file's colour count or frame count was actually reduced, so they do not
+#   over-report the way the retired MKV/WEBM notes did. #67 itself fixed the
+#   one defect here: GIF's note used to read "colours are reduced", an action
+#   claim measured false for an already-GIF, already-<=256-colour source
+#   (which re-encodes pixel-identically) -- reworded to the fact-not-action
+#   shape above.
+# * Half two -- naming a stream index and codec. #67 left this unfixed for
+#   all five notes across all three profiles, recording it as a gap needing
+#   both a `pix_fmt`/frame-count field on `Stream` (converter/ffmpegtool.py)
+#   and new decision logic in `jobs.py`'s engine to compare a kept stream's
+#   measured properties against what its target actually holds -- both out
+#   of that issue's file boundary. Issue #105 closed this for the
+#   *transparency* third of it: `Stream.pix_fmt` (added by #104) plus
+#   `Profile.alpha_unsupported` below and `jobs.transparency_notes`/
+#   `jobs._selective_transparency_notes` now decide, per stream, whether
+#   *this* file's transparency was actually at risk, naming the surviving
+#   stream's index and codec when it fires and staying silent for an
+#   ordinary opaque source -- the transparency line no longer stands in the
+#   notes tuples below at all. The colour-count and frame-count thirds stay
+#   exactly as #67 left them: counting distinct colours needs a decode pass,
+#   and naming a frame count would need `-count_packets`, which this issue's
+#   own gate measured and declined (spec-within-stream-loss-notes.md's
+#   Decision log) -- both remain unconditional, index-less standing notes,
+#   the *format-limit statement* carve-out `docs/design/stream-decision.md`
+#   names for exactly this shape.
 #
-# Retiring these notes outright, leaving the within-stream loss unsaid
-# entirely, would violate docs/constitution.md's "never report success for a
-# conversion that silently dropped something" -- an unmeasured loss is still
-# a loss the constitution forbids leaving unsaid -- so all five stay
-# unconditional standing notes rather than being deleted.
+# Retiring the colour-count and frame-count notes outright, leaving that
+# within-stream loss unsaid entirely, would violate docs/constitution.md's
+# "never report success for a conversion that silently dropped something" --
+# an unmeasured loss is still a loss the constitution forbids leaving unsaid
+# -- so both stay unconditional standing notes rather than being deleted.
 JPG = Profile(
     label="JPG",
     name="jpg",

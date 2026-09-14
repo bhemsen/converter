@@ -132,7 +132,9 @@ def _verify_cheap_attempt(profile: Profile, task: Task, tools: Tools) -> tuple[s
     predicted = engine.verify_success(profile, streams)
     if not predicted:
         return within
-    return (*within, *_confirm_against_output(profile, task, tools, streams, predicted))
+    # Confirmed structural drops lead, the within-stream note follows -- the
+    # same order `jobs.retries` already uses for its own selective rung.
+    return (*_confirm_against_output(profile, task, tools, streams, predicted), *within)
 
 
 def _attempt_conversion(profile: Profile, task: Task, tools: Tools, *, overwrite: bool) -> Result:

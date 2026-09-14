@@ -424,8 +424,58 @@ New-Item -ItemType Directory -Force in
   and `::test_no_profile_invents_a_loss_for_a_source_it_fully_maps` are kept,
   not deleted -- the latter's parametrisation now also carries the seven
   image profiles, doubling as proof that `verify_success` itself grew no
-  opinion about `pix_fmt`. The module comment above `JPG` in `profiles.py`
-  (issue #67's "half two ... not fixed for any of them" finding) is left
-  as-is: it is adjacent prose about the same three profiles, not one of the
-  five carriers this issue's own Scope names, and #106 restates it alongside
-  those five.
+  opinion about `pix_fmt`.
+- 2026-09-14 (issue #105, review round 1): four defects found by a fresh
+  reviewer given the diff and the three traps, all fixed before merge:
+  - **A real behavioural bug**, not a documentation one: `jobs.transparency_notes`
+    fired even for a stream the selective rung *copies* verbatim on a
+    copy-mask hit (`-c:v copy`), which cannot have dropped anything --
+    reachable for a real `gif`- or `av1`-coded stream that survives the
+    selective rung by copy rather than by fallback encode. A stream copy is
+    a *decided* case, not one of the undecidable ones this phase's
+    over-reporting rule exists for (`pal8`, `.gif`'s source-side ambiguity),
+    so excluding it is not a new over-report exemption, it is removing a
+    false one -- the same class of defect commit `760b296` (issue #97) fixed
+    for `_lossy_source_notes`'s cover-art case. Fixed by splitting the
+    verdict into two entry points sharing one core (`jobs._alpha_notes`):
+    `transparency_notes` for the cheap attempt (which forces its encoder
+    unconditionally for every `alpha_unsupported` profile, so no copy branch
+    exists to exclude) and `jobs._selective_transparency_notes` for the
+    selective rung (which excludes a copy-mask hit, mirroring
+    `_lossy_source_notes`'s own exclusion). `tests/test_argv.py`'s
+    `test_gif_copyable_source_on_the_selective_rung`,
+    `test_selective_rung_excludes_a_copied_stream_from_the_note` and
+    `test_batch.py`'s `test_selective_rung_excludes_a_copied_stream_end_to_end`
+    pin the fix; `test_the_cheap_attempt_entry_point_does_not_exclude_copies`
+    pins that the two entry points stay deliberately asymmetric.
+  - `jobs.transparency_notes`'s own docstring wrongly restated the literal
+    (wrong) Trap-1 reading it was written to avoid -- "after its
+    `if not predicted: return ()` gate" -- when the call actually sits
+    *before* that gate, computed separately, and the gate itself no longer
+    reads `return ()`. Reworded to match `batch.py`'s own accurate wording.
+  - `Profile.alpha_unsupported`'s docstring carried a sentence with no
+    predicate ("sound only under the same widened boundary a profile whose
+    `cheap_attempt` forces..."). Reworded to state the rule plainly, and
+    extended to mention the copy exclusion above.
+  - The module comment above `JPG` in `profiles.py` (issue #67's "half two"
+    finding) is updated, not left stale as first decided: it now says
+    plainly that issue #105 closed the transparency third of "half two" for
+    all three profiles (naming index and codec, conditional on the source),
+    while the colour-count and frame-count thirds remain exactly as #67 left
+    them -- unconditional, index-less standing notes, `stream-decision.md`'s
+    format-limit carve-out. The comment sits directly above the three
+    profiles this issue rewrites, in a file this issue already edits
+    heavily; leaving it to state the opposite of what the code beneath it
+    now does was a defect in this issue's own diff, not a restatement
+    belonging to #106's five carriers (`README.md`, architecture, the ladder
+    diagram, `stream-decision.md`, and the boundary comment above
+    `_LOSSY_SOURCE_ADVISORY_TARGETS` -- all still untouched).
+  - Two non-blocking findings addressed too: the transparency note's
+    position in the returned tuple used to differ between the cheap-attempt
+    hook (before any confirmed drop) and the selective rung (after); both now
+    put a structural note first and the alpha note last. And `_alpha_notes`
+    now skips a kept stream whose `codec_type` is not `"video"` -- unreachable
+    for any profile shipped today (only `jpg`/`gif`/`avif` declare
+    `alpha_unsupported`, and all three declare a video-only rule set), but
+    correct by construction rather than by coincidence of today's roster,
+    pinned by `test_a_non_video_stream_kept_under_a_hypothetical_rule_earns_no_note`.

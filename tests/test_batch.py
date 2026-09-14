@@ -565,13 +565,40 @@ class TestTransparencyNote:
         assert any("may carry transparency" in note for note in result.notes)
 
     def test_selective_rung_fires_end_to_end(self, tmp_path, fake_ffmpeg):
-        """Mirrors the QA gate's `twovid-src.mkv` shape through the whole
-        `convert_one` path: the cheap attempt fails (a second video stream
-        trips the image2 muxer), the failure-side probe builds the selective
-        rung directly from the stream list, and that rung's own notes --
-        already complete -- carry both the drop note and the alpha note with
-        no second probe (`probed` is already `True` by the time it wins, so
+        """Mirrors the QA gate's actual `twovid-src.mkv` fixture (both
+        streams written with `-c:v png`, neither matching JPG's `mjpeg` copy
+        mask) through the whole `convert_one` path: the cheap attempt fails
+        (a second video stream trips the image2 muxer), the failure-side
+        probe builds the selective rung directly from the stream list, and
+        that rung's own notes -- already complete -- carry the re-encode
+        note, the drop note and the alpha note together, with no second
+        probe (`probed` is already `True` by the time it wins, so
         `_verify_cheap_attempt` is never called for it)."""
+        task = Task(tmp_path / "clip.mkv", tmp_path / "out" / "clip.jpg")
+        task.src.write_bytes(b"data")
+        task.dst.parent.mkdir(parents=True)
+        fake_ffmpeg.exit_codes = [1, 0]
+        fake_ffmpeg.streams = [
+            Stream(0, "video", "png", pix_fmt="rgba"),
+            Stream(1, "video", "h264", pix_fmt="yuv420p"),
+        ]
+
+        result = convert_one(JPG, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert result.attempt == "selective"
+        assert len(fake_ffmpeg.calls) == 2
+        assert result.notes == (
+            "video stream 0 (png) re-encoded to mjpeg",
+            "video stream 1 (h264) dropped: JPG holds 1 video stream",
+            "video stream 0 (png) may carry transparency, which JPG cannot hold",
+        )
+
+    def test_selective_rung_excludes_a_copied_stream_end_to_end(self, tmp_path, fake_ffmpeg):
+        """The bug this review round found and fixed: a stream the selective
+        rung copies verbatim (`mjpeg` matches JPG's own copy mask) cannot
+        have lost anything, so the note must not fire for it -- only the
+        drop note for the second, non-surviving stream stands."""
         task = Task(tmp_path / "clip.mkv", tmp_path / "out" / "clip.jpg")
         task.src.write_bytes(b"data")
         task.dst.parent.mkdir(parents=True)
@@ -585,11 +612,7 @@ class TestTransparencyNote:
 
         assert result.outcome is Outcome.CONVERTED
         assert result.attempt == "selective"
-        assert len(fake_ffmpeg.calls) == 2
-        assert result.notes == (
-            "video stream 1 (h264) dropped: JPG holds 1 video stream",
-            "video stream 0 (mjpeg) may carry transparency, which JPG cannot hold",
-        )
+        assert result.notes == ("video stream 1 (h264) dropped: JPG holds 1 video stream",)
 
     def test_alpha_note_survives_the_confirm_against_output_path(
         self, tmp_path, fake_ffmpeg, monkeypatch
@@ -599,7 +622,7 @@ class TestTransparencyNote:
         structurally dropped there. Here an unmapped audio stream gives
         `verify_success` a real prediction, which routes through
         `_confirm_against_output` -- proving `within` is still carried on
-        `return (*within, *_confirm_against_output(...))` and is not lost by
+        `return (*_confirm_against_output(...), *within)` and is not lost by
         the branch that adds a second probe."""
         task = Task(tmp_path / "clip.png", tmp_path / "out" / "clip.jpg")
         task.src.write_bytes(b"data")
@@ -617,11 +640,12 @@ class TestTransparencyNote:
         assert result.outcome is Outcome.CONVERTED
         assert probes == [task.src, task.dst]
         # The cheap attempt's own static note ("the image was re-encoded")
-        # leads, exactly as it always does; the two dynamic notes follow.
+        # leads, exactly as it always does; the confirmed drop note leads the
+        # two dynamic notes, matching the order `jobs.retries` already uses.
         assert result.notes == (
             "the image was re-encoded",
-            "video stream 0 (mjpeg) may carry transparency, which JPG cannot hold",
             "audio stream 1 (aac) dropped: not supported by JPG",
+            "video stream 0 (mjpeg) may carry transparency, which JPG cannot hold",
         )
 
 

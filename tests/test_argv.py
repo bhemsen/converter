@@ -2496,10 +2496,12 @@ class TestAnimatedProfileArgvPinning:
         ]
 
     def test_gif_copyable_source_on_the_selective_rung(self):
-        """A `gif`-codec stream over-reports the transparency note even on the
-        copy branch: ffmpeg's gif decoder reports `bgra` unconditionally,
-        opaque or not (spec-within-stream-loss-notes.md's fact table),
-        so the note fires here too -- deliberate, not a regression."""
+        """A stream copy is a decided case, not an undecidable one: whatever
+        alpha the source held survives byte-for-byte, so the note stays
+        suppressed here even though ``bgra`` (what ffmpeg's gif decoder
+        always reports for a `.gif` source) is not alpha-free. See
+        `TestTransparencyNotes` for the copy-branch exclusion in isolation,
+        and its non-copy sibling below for the case where it does fire."""
         streams = [Stream(0, "video", "gif", pix_fmt="bgra"), Stream(1, "video", "h264")]
         selective = jobs.retries(GIF, streams)[0]
 
@@ -2520,10 +2522,7 @@ class TestAnimatedProfileArgvPinning:
             "copy",
             "out.gif",
         ]
-        assert selective.notes == (
-            "video stream 1 (h264) dropped: GIF holds 1 video stream",
-            "video stream 0 (gif) may carry transparency, which GIF cannot hold",
-        )
+        assert selective.notes == ("video stream 1 (h264) dropped: GIF holds 1 video stream",)
 
     def test_gif_non_copyable_source_on_the_selective_rung(self):
         # pix_fmt is alpha-free -- an ordinary opaque h264 source -- so this
@@ -3031,13 +3030,34 @@ class TestTransparencyNotes:
         assert jobs.transparency_notes(JPG, streams) != ()
         assert jobs.transparency_notes(replace(JPG, alpha_unsupported=False), streams) == ()
 
-    def test_selective_rung_carries_the_note_alongside_the_drop_note(self):
-        """The second defect this issue closes: today the selective rung
-        emits no transparency note at all. Mirrors the QA gate's
-        `twovid-src.mkv` shape end to end through `jobs.retries`, not just the
-        bare function -- the drop note and the alpha note both survive into
-        the built `Attempt`. `mjpeg` matches JPG's copy mask, so this isolates
-        the two notes under test from a third, unrelated re-encode note."""
+    def test_the_cheap_attempt_entry_point_does_not_exclude_copies(self):
+        """`transparency_notes` (the cheap-attempt entry point) is
+        deliberately asymmetric with the selective rung's own verdict: the
+        cheap attempt forces its own encoder unconditionally for every
+        `alpha_unsupported` profile -- that is the field's own precondition
+        -- so there is no copy branch to exclude here, even though `mjpeg`
+        happens to match JPG's copy mask."""
+        streams = [Stream(0, "video", "mjpeg", pix_fmt="rgba")]
+
+        assert jobs.transparency_notes(JPG, streams) != ()
+
+    def test_a_non_video_stream_kept_under_a_hypothetical_rule_earns_no_note(self):
+        """Defensive, correct by construction rather than by coincidence of
+        today's roster (no shipped `alpha_unsupported` profile declares a
+        non-video rule): `pix_fmt` is only ever meaningful for a video
+        stream, so a kept audio stream must never earn this note."""
+        streams = [Stream(0, "audio", "aac")]
+
+        assert jobs.transparency_notes(replace(FLAC, alpha_unsupported=True), streams) == ()
+
+    def test_selective_rung_excludes_a_copied_stream_from_the_note(self):
+        """A copy is a *decided* case, not one of the undecidable ones this
+        phase's over-reporting rule is for: whatever alpha `mjpeg` (JPG's own
+        copy-mask codec) held survives byte-for-byte on `-c:v copy`, so the
+        note must not fire for it even though its `pix_fmt` is not
+        alpha-free. Only the drop note for the second, non-surviving stream
+        stands. Contrast with the non-copy sibling below, which mirrors the
+        QA gate's `twovid-src.mkv` shape and does carry the note."""
         streams = [
             Stream(0, "video", "mjpeg", pix_fmt="rgba"),
             Stream(1, "video", "h264", pix_fmt="yuv420p"),
@@ -3045,16 +3065,15 @@ class TestTransparencyNotes:
 
         selective = jobs.retries(JPG, streams)[0]
 
-        assert selective.notes == (
-            "video stream 1 (h264) dropped: JPG holds 1 video stream",
-            "video stream 0 (mjpeg) may carry transparency, which JPG cannot hold",
-        )
+        assert selective.notes == ("video stream 1 (h264) dropped: JPG holds 1 video stream",)
 
     def test_selective_rung_also_carries_a_re_encode_note_when_one_applies(self):
-        """The QA gate's actual `twovid-src.mkv` fixture (both streams
-        written with `-c:v png`) hits this shape instead: the surviving
-        stream is re-encoded *and* may carry transparency, so both notes
-        stand side by side rather than one crowding out the other."""
+        """The second defect this issue closes: today the selective rung
+        emits no transparency note at all. This mirrors the QA gate's actual
+        `twovid-src.mkv` fixture (both streams written with `-c:v png`,
+        neither matching JPG's `mjpeg` copy mask): the surviving stream is
+        re-encoded *and* may carry transparency, so both notes stand side by
+        side rather than one crowding out the other."""
         streams = [
             Stream(0, "video", "png", pix_fmt="rgba"),
             Stream(1, "video", "h264", pix_fmt="yuv420p"),

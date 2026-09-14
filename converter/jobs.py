@@ -311,28 +311,34 @@ def _lossy_source_notes(profile: Profile, streams: Sequence[Stream]) -> tuple[st
     return tuple(notes)
 
 
-def transparency_notes(profile: Profile, streams: Sequence[Stream]) -> tuple[str, ...]:
-    """The within-stream alpha verdict (spec-within-stream-loss-notes.md, #105).
+def _alpha_notes(
+    profile: Profile, streams: Sequence[Stream], *, exclude_copies: bool
+) -> tuple[str, ...]:
+    """Shared core of the within-stream alpha verdict (spec-within-stream-loss-notes.md, #105).
 
     Source-measured and target-declared, never an output comparison: an alpha
     PNG into GIF writes a file whose own ``pix_fmt`` reads ``bgra`` even though
     the channel was opaque, so only the *source*'s probed ``pix_fmt`` -- weighed
     against :data:`converter.profiles.ALPHA_FREE_PIX_FMTS` -- and the target's
     own declaration (``profile.alpha_unsupported``) are ever consulted. Fires
-    only for a stream that actually survives this profile's structural rules;
-    a stream dropped for shape or type reasons already carries its own note
-    from :func:`_structural_drop` and needs no second one.
+    only for a stream that actually survives this profile's structural rules
+    and is not a non-video type this profile has no business ever keeping
+    (defensive: no shipped ``alpha_unsupported`` profile declares a non-video
+    rule, but the guard makes that true by construction rather than by
+    coincidence of today's roster); a stream dropped for shape or type reasons
+    already carries its own note from :func:`_structural_drop`.
 
-    Called from two places that both hold a stream list -- ``batch.py``'s
-    cheap-attempt hook, after its ``if not predicted: return ()`` gate, so it
-    never grows the process count, and this module's own :func:`retries`. Like
-    :func:`_lossy_source_notes`, kept entirely outside :func:`_build_selective`'s
-    own ``notes`` list rather than folded into :func:`_decide_stream` -- see
-    that function's docstring for the hazard a fold risks for a profile with
-    ``explicit_streams`` set. No profile that declares ``alpha_unsupported``
-    also declares ``explicit_streams`` today, so that fold was never live
-    here either, but the separate pass keeps the invariant true by
-    construction rather than by coincidence of today's profile roster.
+    ``exclude_copies`` is what separates the two entry points below. The
+    cheap attempt always forces its encoder unconditionally for every
+    ``alpha_unsupported`` profile -- that is the precondition the field's own
+    docstring states -- so every kept stream there is a genuine re-encode and
+    the flag is always ``False``. The selective rung instead runs
+    :func:`_decide_stream`'s own COPY/ENC branch per stream
+    (``docs/design/stream-decision.md``), and a literal stream copy cannot
+    drop anything a decode-encode round-trip might -- excluded there the same
+    way :func:`_lossy_source_notes` excludes a copied-through cover picture
+    (issue #97), because a copy is a *decided* case, not one of the
+    undecidable ones this phase's over-reporting rule is for.
 
     Recomputes survival with :func:`_structural_drop` alone, the same
     technique :func:`_lossy_source_notes` uses, rather than reusing another
@@ -346,9 +352,49 @@ def transparency_notes(profile: Profile, streams: Sequence[Stream]) -> tuple[str
         if _structural_drop(profile, stream, counts) is not None:
             continue
         counts[stream.codec_type] = counts.get(stream.codec_type, 0) + 1
+        if stream.codec_type != "video":
+            continue
+        if exclude_copies:
+            rule = profile.rules[_rule_key(profile, stream)]
+            if stream.codec_name in rule.copy_mask:
+                continue
         if stream.pix_fmt not in ALPHA_FREE_PIX_FMTS:
             notes.append(_alpha_note(stream, profile))
     return tuple(notes)
+
+
+def transparency_notes(profile: Profile, streams: Sequence[Stream]) -> tuple[str, ...]:
+    """The cheap attempt's own alpha verdict.
+
+    Computed by ``batch.py``'s cheap-attempt hook *before* its
+    ``if not predicted: return within`` gate and returned on both branches out
+    of it, so this note never rides inside ``predicted`` and never grows the
+    process count -- folding it into ``verify_success`` instead would route
+    every alpha source into a second, unneeded output probe (Trap 1,
+    spec-within-stream-loss-notes.md). Never folded into
+    :func:`_build_selective`'s own ``notes`` list either -- see
+    :func:`_selective_transparency_notes`, its sibling for the other rung that
+    holds a stream list, for that hazard.
+    """
+    return _alpha_notes(profile, streams, exclude_copies=False)
+
+
+def _selective_transparency_notes(profile: Profile, streams: Sequence[Stream]) -> tuple[str, ...]:
+    """The selective rung's own alpha verdict -- appended by :func:`retries`.
+
+    Kept entirely outside :func:`_build_selective`'s own ``notes`` list,
+    exactly like :func:`_lossy_source_notes`: folding either into
+    :func:`_decide_stream` risks flipping
+    ``if profile.explicit_streams and not notes: return None`` for a profile
+    that sets ``explicit_streams`` (``wav`` is the case on record). No
+    profile that declares ``alpha_unsupported`` also declares
+    ``explicit_streams`` today -- established, not merely assumed
+    (``tests/test_profiles.py::TestAlphaUnsupportedField``) -- but appending
+    here instead keeps the invariant true by construction for any future
+    profile too, since :func:`_build_selective` has already decided
+    ``None``-or-``Attempt`` before this pass ever runs.
+    """
+    return _alpha_notes(profile, streams, exclude_copies=True)
 
 
 def first_attempt(profile: Profile) -> Attempt:
@@ -361,7 +407,10 @@ def retries(profile: Profile, streams: Sequence[Stream]) -> list[Attempt]:
     attempts: list[Attempt] = []
     selective = _build_selective(profile, streams)
     if selective is not None:
-        extra = (*_lossy_source_notes(profile, streams), *transparency_notes(profile, streams))
+        extra = (
+            *_lossy_source_notes(profile, streams),
+            *_selective_transparency_notes(profile, streams),
+        )
         if extra:
             selective = replace(selective, notes=(*selective.notes, *extra))
         attempts.append(_with_container_options(selective, profile))
