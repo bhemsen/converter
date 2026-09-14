@@ -1112,9 +1112,13 @@ class TestLossySourceAdvisory:
     def test_the_other_lossless_targets_stay_silent(self, profile):
         """The accepted inconsistency (spec Prior decisions, resolved at the
         gate): only `flac` carries the advisory. The rung is called directly
-        here -- a lone video stream succeeds at rung 1 in a real run, so this
-        shape never reaches the selective rung on its own. The shape that does
-        is the next test's; this one pins the silence per profile so a change
+        here -- a lone *single-frame* video stream succeeds at rung 1 in a real
+        run, so that shape never reaches this rung on its own. `Stream` carries
+        no frame count, so the fixture's `mjpeg` stands for both readings: a
+        still, which succeeds at rung 1, and Motion JPEG, which fails rung 1
+        *and* this rung and wins on `last_resort` (`converter/profiles.py`'s
+        image2 comment). The shape that reaches this rung and **succeeds** is
+        the next test's; this one pins the silence per profile so a change
         scoped too widely to `jobs.py` cannot start naming any of the other
         four.
         """
@@ -1130,11 +1134,12 @@ class TestLossySourceAdvisory:
 
         Confining the advisory to `flac` is a scope decision, not a structural
         necessity (issue #111): the image2 muxer behind these three refuses a
-        second video stream, so a two-video-stream source fails their cheap
-        attempt and *succeeds* here. Measured with ffmpeg 9.0 -- the cheap
-        attempt's argv exits -22 with "Cannot write more than one file with the
-        same name", the rung below exits 0 -- which the stubbed suite cannot
-        establish, so only the engine half is pinned here.
+        second video stream, so a source carrying two single-frame video
+        streams fails their cheap attempt and *succeeds* here. Measured with
+        ffmpeg 9.0 on such a source -- the cheap attempt's argv exits -22 with
+        "Cannot write more than one file with the same name", the rung below
+        exits 0 -- which the stubbed suite cannot establish, so only the engine
+        half is pinned here.
 
         Asserting the drop note rather than just an empty tuple is what makes
         the silence meaningful: it proves this really is the selective rung

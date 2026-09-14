@@ -281,32 +281,40 @@ def _build_selective(profile: Profile, streams: Sequence[Stream]) -> Attempt | N
 #: could only ever come from the success-side verification. That holds for
 #: `wav`, whose `-map 0:a:0` cheap attempt succeeds for any source carrying
 #: audio. It is false for `png`, `tiff` and `bmp`: their image2 muxer refuses a
-#: second video stream, so such a source fails the cheap attempt and *succeeds*
-#: on the selective rung -- the very rung this advisory lives on. Measured at
-#: phase 8's QA gate, where a two-video-stream source into `png` landed there
-#: and printed the per-stream drop note; a multi-frame source fails that rung
-#: too and wins on `last_resort`, which spec-lossy-source-notes.md already
-#: recorded as a known gap. The suite stubs the subprocess boundary, so that
-#: reachability is an ffmpeg fact evidenced at the gate, not one a test can pin.
+#: second video stream, so a source carrying two single-frame video streams
+#: fails the cheap attempt and *succeeds* on the selective rung -- the very
+#: rung this advisory lives on. Measured for `png` by #111's review, running
+#: the two argvs directly: the cheap attempt exits -22 with "Cannot write more
+#: than one file with the same name", the selective rung exits 0. (Phase 8's QA
+#: gate measured the same shape into `jpg`, which shares the muxer and the
+#: `stream_limit=1` rule; it never ran it into `png`.) A *multi-frame* source
+#: fails that rung too and wins on `last_resort`, which
+#: spec-lossy-source-notes.md already recorded as a known gap. The suite stubs
+#: the subprocess boundary, so this reachability is an ffmpeg fact evidenced by
+#: measurement, not one a test in this repo can pin.
 #:
 #: The conclusion survives on the grounds the gate actually weighed
 #: (spec-lossy-source-notes.md, "The scope decision, in full"): widening to all
-#: five would still have to widen the success-side verification for `wav`,
-#: costing amendments to `docs/architecture.md` Key flow 1, the engine
-#: docstring and `docs/design/degradation-ladder.md`, and it would add an
-#: advisory to `--to png` from a JPEG -- correct, but judged more noise than an
-#: image batch wants. The accepted cost is the inconsistency the gate recorded:
-#: the same MP3 says something on the way to FLAC and nothing on the way to WAV.
+#: five would still have to widen the success-side verification for `wav`. The
+#: gate listed four costs for that and warned that getting the list right
+#: matters: amendments to `docs/architecture.md` Key flow 1, to
+#: `docs/design/degradation-ladder.md`, and to the engine docstring (named
+#: there as `_unmapped_notes`, which no longer exists -- its boundary now lives
+#: on :func:`verify_success` below), plus narrowing the test that pins the
+#: current boundary. And it would add an advisory to `--to png` from a JPEG --
+#: correct, but judged more noise than an image batch wants. The accepted cost
+#: is the inconsistency the gate recorded: the same MP3 says something on the
+#: way to FLAC and nothing on the way to WAV.
 #:
 #: Note which half of that is free. Adding these three names to the frozenset
-#: would cost nothing, but would fire only for a two-video-stream image source
-#: -- near-never. The gate's motivating case, `--to png` from a JPEG, is an
-#: ordinary single-frame image that succeeds at rung 1, so reaching *it* still
-#: needs the success-side widening above.
+#: would cost nothing, but would fire only for a multi-video-stream image
+#: source -- near-never. The gate's motivating case, `--to png` from a JPEG, is
+#: an ordinary single-frame image that succeeds at rung 1 (measured), so
+#: reaching *it* still needs the success-side widening above.
 #:
-#: That success-side verification (:func:`verify_success`) is unchanged,
-#: still reading only the structural verdicts of
-#: `stream-decision.md`, never a codec (issue #18). The boundary around it
+#: That success-side verification (:func:`verify_success`) is unchanged, still
+#: reading only the structural verdicts of `stream-decision.md`, never a codec
+#: (issue #18). The boundary around it
 #: widened since (spec-within-stream-loss-notes.md, #106): a profile whose
 #: cheap attempt forces a single declared encoder unconditionally may declare
 #: what that encoder cannot hold (`Profile.alpha_unsupported`,

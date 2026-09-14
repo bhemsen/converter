@@ -481,40 +481,47 @@ New-Item -ItemType Directory -Force in
   `jpg`/`gif`/`avif` within-stream notes still firing unconditionally and
   naming no stream, tracked against milestone 6) remains open by design.
 - 2026-09-14 (issue #111, after the fact): This spec's fact table, its scope
-  decision, and the 2026-08-27 Decision log row above all rest on a premise that
-  is false for three of the four targets they apply it to. "`wav`, `png`, `tiff`
-  and `bmp` always encode in their cheap attempt, so a lossy source *succeeds*
-  at rung 1" holds for `wav` alone. The image2 muxer behind `png`, `tiff` and
-  `bmp` refuses a second video stream, so such a source fails their cheap
-  attempt and **succeeds on the selective rung** -- the rung this advisory lives
-  on. Measured twice with ffmpeg 9.0: at phase 8's QA gate a two-video-stream
-  source into `png` landed there and printed the per-stream drop note, and
-  #111's review ran the two argvs directly -- the cheap attempt exits -22 with
-  "Cannot write more than one file with the same name", the selective rung exits
-  0. The rows are left as written, because they record what was believed when
-  the gate decided; this entry is the correction, and `converter/jobs.py`'s
-  comment above `_LOSSY_SOURCE_ADVISORY_TARGETS` now states it rather than
-  repeating the premise.
+  decision, the Decisions-table row on widening, and the 2026-08-27 Decision log
+  row above all rest on a premise that is false for three of the four targets
+  they apply it to. "`wav`, `png`, `tiff` and `bmp` always encode in their cheap
+  attempt, so a lossy source *succeeds* at rung 1" holds for `wav` alone. The
+  image2 muxer behind `png`, `tiff` and `bmp` refuses a second video stream, so
+  a source carrying two single-frame video streams fails their cheap attempt and
+  **succeeds on the selective rung** -- the rung this advisory lives on.
+  Measured for `png` by #111's review, running the two argvs directly with
+  ffmpeg 9.0: the cheap attempt exits -22 with "Cannot write more than one file
+  with the same name", the selective rung exits 0. Phase 8's QA gate measured
+  the same shape into `jpg`, which shares the muxer and the `stream_limit=1`
+  rule, but never ran it into `png` -- an earlier draft of this entry cited the
+  gate for the `png` case and was wrong to. The rows are left as written,
+  because they record what was believed when the gate decided; this entry is the
+  correction, and `converter/jobs.py`'s comment above
+  `_LOSSY_SOURCE_ADVISORY_TARGETS` now states it rather than repeating the
+  premise.
 - 2026-09-14 (issue #111): The conclusion is unchanged -- `flac` only -- but it
   now rests on the grounds the gate actually weighed rather than on a
   reachability claim that does not hold. "The scope decision, in full" already
   records them: widening to all five would still have to widen the success-side
-  verification for `wav` (the one target the premise was true of), costing
-  amendments to `docs/architecture.md` Key flow 1 and
-  `docs/design/degradation-ladder.md` plus a narrowed boundary test, and it
-  would add an advisory to `--to png` from a JPEG -- correct, but judged more
-  noise than an image batch wants.
+  verification for `wav`, the one target the premise was true of. That option
+  listed **four** costs and warned that getting the list right matters --
+  amendments to `docs/architecture.md` Key flow 1, to
+  `docs/design/degradation-ladder.md`, and to the engine docstring (named there
+  as `jobs._unmapped_notes`, which no longer exists; its boundary now lives on
+  `jobs.verify_success`), plus narrowing the test that pins the current
+  boundary. And it would add an advisory to `--to png` from a JPEG -- correct,
+  but judged more noise than an image batch wants.
 - 2026-09-14 (issue #111): What the correction does **not** buy, stated because
   the first draft of this entry got it wrong and #111's review caught it. It is
   tempting to conclude that re-opening the confinement now needs "only a new
   decision, not new machinery". That is true only of the selective rung: adding
-  the three names to the frozenset is free, and would fire for a two-video-stream
-  image source -- which is near-never. The case the gate actually weighed is
-  `--to png` **from a JPEG**, an ordinary single-frame image that succeeds at
-  rung 1, and reaching *that* still requires the success-side widening and its
-  amendments, exactly as option 2 said. So: the confinement's reach on the
-  selective rung is a free scope decision; covering the motivating case is not.
-  Both costs are named together in `converter/jobs.py`'s comment.
+  the three names to the frozenset is free, and would fire for a
+  multi-video-stream image source -- which is near-never. The case the gate
+  actually weighed is `--to png` **from a JPEG**, an ordinary single-frame image
+  that succeeds at rung 1 (measured), and reaching *that* still requires the
+  success-side widening and all four of its amendments, exactly as option 2
+  said. So: the confinement's reach on the selective rung is a free scope
+  decision; covering the motivating case is not. Both costs are named together
+  in `converter/jobs.py`'s comment.
 - 2026-09-14 (issue #111): No behaviour changed. The test pinning the three
   targets' silence
   (`tests/test_batch.py::TestLossySourceAdvisory::test_the_other_lossless_targets_stay_silent`)
