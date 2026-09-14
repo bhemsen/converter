@@ -10,6 +10,7 @@ import pytest
 
 from converter import profiles
 from converter.profiles import (
+    ALPHA_FREE_PIX_FMTS,
     AVIF,
     BMP,
     FLAC,
@@ -1962,6 +1963,60 @@ class TestLossyCodecs:
         Both must actually be members for this set to be doing its job.
         """
         assert {"mp3", "gif"} <= LOSSY_CODECS
+
+
+class TestAlphaFreePixFmts:
+    """`ALPHA_FREE_PIX_FMTS` (issue #104, spec-within-stream-loss-notes.md):
+    the curated, *generated* roster the future transparency verdict checks a
+    source stream's probed `pix_fmt` against. Pinned as a literal -- this
+    class must never invoke ffprobe, since the suite runs on a machine with
+    no ffmpeg installed at all.
+    """
+
+    def test_pinned_count_is_184(self):
+        """Measured against ffmpeg 9.0: `flags.alpha == 0` alone yields 200
+        pixel formats, of which 16 are hwaccel placeholders that can never be
+        a real file's reported `pix_fmt`; excluding them yields 184. A count
+        drift here means the roster was regenerated against a different
+        ffmpeg build or the second filter was dropped -- see the constant's
+        own docstring for the regeneration command."""
+        assert len(ALPHA_FREE_PIX_FMTS) == 184
+
+    def test_includes_the_reported_defect_and_its_common_neighbours(self):
+        """`yuvj420p` is the reported defect this phase fixes (an opaque JPEG
+        wrongly told its transparency was not carried); the rest are the
+        common 1-/3-component formats the spec's own fact table names."""
+        assert {
+            "yuvj420p",
+            "yuv420p",
+            "yuv420p10le",
+            "rgb24",
+            "nv12",
+            "gray",
+        } <= ALPHA_FREE_PIX_FMTS
+
+    def test_excludes_every_format_that_carries_alpha(self):
+        """The formats the spec's fact table names as alpha-carrying must
+        never suppress the note -- an omission in the opposite direction
+        (a false inclusion here) is exactly the silent-loss failure the
+        constitution forbids."""
+        assert ALPHA_FREE_PIX_FMTS.isdisjoint(
+            {"rgba", "bgra", "yuva420p", "ya8", "ya16be", "ya16le"}
+        )
+
+    def test_excludes_pal8(self):
+        """`pal8` carries no alpha marker but *can* carry real alpha (a
+        paletted PNG with transparency reports it) -- over-reporting is the
+        safe direction the constitution requires, so `pal8` must be absent
+        from the roster rather than included on the strength of its own flag."""
+        assert "pal8" not in ALPHA_FREE_PIX_FMTS
+
+    def test_is_a_non_empty_frozenset_of_strings(self):
+        """A set could satisfy every test above by being some other
+        collection type or containing the right names by accident of type
+        coercion; pin the shape too."""
+        assert isinstance(ALPHA_FREE_PIX_FMTS, frozenset)
+        assert all(isinstance(name, str) for name in ALPHA_FREE_PIX_FMTS)
 
 
 def lossless_target_names(registry: dict[str, Profile]) -> set[str]:

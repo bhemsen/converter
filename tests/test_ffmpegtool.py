@@ -141,10 +141,53 @@ class TestProbeStreams:
         streams = ffmpegtool.probe_streams(TOOLS, "in.mov")
 
         assert (
-            "stream=index,codec_type,codec_name,codec_tag_string:"
+            "stream=index,codec_type,codec_name,codec_tag_string,pix_fmt:"
             "stream_disposition=attached_pic" in seen[0]
         )
         assert [stream.codec_tag for stream in streams] == ["tmcd", "mebx"]
+
+    def test_the_show_entries_argument_is_pinned_verbatim(self, monkeypatch):
+        """Issue #104: `pix_fmt` rides the existing query for free -- it must
+        show up in the same single `-show_entries` argument, not cost a
+        second ffprobe process, and never pull in `-count_packets` (the spec's
+        own measurements ruled that field's cost out entirely)."""
+        calls: list[list[str]] = []
+
+        def record(argv, **_kwargs):
+            calls.append(list(argv))
+            return CommandResult(tuple(argv), 0, "{}", "")
+
+        monkeypatch.setattr(ffmpegtool, "run", record)
+
+        ffmpegtool.probe_streams(TOOLS, "in.mkv")
+
+        assert (
+            "stream=index,codec_type,codec_name,codec_tag_string,pix_fmt:"
+            "stream_disposition=attached_pic" in calls[0]
+        )
+        assert "-count_packets" not in calls[0]
+        assert len(calls) == 1
+
+    def test_pix_fmt_is_parsed_for_a_video_stream(self, monkeypatch):
+        payload = {"streams": [{"index": 0, "codec_type": "video", "pix_fmt": "yuvj420p"}]}
+        stub_run(monkeypatch, 0, json.dumps(payload))
+
+        streams = ffmpegtool.probe_streams(TOOLS, "in.jpg")
+
+        assert streams[0].pix_fmt == "yuvj420p"
+
+    def test_pix_fmt_defaults_to_empty_when_the_key_is_absent(self, monkeypatch):
+        """An audio stream carries no `pix_fmt` key at all in ffprobe's JSON
+        output -- `"N/A"` is only the CSV writer's rendering of absence, never
+        what the JSON parser sees (docs/specs/spec-within-stream-loss-notes.md).
+        Asserting the empty string, not just "falsy", is what would catch a
+        regression to the literal string `"N/A"`."""
+        payload = {"streams": [{"index": 1, "codec_type": "audio", "codec_name": "aac"}]}
+        stub_run(monkeypatch, 0, json.dumps(payload))
+
+        streams = ffmpegtool.probe_streams(TOOLS, "in.mp3")
+
+        assert streams[0].pix_fmt == ""
 
     def test_exactly_one_ffprobe_call_is_made_per_file(self, monkeypatch):
         calls: list[list[str]] = []
