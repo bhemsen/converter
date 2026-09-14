@@ -1111,17 +1111,48 @@ class TestLossySourceAdvisory:
     @pytest.mark.parametrize("profile", [PNG, TIFF, BMP], ids=lambda p: p.name)
     def test_the_other_lossless_targets_stay_silent(self, profile):
         """The accepted inconsistency (spec Prior decisions, resolved at the
-        gate): only `flac` carries the advisory. `wav`, `png`, `tiff` and `bmp`
-        always succeed their cheap attempt in practice, but even called
-        directly their selective rung must still report nothing for a lossy
-        video source -- pinned per profile so a change scoped too widely to
-        `jobs.py` cannot silently start naming any of the other four.
+        gate): only `flac` carries the advisory. The rung is called directly
+        here -- a lone *single-frame* video stream succeeds at rung 1 in a real
+        run, so that shape never reaches this rung on its own. `Stream` carries
+        no frame count, so the fixture's `mjpeg` stands for both readings: a
+        still, which succeeds at rung 1, and Motion JPEG, which fails rung 1
+        *and* this rung and wins on `last_resort` (`converter/profiles.py`'s
+        image2 comment). The shape that reaches this rung and **succeeds** is
+        the next test's; this one pins the silence per profile so a change
+        scoped too widely to `jobs.py` cannot start naming any of the other
+        four.
         """
         streams = [Stream(0, "video", "mjpeg")]
 
         selective = jobs.retries(profile, streams)[0]
 
         assert selective.notes == ()
+
+    @pytest.mark.parametrize("profile", [PNG, TIFF, BMP], ids=lambda p: p.name)
+    def test_the_reachable_selective_rung_stays_silent(self, profile):
+        """The same silence on the shape that genuinely reaches the rung.
+
+        Confining the advisory to `flac` is a scope decision, not a structural
+        necessity (issue #111): the image2 muxer behind these three refuses a
+        second video stream, so a source carrying two single-frame video
+        streams fails their cheap attempt and *succeeds* here. Measured with
+        ffmpeg 9.0 on such a source -- the cheap attempt's argv exits -22 with
+        "Cannot write more than one file with the same name", the rung below
+        exits 0 -- which the stubbed suite cannot establish, so only the engine
+        half is pinned here.
+
+        Asserting the drop note rather than just an empty tuple is what makes
+        the silence meaningful: it proves this really is the selective rung
+        doing per-stream work, so a bare `== ()` cannot pass by the rung having
+        collapsed to nothing.
+        """
+        streams = [Stream(0, "video", "mjpeg"), Stream(1, "video", "mjpeg")]
+
+        selective = jobs.retries(profile, streams)[0]
+
+        assert selective.notes == (
+            f"video stream 1 (mjpeg) dropped: {profile.label} holds 1 video stream",
+        )
 
     def test_copied_through_cover_art_carries_no_advisory(self):
         """Regression: `main` gained FLAC's `attached_pic` rule (issue #77,

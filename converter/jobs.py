@@ -273,13 +273,52 @@ def _build_selective(profile: Profile, streams: Sequence[Stream]) -> Attempt | N
     return Attempt("selective", (*maps, *codecs), tuple(notes))
 
 
-#: The only target this phase's advisory covers (Prior decisions,
-#: spec-lossy-source-notes.md, "Only flac carries the advisory"). The other
-#: four lossless targets (`wav`, `png`, `tiff`, `bmp`) always succeed their
-#: cheap attempt, so the only place they could carry a codec-level statement is
-#: the success-side verification -- and :func:`verify_success` itself is
-#: unchanged, still reading only the structural verdicts of
-#: `stream-decision.md`, never a codec (issue #18). The boundary around it
+#: The only target this advisory covers (Prior decisions,
+#: spec-lossy-source-notes.md, "Only flac carries the advisory"). The
+#: confinement is a **scope decision**, not a structural necessity, and issue
+#: #111 exists because this comment used to claim otherwise -- that the other
+#: four lossless targets "always succeed their cheap attempt", so the advisory
+#: could only ever come from the success-side verification. That holds for
+#: `wav`, whose `-map 0:a:0` cheap attempt succeeds for any source carrying
+#: audio. It is false for `png`, `tiff` and `bmp`: their image2 muxer refuses a
+#: second video stream, so a source carrying two single-frame video streams
+#: fails the cheap attempt and *succeeds* on the selective rung -- the very
+#: rung this advisory lives on. Measured for `png` by #111's review, running
+#: the two argvs directly: the cheap attempt exits -22 with "Cannot write more
+#: than one file with the same name", the selective rung exits 0. (Phase 8's QA
+#: gate measured the same shape into `jpg`, which shares the muxer and the
+#: `stream_limit=1` rule; it never ran it into `png`.) A *multi-frame* source
+#: fails that rung too and wins on `last_resort`, which
+#: spec-lossy-source-notes.md already recorded as a known gap. The suite stubs
+#: the subprocess boundary, so this reachability is an ffmpeg fact evidenced by
+#: measurement, not one a test in this repo can pin.
+#:
+#: The conclusion survives on the grounds the gate actually weighed
+#: (spec-lossy-source-notes.md, "The scope decision, in full"): widening to all
+#: five would still have to widen the success-side verification for `wav`. The
+#: gate listed four costs for that and warned that getting the list right
+#: matters: amendments to `docs/architecture.md` Key flow 1, to
+#: `docs/design/degradation-ladder.md`, and to the engine docstring (named
+#: there as `_unmapped_notes`, which #83 split into :func:`_predict_unmapped`
+#: and :func:`verify_success`; the boundary paragraph the gate meant sits on
+#: the former), plus narrowing the test that pins the current boundary. And it
+#: would add an advisory to `--to png` from a JPEG -- correct, but judged more
+#: noise than an image batch wants. The accepted cost is the inconsistency the
+#: gate recorded: the same MP3 says something on the way to FLAC and nothing on
+#: the way to WAV.
+#:
+#: Note which half of that is cheap. Adding these three names to the frozenset
+#: needs no new machinery -- only this frozenset and the two tests pinning the
+#: silence -- but would fire solely for a multi-video-stream image source,
+#: which is near-never. The case option 2 weighed, `--to png` from a JPEG, is
+#: an ordinary single-frame image that succeeds at rung 1 (measured), so
+#: reaching *it* still needs the success-side widening above. ("Motivating
+#: case" is this spec's term for MP3 into FLAC, which `flac` already covers --
+#: not for the widening's.)
+#:
+#: That success-side verification (:func:`verify_success`) is unchanged, still
+#: reading only the structural verdicts of `stream-decision.md`, never a codec
+#: (issue #18). The boundary around it
 #: widened since (spec-within-stream-loss-notes.md, #106): a profile whose
 #: cheap attempt forces a single declared encoder unconditionally may declare
 #: what that encoder cannot hold (`Profile.alpha_unsupported`,
