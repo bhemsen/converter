@@ -59,11 +59,22 @@ The internal import graph is acyclic today and must stay that way:
    profile's *structural* verdicts only — whether it declares a rule for the
    stream's type, and how many streams of that type it holds — never a
    codec-level one: the attempt exited 0, so what it did with a codec worked.
-   That reading is a *prediction* from the mapping, so a run that is about to
-   name a loss spends one further `ffprobe`, on the output this time, and keeps
-   only the drops the written file does not in fact contain — MP4 and MOV put a
-   `tmcd` timecode track back that no selector mapped (issue #66). A conversion
-   that gives nothing up never reaches that second probe.
+   The one licensed exception is a profile whose cheap attempt forces a
+   single declared encoder unconditionally, for every input: such a profile
+   may also declare what that encoder cannot hold, read from the same source
+   probe and naming the surviving stream when it fires — an encoder claim,
+   not a codec-level verdict about what this particular attempt did, since
+   that attempt has no copy branch it could have taken instead (`jpg`, `gif`
+   and `avif`'s `Profile.alpha_unsupported`,
+   `converter.jobs.transparency_notes`,
+   `docs/specs/spec-within-stream-loss-notes.md`). A copy-based cheap attempt
+   (`webp`) earns no such note — that is the boundary's limit.
+   That structural reading is a *prediction* from the mapping, so a run that
+   is about to name a loss spends one further `ffprobe`, on the output this
+   time, and keeps only the drops the written file does not in fact contain
+   — MP4 and MOV put a `tmcd` timecode track back that no selector mapped
+   (issue #66). A conversion that gives nothing up never reaches that
+   second probe.
    A profile whose cheap attempt is *exhaustive* would skip this probe
    entirely, but no shipped or currently specced profile is one — the
    probe-on-success branch is presently the only path a successful conversion

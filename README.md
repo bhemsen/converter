@@ -205,15 +205,27 @@ note    Show.S01E02.mkv: subtitle stream 2 (hdmv_pgs_subtitle) dropped: bitmap s
   reported as dropped even though nothing mapped it; WebM silently discards
   an attachment, data or timecode stream at exit 0. None of the three prints
   anything for a source that carries none of these.
-* **JPG, GIF and AVIF always state the format's structural limits, even when
-  the source had nothing to lose.** JPEG and GIF cannot hold an alpha
-  channel, GIF is limited to a 256-colour palette, and AVIF's muxer keeps
-  only one frame of an animated source no matter what is asked of it — but
-  the notes for these say so on every conversion, not only the ones where the
-  source actually had transparency, extra colours or extra frames to give
-  up. Unlike a per-stream drop, this is a loss inside a stream that is still
-  kept, which the engine has no way to measure from the source today, so it
-  is announced unconditionally rather than confirmed.
+* **JPG, GIF and AVIF name a transparency loss only when the source could
+  actually carry one.** Step 1 or step 2 checks the source's own pixel
+  format: an ordinary opaque image gets no transparency note at all, and one
+  that could carry alpha gets a note naming its stream index and codec. Two
+  cases still warn every time, on purpose: a paletted source (`pal8`) can
+  hide real transparency the palette format itself does not flag, and every
+  `.gif` source decodes as if it had an alpha channel whether or not it did —
+  in both cases the tool would rather warn about a loss that might not have
+  happened than stay silent about one that did. An already-AVIF source is
+  the one case handled the other way: ffmpeg reports the same pixel format
+  whether or not the file carried alpha, so the tool cannot tell and stays
+  silent here — the one place it under-reports rather than over-reports.
+  GIF's 256-colour palette limit and AVIF's single-frame limit are unrelated
+  to this and still fire on every conversion regardless of the source: each
+  states what this tool's GIF or AVIF pipeline always does — ffmpeg's GIF
+  encoder quantises to a single 256-entry palette, and its AVIF muxer keeps
+  one frame no matter what is asked of it — not what those formats can hold
+  elsewhere, which is more. Counting colours or frames would cost a decode
+  or an extra probe this tool does not spend. Step 3, reached only once the
+  faster paths have failed, never gets to look at the source's streams at
+  all, so it restates every one of these limits as fixed text instead.
 * **`--to opus` can hand you a `.opus` file that is actually Vorbis.** A
   Vorbis source (typically a `.ogg`/`.oga` file) is stream-copied into the
   `.opus` container without transcoding — genuinely lossless, but `.opus` is a
