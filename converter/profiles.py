@@ -226,6 +226,234 @@ LOSSY_CODECS = frozenset(
     }
 )
 
+#: Pixel formats `ffprobe -show_pixel_formats -of json` reports with
+#: ``flags.alpha == 0`` **and** ``flags.hwaccel == 0`` -- 184 formats,
+#: measured against ffmpeg 9.0 (docs/specs/spec-within-stream-loss-notes.md).
+#: A source stream whose probed ``pix_fmt`` (``converter.ffmpegtool.Stream``)
+#: is a member of this set cannot carry an alpha channel, so the
+#: transparency note `jpg`/`gif`/`avif` declare is suppressed for it; every
+#: other reported format -- including ``pal8``, which carries no alpha
+#: marker but *can* carry alpha, and any ``.gif`` source, whose decoder
+#: reports ``bgra`` unconditionally whether the file was opaque or not --
+#: still fires the note. Over-reporting is the direction the constitution
+#: requires when the probe cannot decide.
+#:
+#: The second filter is not cosmetic: ``flags.alpha == 0`` alone yields 200
+#: formats, 16 of which are hwaccel placeholders (``vaapi``, ``cuda``,
+#: ``d3d11va_vld``, ...) that can never be a real file's reported
+#: ``pix_fmt``. Excluding them is what brings the count to 184.
+#:
+#: Generated from ffprobe's own flag, not hand-curated like `LOSSY_CODECS`
+#: above -- and its failure mode is the *opposite* of that set's. An
+#: omission from `LOSSY_CODECS` is a known, disclosable gap that yields
+#: silence; an omission here yields a **false transparency note on an
+#: ordinary, alpha-free file**, which is the exact defect this set exists to
+#: fix. That inversion is why it is regenerated from the flag rather than
+#: judged format by format, and pinned as a literal so the test suite -- which
+#: must pass on a machine with no ffmpeg installed -- never has to invoke
+#: ffprobe to check it.
+#:
+#: Regenerate with (PowerShell; both filters must be present, or the count
+#: drifts from 184):
+#:
+#:   $pf = & ffprobe -v quiet -show_pixel_formats -of json | ConvertFrom-Json
+#:   $pf.pixel_formats |
+#:     Where-Object { $_.flags.alpha -eq 0 -and $_.flags.hwaccel -eq 0 } |
+#:     Select-Object -ExpandProperty name | Sort-Object
+#:
+#: then paste the sorted names back in below and re-run
+#: ``tests/test_profiles.py::TestAlphaFreePixFmts::test_pinned_count_is_184``.
+#: A different count on a newer ffmpeg build is itself a finding worth
+#: recording, not something to silently absorb.
+ALPHA_FREE_PIX_FMTS = frozenset(
+    {
+        "0bgr",
+        "0rgb",
+        "bayer_bggr16be",
+        "bayer_bggr16le",
+        "bayer_bggr8",
+        "bayer_gbrg16be",
+        "bayer_gbrg16le",
+        "bayer_gbrg8",
+        "bayer_grbg16be",
+        "bayer_grbg16le",
+        "bayer_grbg8",
+        "bayer_rggb16be",
+        "bayer_rggb16le",
+        "bayer_rggb8",
+        "bgr0",
+        "bgr24",
+        "bgr4",
+        "bgr444be",
+        "bgr444le",
+        "bgr48be",
+        "bgr48le",
+        "bgr4_byte",
+        "bgr555be",
+        "bgr555le",
+        "bgr565be",
+        "bgr565le",
+        "bgr8",
+        "gbrp",
+        "gbrp10be",
+        "gbrp10le",
+        "gbrp10msbbe",
+        "gbrp10msble",
+        "gbrp12be",
+        "gbrp12le",
+        "gbrp12msbbe",
+        "gbrp12msble",
+        "gbrp14be",
+        "gbrp14le",
+        "gbrp16be",
+        "gbrp16le",
+        "gbrp9be",
+        "gbrp9le",
+        "gbrpf16be",
+        "gbrpf16le",
+        "gbrpf32be",
+        "gbrpf32le",
+        "gray",
+        "gray10be",
+        "gray10le",
+        "gray12be",
+        "gray12le",
+        "gray14be",
+        "gray14le",
+        "gray16be",
+        "gray16le",
+        "gray32be",
+        "gray32le",
+        "gray9be",
+        "gray9le",
+        "grayf16be",
+        "grayf16le",
+        "grayf32be",
+        "grayf32le",
+        "monob",
+        "monow",
+        "nv12",
+        "nv16",
+        "nv20be",
+        "nv20le",
+        "nv21",
+        "nv24",
+        "nv42",
+        "p010be",
+        "p010le",
+        "p012be",
+        "p012le",
+        "p016be",
+        "p016le",
+        "p210be",
+        "p210le",
+        "p212be",
+        "p212le",
+        "p216be",
+        "p216le",
+        "p410be",
+        "p410le",
+        "p412be",
+        "p412le",
+        "p416be",
+        "p416le",
+        "rgb0",
+        "rgb24",
+        "rgb4",
+        "rgb444be",
+        "rgb444le",
+        "rgb48be",
+        "rgb48le",
+        "rgb4_byte",
+        "rgb555be",
+        "rgb555le",
+        "rgb565be",
+        "rgb565le",
+        "rgb8",
+        "rgb96be",
+        "rgb96le",
+        "rgbf16be",
+        "rgbf16le",
+        "rgbf32be",
+        "rgbf32le",
+        "uyvy422",
+        "uyyvyy411",
+        "v30xbe",
+        "v30xle",
+        "vuyx",
+        "vyu444",
+        "x2bgr10be",
+        "x2bgr10le",
+        "x2rgb10be",
+        "x2rgb10le",
+        "xv30be",
+        "xv30le",
+        "xv36be",
+        "xv36le",
+        "xv48be",
+        "xv48le",
+        "xyz12be",
+        "xyz12le",
+        "y210be",
+        "y210le",
+        "y212be",
+        "y212le",
+        "y216be",
+        "y216le",
+        "yuv410p",
+        "yuv411p",
+        "yuv420p",
+        "yuv420p10be",
+        "yuv420p10le",
+        "yuv420p12be",
+        "yuv420p12le",
+        "yuv420p14be",
+        "yuv420p14le",
+        "yuv420p16be",
+        "yuv420p16le",
+        "yuv420p9be",
+        "yuv420p9le",
+        "yuv422p",
+        "yuv422p10be",
+        "yuv422p10le",
+        "yuv422p12be",
+        "yuv422p12le",
+        "yuv422p14be",
+        "yuv422p14le",
+        "yuv422p16be",
+        "yuv422p16le",
+        "yuv422p9be",
+        "yuv422p9le",
+        "yuv440p",
+        "yuv440p10be",
+        "yuv440p10le",
+        "yuv440p12be",
+        "yuv440p12le",
+        "yuv444p",
+        "yuv444p10be",
+        "yuv444p10le",
+        "yuv444p10msbbe",
+        "yuv444p10msble",
+        "yuv444p12be",
+        "yuv444p12le",
+        "yuv444p12msbbe",
+        "yuv444p12msble",
+        "yuv444p14be",
+        "yuv444p14le",
+        "yuv444p16be",
+        "yuv444p16le",
+        "yuv444p9be",
+        "yuv444p9le",
+        "yuvj411p",
+        "yuvj420p",
+        "yuvj422p",
+        "yuvj440p",
+        "yuvj444p",
+        "yuyv422",
+        "yvyu422",
+    }
+)
+
 MP4 = Profile(
     label="MP4",
     name="mp4",

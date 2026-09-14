@@ -363,3 +363,13 @@ New-Item -ItemType Directory -Force in
   `-count_packets` on every probe in the system for one target's note. Issue #101's
   acceptance criterion 3 is knowingly left unmet, which is recorded here rather
   than quietly reworded, so #101 stays open on that point or is amended.
+- 2026-09-14 (issue #104): Regenerated `ALPHA_FREE_PIX_FMTS` for real against
+  the installed ffmpeg 9.0-full_build (`ffprobe -show_pixel_formats -of json`,
+  filtered to `flags.alpha == 0 and flags.hwaccel == 0`) rather than trusting
+  the spec's own table — it measured **184**, confirming the fact table's
+  number exactly, with `pal8` absent and the component cross-check (every
+  1-/3-component format except `pal8` reads `alpha=0`, every 2-/4-component
+  format reads `alpha=1`) holding with zero exceptions. `Stream.pix_fmt`
+  parses absence the same way `codec_name`/`codec_tag` already do --
+  `str(raw.get("pix_fmt", ""))` -- so a non-video stream's missing key reads
+  as `""`, never the CSV writer's `"N/A"`, with no new branch needed.

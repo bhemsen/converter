@@ -74,6 +74,16 @@ class Stream:
     #: nothing else distinguishes them (docs/specs/archive/spec-stream-disposition.md).
     #: Defaults to false so existing construction sites are unaffected.
     attached_pic: bool = False
+    #: The stream's reported pixel format (``yuv420p``, ``rgba``, ``pal8``,
+    #: ...) -- meaningful for a video stream only. In ffprobe's ``-of json``
+    #: output the ``pix_fmt`` key is simply **absent** for a non-video stream,
+    #: not the string ``"N/A"`` (that string is only ever produced by
+    #: ffprobe's default/CSV writers), so this defaults to empty the same way
+    #: ``codec_name``/``codec_tag`` above do. Feeds the within-stream
+    #: transparency verdict against
+    #: :data:`converter.profiles.ALPHA_FREE_PIX_FMTS`
+    #: (docs/specs/spec-within-stream-loss-notes.md, issue #105).
+    pix_fmt: str = ""
 
 
 @dataclass(frozen=True)
@@ -228,6 +238,11 @@ def _parse_stream(raw: dict[str, object]) -> Stream | None:
         codec_name=str(raw.get("codec_name", "")),
         codec_tag=str(raw.get("codec_tag_string", "")),
         attached_pic=bool(disposition.get("attached_pic", 0)),
+        # Absent entirely for a non-video stream, not "N/A" -- that string is
+        # only ever produced by ffprobe's default/CSV writers, never by its
+        # JSON one, so the plain str(..., "") fallback every other field above
+        # already uses is correct here too.
+        pix_fmt=str(raw.get("pix_fmt", "")),
     )
 
 
@@ -249,11 +264,15 @@ def probe_streams(tools: Tools, src: str | os.PathLike[str]) -> list[Stream]:
             "-show_entries",
             # One query, one process: an extra field costs nothing here, and
             # codec_tag_string is the only thing that distinguishes two data
-            # tracks ffprobe reports no codec name for. stream_disposition=
-            # is a separate entry clause because disposition flags arrive
-            # nested under their own JSON object rather than alongside the
-            # plain stream fields.
-            "stream=index,codec_type,codec_name,codec_tag_string:stream_disposition=attached_pic",
+            # tracks ffprobe reports no codec name for. pix_fmt rides the same
+            # free query (docs/specs/spec-within-stream-loss-notes.md) -- it
+            # costs nothing extra either, unlike -count_packets, which the
+            # spec's own measurements ruled out. stream_disposition= is a
+            # separate entry clause because disposition flags arrive nested
+            # under their own JSON object rather than alongside the plain
+            # stream fields.
+            "stream=index,codec_type,codec_name,codec_tag_string,pix_fmt:"
+            "stream_disposition=attached_pic",
             "-of",
             "json",
             cli_path(src),
