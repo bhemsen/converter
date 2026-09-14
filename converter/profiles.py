@@ -86,7 +86,7 @@ class Profile:
     declared encoder unconditionally, for every input, may declare this. A
     copy-based cheap attempt (``webp``) asserts nothing about any encoder's
     behaviour, so it must never declare it
-    (``docs/specs/spec-within-stream-loss-notes.md``, issue #105). A source
+    (``docs/specs/archive/spec-within-stream-loss-notes.md``, issue #105). A source
     stream whose probed ``pix_fmt`` (``converter.ffmpegtool.Stream``) is not a
     member of ``ALPHA_FREE_PIX_FMTS`` then earns the within-stream
     transparency note wherever it survives this profile's rules *and* is not
@@ -247,7 +247,7 @@ LOSSY_CODECS = frozenset(
 
 #: Pixel formats `ffprobe -show_pixel_formats -of json` reports with
 #: ``flags.alpha == 0`` **and** ``flags.hwaccel == 0`` -- 184 formats,
-#: measured against ffmpeg 9.0 (docs/specs/spec-within-stream-loss-notes.md).
+#: measured against ffmpeg 9.0 (docs/specs/archive/spec-within-stream-loss-notes.md).
 #: A source stream whose probed ``pix_fmt`` (``converter.ffmpegtool.Stream``)
 #: is a member of this set cannot carry an alpha channel, so the
 #: transparency note `jpg`/`gif`/`avif` declare is suppressed for it; every

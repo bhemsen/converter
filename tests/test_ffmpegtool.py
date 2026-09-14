@@ -179,7 +179,7 @@ class TestProbeStreams:
     def test_pix_fmt_defaults_to_empty_when_the_key_is_absent(self, monkeypatch):
         """An audio stream carries no `pix_fmt` key at all in ffprobe's JSON
         output -- `"N/A"` is only the CSV writer's rendering of absence, never
-        what the JSON parser sees (docs/specs/spec-within-stream-loss-notes.md).
+        what the JSON parser sees (docs/specs/archive/spec-within-stream-loss-notes.md).
         Asserting the empty string, not just "falsy", is what would catch a
         regression to the literal string `"N/A"`."""
         payload = {"streams": [{"index": 1, "codec_type": "audio", "codec_name": "aac"}]}

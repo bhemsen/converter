@@ -67,7 +67,7 @@ The internal import graph is acyclic today and must stay that way:
    that attempt has no copy branch it could have taken instead (`jpg`, `gif`
    and `avif`'s `Profile.alpha_unsupported`,
    `converter.jobs.transparency_notes`,
-   `docs/specs/spec-within-stream-loss-notes.md`). A copy-based cheap attempt
+   `docs/specs/archive/spec-within-stream-loss-notes.md`). A copy-based cheap attempt
    (`webp`) earns no such note — that is the boundary's limit.
    That structural reading is a *prediction* from the mapping, so a run that
    is about to name a loss spends one further `ffprobe`, on the output this

@@ -94,7 +94,7 @@ flowchart TD
   probed properties let it name one, as an ordinary per-stream note bound by
   this rule instead (`jpg`/`gif`/`avif`'s transparency note,
   `converter.jobs.transparency_notes`,
-  `docs/specs/spec-within-stream-loss-notes.md`). `webp`'s copy-based cheap
+  `docs/specs/archive/spec-within-stream-loss-notes.md`). `webp`'s copy-based cheap
   attempt forces no such pipeline and so licenses neither kind of note on
   the success side; its `last_resort` notes are third-kind statements like
   any rung's. A `last_resort` attempt never sees a stream list at all, so

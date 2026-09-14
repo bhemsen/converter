@@ -121,7 +121,7 @@ flowchart TD
   codec-level verdict the engine infers about what the attempt did (`jpg`,
   `gif` and `avif`'s `Profile.alpha_unsupported`,
   `converter.jobs.transparency_notes`,
-  `docs/specs/spec-within-stream-loss-notes.md`). A copy-based cheap attempt
+  `docs/specs/archive/spec-within-stream-loss-notes.md`). A copy-based cheap attempt
   (`webp`) is excluded by construction and by test.
 - **What a partial profile owes in exchange.** Reading the declared rules instead
   of the option list is sound only while the rules and the mapping agree, so a

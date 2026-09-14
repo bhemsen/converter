@@ -13,7 +13,7 @@ stream's codec (issue #18). :func:`transparency_notes` is the one licensed
 widening of that boundary: a profile whose cheap attempt forces a single
 declared encoder unconditionally, for every input, may declare what that
 encoder cannot hold (``Profile.alpha_unsupported``,
-``docs/specs/spec-within-stream-loss-notes.md``) -- an encoder claim the
+``docs/specs/archive/spec-within-stream-loss-notes.md``) -- an encoder claim the
 profile itself makes, not a codec-level verdict this module infers about what
 the attempt did, and sound only because that attempt has no copy branch it
 could have taken instead. A copy-based cheap attempt (``webp``) declares no
