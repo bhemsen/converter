@@ -19,7 +19,7 @@ from dataclasses import replace
 from typing import TypeVar
 
 from converter.ffmpegtool import Stream
-from converter.profiles import LOSSY_CODECS, Attempt, Profile
+from converter.profiles import ALPHA_FREE_PIX_FMTS, LOSSY_CODECS, Attempt, Profile
 
 #: What a stream is counted under -- either its full :func:`_stream_key` or its
 #: bare type. :func:`_surplus` does the same arithmetic for both.
@@ -70,6 +70,24 @@ def _lossy_source_note(stream: Stream, profile: Profile) -> str:
     return (
         f"{kind} stream {stream.index} ({codec}) was already lossy before this file "
         f"reached {profile.label}; {profile.label} cannot restore what {codec} discarded"
+    )
+
+
+def _alpha_note(stream: Stream, profile: Profile) -> str:
+    """The within-stream transparency note (spec-within-stream-loss-notes.md, #105).
+
+    Reports no decision this conversion made either -- the stream is kept,
+    exactly as planned -- but unlike :func:`_lossy_source_note`'s reading of
+    the source's own history, this is a claim about the *target*:
+    ``profile.label``'s forced encoder cannot hold an alpha channel
+    (``profile.alpha_unsupported``), and the source's probed ``pix_fmt`` says
+    this stream might carry one.
+    """
+    kind = stream.codec_type or "unknown"
+    codec = stream.codec_name or "unknown"
+    return (
+        f"{kind} stream {stream.index} ({codec}) may carry transparency, "
+        f"which {profile.label} cannot hold"
     )
 
 
@@ -293,6 +311,46 @@ def _lossy_source_notes(profile: Profile, streams: Sequence[Stream]) -> tuple[st
     return tuple(notes)
 
 
+def transparency_notes(profile: Profile, streams: Sequence[Stream]) -> tuple[str, ...]:
+    """The within-stream alpha verdict (spec-within-stream-loss-notes.md, #105).
+
+    Source-measured and target-declared, never an output comparison: an alpha
+    PNG into GIF writes a file whose own ``pix_fmt`` reads ``bgra`` even though
+    the channel was opaque, so only the *source*'s probed ``pix_fmt`` -- weighed
+    against :data:`converter.profiles.ALPHA_FREE_PIX_FMTS` -- and the target's
+    own declaration (``profile.alpha_unsupported``) are ever consulted. Fires
+    only for a stream that actually survives this profile's structural rules;
+    a stream dropped for shape or type reasons already carries its own note
+    from :func:`_structural_drop` and needs no second one.
+
+    Called from two places that both hold a stream list -- ``batch.py``'s
+    cheap-attempt hook, after its ``if not predicted: return ()`` gate, so it
+    never grows the process count, and this module's own :func:`retries`. Like
+    :func:`_lossy_source_notes`, kept entirely outside :func:`_build_selective`'s
+    own ``notes`` list rather than folded into :func:`_decide_stream` -- see
+    that function's docstring for the hazard a fold risks for a profile with
+    ``explicit_streams`` set. No profile that declares ``alpha_unsupported``
+    also declares ``explicit_streams`` today, so that fold was never live
+    here either, but the separate pass keeps the invariant true by
+    construction rather than by coincidence of today's profile roster.
+
+    Recomputes survival with :func:`_structural_drop` alone, the same
+    technique :func:`_lossy_source_notes` uses, rather than reusing another
+    pass's own accounting.
+    """
+    if not profile.alpha_unsupported:
+        return ()
+    notes: list[str] = []
+    counts: dict[str, int] = {}
+    for stream in streams:
+        if _structural_drop(profile, stream, counts) is not None:
+            continue
+        counts[stream.codec_type] = counts.get(stream.codec_type, 0) + 1
+        if stream.pix_fmt not in ALPHA_FREE_PIX_FMTS:
+            notes.append(_alpha_note(stream, profile))
+    return tuple(notes)
+
+
 def first_attempt(profile: Profile) -> Attempt:
     """Rung 1 of degradation-ladder.md: *profile*'s own cheap attempt."""
     return _with_container_options(profile.cheap_attempt, profile)
@@ -303,9 +361,9 @@ def retries(profile: Profile, streams: Sequence[Stream]) -> list[Attempt]:
     attempts: list[Attempt] = []
     selective = _build_selective(profile, streams)
     if selective is not None:
-        advisories = _lossy_source_notes(profile, streams)
-        if advisories:
-            selective = replace(selective, notes=(*selective.notes, *advisories))
+        extra = (*_lossy_source_notes(profile, streams), *transparency_notes(profile, streams))
+        if extra:
+            selective = replace(selective, notes=(*selective.notes, *extra))
         attempts.append(_with_container_options(selective, profile))
     if profile.last_resort is not None:
         attempts.append(_with_container_options(profile.last_resort, profile))

@@ -1479,13 +1479,14 @@ class TestJpgProfile:
     def test_cheap_attempt_argv(self):
         assert JPG.cheap_attempt.options == ("-map", "0:v?", "-c:v", "mjpeg", "-q:v", "2")
 
-    def test_cheap_attempt_carries_the_transparency_standing_note(self):
+    def test_cheap_attempt_carries_the_reencode_standing_note(self):
         """Always wins for an ordinary image (the encoder is forced
         unconditionally), so this is the note that actually prints
-        (Verification / spec-image-formats.md's gate decision)."""
-        assert JPG.cheap_attempt.notes == (
-            "transparency is not carried by JPEG; the image was re-encoded",
-        )
+        (Verification / spec-image-formats.md's gate decision). Issue #105:
+        the transparency half that used to stand alongside it here is now
+        conditional (see TestAlphaUnsupportedField below) and lives outside
+        this static tuple."""
+        assert JPG.cheap_attempt.notes == ("the image was re-encoded",)
 
     def test_fallback_name_is_declared(self):
         """Forcing mjpeg re-encodes an already-JPEG source too (measured:
@@ -1497,7 +1498,9 @@ class TestJpgProfile:
         that never reaches the last resort -- a video with alpha into `--to
         jpg` lands here instead, so the loss has to be named again on the rung
         that actually wins for it (review finding on issue #34: a video's
-        transparency was otherwise dropped in complete silence)."""
+        transparency was otherwise dropped in complete silence). `last_resort`
+        never sees a stream list, so it keeps this as a static statement even
+        though the same claim is conditional everywhere else (issue #105)."""
         assert JPG.last_resort is not None
         assert "transparency is not carried by JPEG; the image was re-encoded" in (
             JPG.last_resort.notes
@@ -1601,17 +1604,16 @@ class TestGifProfile:
     def test_cheap_attempt_argv(self):
         assert GIF.cheap_attempt.options == ("-map", "0:v?", "-c:v", "gif")
 
-    def test_cheap_attempt_always_wins_so_its_standing_notes_always_print(self):
+    def test_cheap_attempt_always_wins_so_its_standing_note_always_prints(self):
         """Forces the encoder unconditionally, so this is the rung whose notes
-        actually print for the overwhelming majority of inputs. Both notes are
-        worded as format facts (issue #67 review) -- "GIF holds at most a
-        256-colour palette", not "colours are reduced", since an already-GIF,
+        actually print for the overwhelming majority of inputs. Worded as a
+        format fact (issue #67 review) -- "GIF holds at most a 256-colour
+        palette", not "colours are reduced", since an already-GIF,
         already-<=256-colour source re-encodes pixel-identically and a
-        "reduced" claim would be false for it."""
-        assert GIF.cheap_attempt.notes == (
-            "transparency is not carried by GIF",
-            "GIF holds at most a 256-colour palette",
-        )
+        "reduced" claim would be false for it. Issue #105: the transparency
+        line that used to stand alongside it is now conditional (see
+        TestAlphaUnsupportedField below)."""
+        assert GIF.cheap_attempt.notes == ("GIF holds at most a 256-colour palette",)
 
     def test_video_rule_copy_mask_is_its_own_codec(self):
         assert GIF.rules["video"].copy_mask == frozenset({"gif"})
@@ -1695,14 +1697,16 @@ class TestAvifProfile:
             "1",
         )
 
-    def test_cheap_attempt_always_wins_so_its_standing_notes_always_print(self):
+    def test_cheap_attempt_always_wins_so_its_standing_note_always_prints(self):
         """The one loss in this phase no failure path can hang a per-stream
         note on: the muxer keeps one frame no matter what is asked of it, even
-        on the cheap attempt for an AV1-in-MP4 source."""
-        assert AVIF.cheap_attempt.notes == (
-            "transparency is not carried by AVIF",
-            "a multi-frame source is reduced to a single frame",
-        )
+        on the cheap attempt for an AV1-in-MP4 source. Reworded (issue #101,
+        resolved at the spec's gate 2026-08-28) to read as a format fact true
+        of every input, not an action that happened to this one -- see
+        test_avif_frame_note_is_the_same_regardless_of_source_frame_count
+        below. Issue #105: the transparency line that used to stand alongside
+        it is now conditional (see TestAlphaUnsupportedField below)."""
+        assert AVIF.cheap_attempt.notes == ("AVIF holds a single frame",)
 
     def test_video_rule_copy_mask_is_its_own_codec(self):
         assert AVIF.rules["video"].copy_mask == frozenset({"av1"})
@@ -1724,9 +1728,24 @@ class TestAvifProfile:
         )
 
     def test_last_resort_repeats_the_standing_notes(self):
+        """`last_resort` never sees a stream list, so it keeps both statements
+        as static text even though the transparency one is conditional
+        everywhere else (issue #105)."""
         assert AVIF.last_resort is not None
         assert "transparency is not carried by AVIF" in AVIF.last_resort.notes
-        assert "a multi-frame source is reduced to a single frame" in AVIF.last_resort.notes
+        assert "AVIF holds a single frame" in AVIF.last_resort.notes
+
+    def test_frame_note_is_the_same_regardless_of_source_frame_count(self):
+        """Issue #101's acceptance criterion 3 is knowingly left unmet (spec
+        Decision log, 2026-08-28): the frame note is a format fact, not
+        derived from any per-file frame count -- there is no such field on
+        `Stream`, and no `-count_packets` anywhere in this project
+        (`tests/test_ffmpegtool.py` pins the probe argv without it). Nothing
+        in the pipeline could make the cheap-attempt and last-resort wordings
+        diverge by source; this proves so by construction."""
+        assert AVIF.cheap_attempt.notes == ("AVIF holds a single frame",)
+        assert AVIF.last_resort is not None
+        assert "AVIF holds a single frame" in AVIF.last_resort.notes
 
 
 @pytest.mark.parametrize("profile", PROFILES.values(), ids=lambda profile: profile.label)
@@ -2238,5 +2257,59 @@ class TestValueTypesAreFrozen:
             "explicit_streams",
             "partial_mapping",
             "rules",
+            "alpha_unsupported",
             "last_resort",
         }
+
+
+class TestAlphaUnsupportedField:
+    """`Profile.alpha_unsupported` (spec-within-stream-loss-notes.md, #105):
+    declared, not derived -- only a profile whose forced encoder genuinely
+    cannot hold an alpha channel says so, and only where that claim is sound
+    (the widened boundary's own test, below)."""
+
+    def test_only_jpg_gif_and_avif_declare_it(self):
+        declared = {profile.name for profile in PROFILES.values() if profile.alpha_unsupported}
+
+        assert declared == {"jpg", "gif", "avif"}
+
+    @pytest.mark.parametrize("profile", [PNG, TIFF, BMP, WEBP], ids=lambda p: p.name)
+    def test_the_alpha_preserving_targets_do_not_declare_it(self, profile):
+        """Measured (spec Prior decisions): png/tiff/bmp/webp keep alpha
+        (`rgba`, `rgba`, `bgra`, `yuva420p`) intact, so none of them may
+        declare the limitation."""
+        assert profile.alpha_unsupported is False
+
+    def test_webp_the_copy_based_cheap_attempt_does_not_declare_it(self):
+        """The guard on the widened boundary named explicitly in the spec's
+        Prior decisions: a copy-based cheap attempt asserts nothing about any
+        encoder's behaviour, so `webp` -- the one profile in this trio that
+        keeps a real `-c copy` -- must never declare this, unlike its
+        force-encoding siblings `gif` and `avif`."""
+        assert WEBP.cheap_attempt.options == ("-map", "0:v?", "-c", "copy")
+        assert WEBP.alpha_unsupported is False
+
+    @pytest.mark.parametrize("profile", [JPG, GIF, AVIF], ids=lambda p: p.name)
+    def test_jpg_gif_avif_force_a_single_encoder_unconditionally(self, profile):
+        """The boundary's own soundness condition: `alpha_unsupported` is only
+        ever declared alongside a `cheap_attempt` that forces its own encoder
+        for every input (`-c:v <encoder>`), never a copy-based one (`-c copy`
+        or `-c:v copy`) -- the shape `test_webp_...` above proves excludes
+        `webp`."""
+        assert profile.cheap_attempt.options[2] == "-c:v"
+        assert profile.cheap_attempt.options[3] != "copy"
+
+    @pytest.mark.parametrize("profile", [JPG, GIF, AVIF], ids=lambda p: p.name)
+    def test_none_of_the_three_also_declares_explicit_streams(self, profile):
+        """Trap 2's precondition, established rather than assumed
+        (spec-within-stream-loss-notes.md's own Decision log entry for it):
+        `jobs.transparency_notes` is kept outside `_build_selective`'s own
+        `notes` list -- like `_lossy_source_notes` -- specifically because a
+        profile with `explicit_streams=True` could see its
+        `if profile.explicit_streams and not notes: return None` short-circuit
+        resurrected by an unrelated note (`wav` is the case that trap names).
+        None of `jpg`/`gif`/`avif` sets `explicit_streams`, so that hazard
+        never actually applies to this phase's three targets -- checked here
+        so a future profile cannot combine the two flags without this test
+        catching it."""
+        assert profile.explicit_streams is False

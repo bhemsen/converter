@@ -79,6 +79,20 @@ class Profile:
     behind is named rather than reported as a plain success
     (``docs/design/degradation-ladder.md``).
 
+    ``alpha_unsupported`` says whether this profile's forced encoder cannot
+    hold an alpha channel. Declared, not derived, for the same reason the two
+    booleans above are -- and sound only under the same widened boundary a
+    profile whose ``cheap_attempt`` forces a single declared encoder
+    unconditionally: a copy-based cheap attempt (``webp``) asserts nothing
+    about any encoder's behaviour, so it must never declare this
+    (``docs/specs/spec-within-stream-loss-notes.md``, issue #105). A source
+    stream whose probed ``pix_fmt`` (``converter.ffmpegtool.Stream``) is not a
+    member of ``ALPHA_FREE_PIX_FMTS`` then earns the within-stream
+    transparency note wherever it survives this profile's rules -- the cheap
+    attempt and the selective rung alike
+    (``converter.jobs.transparency_notes``). ``False`` by default; only
+    ``jpg``, ``gif`` and ``avif`` declare it true.
+
     ``name`` is the registry key and the ``--to`` token (``"mp4"``); ``label``
     stays the display form ``--list-formats`` and progress bars print
     (``"MP4"``). ``description`` is the one-line explanation
@@ -94,6 +108,7 @@ class Profile:
     explicit_streams: bool
     partial_mapping: bool
     rules: dict[str, StreamRule]
+    alpha_unsupported: bool = False
     last_resort: Attempt | None = None
 
 
@@ -1243,10 +1258,16 @@ JPG = Profile(
         # unconditionally), so it is the only rung whose notes are ever
         # actually reported for the overwhelming majority of inputs. Retained
         # unconditionally -- see the module-level comment above this profile.
-        notes=("transparency is not carried by JPEG; the image was re-encoded",),
+        # The transparency half that used to stand alongside it (issue #67)
+        # moved off this static tuple -- it is now conditional on the
+        # source's measured pix_fmt (alpha_unsupported below,
+        # converter.jobs.transparency_notes, issue #105) and fires only when
+        # the source could actually carry alpha.
+        notes=("the image was re-encoded",),
     ),
     explicit_streams=False,
     partial_mapping=True,
+    alpha_unsupported=True,
     rules={
         "video": StreamRule(
             copy_mask=frozenset({"mjpeg"}),
@@ -1374,13 +1395,17 @@ GIF = Profile(
         # pixel-identically, measured, so "colours are reduced" would have
         # been a false claim of an action that did not happen for that file;
         # "holds at most" makes the same point as a limit instead).
-        notes=(
-            "transparency is not carried by GIF",
-            "GIF holds at most a 256-colour palette",
-        ),
+        # Issue #105: the transparency line that used to stand alongside the
+        # palette one moved off this static tuple -- it is now conditional on
+        # the source's measured pix_fmt (alpha_unsupported below,
+        # converter.jobs.transparency_notes). Every .gif source still fires
+        # it: ffmpeg's gif decoder reports bgra unconditionally, opaque or
+        # not, so the over-report is deliberate, not a regression.
+        notes=("GIF holds at most a 256-colour palette",),
     ),
     explicit_streams=False,
     partial_mapping=True,
+    alpha_unsupported=True,
     rules={
         "video": StreamRule(
             copy_mask=frozenset({"gif"}),
@@ -1456,14 +1481,24 @@ AVIF = Profile(
         # is ever actually named. Retained unconditionally -- issue #67, see
         # the module-level comment above JPG for why: both are a
         # within-stream loss no per-stream drop note can replace. Measured: a
-        # single-frame, alpha-less source still prints both notes.
-        notes=(
-            "transparency is not carried by AVIF",
-            "a multi-frame source is reduced to a single frame",
-        ),
+        # single-frame, alpha-less source still prints this note. Reworded
+        # (issue #101/#105) to read as a format fact true of every input,
+        # single-frame or not, rather than an action that happened to this
+        # file -- the gate declined `-count_packets` on every probe in the
+        # system for the sake of making it conditional
+        # (spec-within-stream-loss-notes.md's Decision log, 2026-08-28).
+        #
+        # The transparency line that used to stand alongside it is now
+        # conditional on the source's measured pix_fmt (alpha_unsupported
+        # below, converter.jobs.transparency_notes, issue #105); no AV1
+        # decode path in this build surfaces an alpha aux item for an AVIF
+        # source (it reports gbrp either way -- ALPHA_FREE_PIX_FMTS's own
+        # comment), so an already-AVIF source correctly suppresses the note.
+        notes=("AVIF holds a single frame",),
     ),
     explicit_streams=False,
     partial_mapping=True,
+    alpha_unsupported=True,
     rules={
         "video": StreamRule(
             copy_mask=frozenset({"av1"}),
@@ -1478,7 +1513,7 @@ AVIF = Profile(
         options=flags("-map 0:v:0 -c:v libaom-av1 -crf 30 -still-picture 1"),
         notes=(
             "transparency is not carried by AVIF",
-            "a multi-frame source is reduced to a single frame",
+            "AVIF holds a single frame",
             "non-video streams, and any video stream beyond the first, are not carried into AVIF",
         ),
     ),

@@ -373,3 +373,59 @@ New-Item -ItemType Directory -Force in
   parses absence the same way `codec_name`/`codec_tag` already do --
   `str(raw.get("pix_fmt", ""))` -- so a non-video stream's missing key reads
   as `""`, never the CSV writer's `"N/A"`, with no new branch needed.
+- 2026-09-14 (issue #105): Trap 1's hook placement, resolved as the issue's
+  own fallback reading rather than its literal one. Read literally ("append
+  after the `if not predicted: return ()` gate"), the note would never fire
+  for the spec's own headline case -- an alpha PNG into `jpg`, where nothing
+  is structurally dropped so `predicted` is empty and the function returns on
+  the early path. The real constraint is the *process count*: the note must
+  never become part of `predicted`, or it would route an alpha source with
+  nothing else wrong into `_confirm_against_output` for a probe it does not
+  need. Implemented as the issue's own suggested shape: `within =
+  engine.transparency_notes(...)` computed once, unconditionally, then
+  returned on *both* paths -- `return within` on the early return, `return
+  (*within, *_confirm_against_output(...))` on the other. Pinned by
+  `tests/test_batch.py::TestTransparencyNote`, including one test
+  (`test_alpha_note_survives_the_confirm_against_output_path`) built
+  specifically because every other test in that class takes the early-return
+  path and so cannot prove the note survives the *other* branch -- caught by
+  mutation-testing this hook before handing it to review, as instructed.
+- 2026-09-14 (issue #105): Trap 2 established, not assumed. The hazard
+  `_lossy_source_notes`'s docstring names is that folding a note into
+  `_build_selective`'s own `notes` list can flip
+  `if profile.explicit_streams and not notes: return None` for a profile that
+  sets `explicit_streams` (`wav` is the case on record). None of `jpg`, `gif`
+  or `avif` -- the only profiles this issue's field touches -- sets
+  `explicit_streams` (all three are blind, `-map 0:v?`, per
+  `docs/design/degradation-ladder.md`'s cheapest-first shape), so the hazard
+  cannot manifest for this issue's own targets; pinned by
+  `tests/test_profiles.py::TestAlphaUnsupportedField::
+  test_none_of_the_three_also_declares_explicit_streams` so a future profile
+  cannot combine the two flags unnoticed. The new `jobs.transparency_notes`
+  is still kept entirely outside `_build_selective`, appended in `retries`
+  exactly where `_lossy_source_notes` already is, rather than relying on
+  today's roster to keep it safe: `_build_selective` already decided
+  `None`-or-`Attempt` before either note-pass ever runs, so nothing appended
+  afterward can resurrect a rung that pass skipped, for any profile, present
+  or future -- safe by construction, not by the coincidence that no profile
+  happens to combine the two flags today.
+- 2026-09-14 (issue #105): `Profile.alpha_unsupported` is the new declared
+  field (default `False`); `converter.jobs.transparency_notes` is the new
+  engine entry point. The transparency note reads
+  `"{kind} stream {index} ({codec}) may carry transparency, which {label}
+  cannot hold"`, matching `_drop_note`/`_reencode_note`'s "name index, name
+  codec" shape. `avif`'s frame note is reworded to `"AVIF holds a single
+  frame"` in both its `cheap_attempt` and its `last_resort` tuple; its
+  `description` field is untouched, as scoped. `jpg`'s cheap-attempt standing
+  note narrows to `"the image was re-encoded"` and `gif`'s to `"GIF holds at
+  most a 256-colour palette"` -- both profiles' `last_resort` tuples keep the
+  old combined wording verbatim, since that rung never sees a stream list.
+  `tests/test_argv.py::test_a_codec_outside_the_copy_mask_produces_no_note`
+  and `::test_no_profile_invents_a_loss_for_a_source_it_fully_maps` are kept,
+  not deleted -- the latter's parametrisation now also carries the seven
+  image profiles, doubling as proof that `verify_success` itself grew no
+  opinion about `pix_fmt`. The module comment above `JPG` in `profiles.py`
+  (issue #67's "half two ... not fixed for any of them" finding) is left
+  as-is: it is adjacent prose about the same three profiles, not one of the
+  five carriers this issue's own Scope names, and #106 restates it alongside
+  those five.

@@ -8,8 +8,11 @@ from converter import batch, jobs
 from converter.batch import Outcome, Result, Task, convert_one, run_batch, summarise
 from converter.ffmpegtool import CommandResult, ProbeError, Stream, Tools
 from converter.profiles import (
+    AVIF,
     BMP,
     FLAC,
+    GIF,
+    JPG,
     MKV,
     MOV,
     MP3,
@@ -18,6 +21,7 @@ from converter.profiles import (
     TIFF,
     WAV,
     WEBM,
+    WEBP,
     Attempt,
     Profile,
     StreamRule,
@@ -466,6 +470,159 @@ class TestPartialCheapAttemptVerification:
         assert result.attempt == "selective"
         assert len(probes) == 1
         assert result.notes == ("video stream 0 (vp8) re-encoded to h264",)
+
+
+#: The three targets that declare `alpha_unsupported`, paired with a codec
+#: each one's copy mask accepts and its own target suffix.
+ALPHA_UNSUPPORTED_TARGETS = [(JPG, "mjpeg", ".jpg"), (GIF, "gif", ".gif"), (AVIF, "av1", ".avif")]
+
+
+class TestTransparencyNote:
+    """`batch._verify_cheap_attempt`'s hook for `jobs.transparency_notes`
+    (spec-within-stream-loss-notes.md, #105, Trap 1) -- exercised through the
+    full `convert_one` path so the process-count claim is proven end to end,
+    not just against the bare engine function (`test_argv.py`'s job)."""
+
+    @pytest.mark.parametrize(
+        "profile,codec,suffix", ALPHA_UNSUPPORTED_TARGETS, ids=["jpg", "gif", "avif"]
+    )
+    def test_alpha_source_fires_with_no_extra_probe(
+        self, tmp_path, fake_ffmpeg, monkeypatch, profile, codec, suffix
+    ):
+        """The headline QA case: an alpha PNG succeeds the cheap attempt
+        outright (nothing structurally dropped), so `verify_success` predicts
+        nothing -- the transparency note must still fire on that early-return
+        path, and the run must still cost exactly 1 ffmpeg + 1 ffprobe,
+        unchanged from before this issue (Prior decisions' measured
+        baseline: hooking the note into `verify_success` instead would send
+        this exact case into a second, unnecessary probe)."""
+        task = Task(tmp_path / "clip.png", tmp_path / "out" / f"clip{suffix}")
+        task.src.write_bytes(b"data")
+        task.dst.parent.mkdir(parents=True)
+        probes = spy_on_probe(monkeypatch, [Stream(0, "video", codec, pix_fmt="rgba")])
+
+        result = convert_one(profile, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert len(fake_ffmpeg.calls) == 1
+        assert probes == [task.src]
+        assert any("may carry transparency" in note for note in result.notes)
+
+    @pytest.mark.parametrize(
+        "profile,codec,suffix", ALPHA_UNSUPPORTED_TARGETS, ids=["jpg", "gif", "avif"]
+    )
+    def test_opaque_source_fires_no_note(self, tmp_path, fake_ffmpeg, profile, codec, suffix):
+        """The reported defect this issue fixes, proven end to end: an
+        ordinary opaque `yuvj420p` source must not be told its transparency
+        was not carried."""
+        task = Task(tmp_path / "clip.png", tmp_path / "out" / f"clip{suffix}")
+        task.src.write_bytes(b"data")
+        task.dst.parent.mkdir(parents=True)
+        fake_ffmpeg.streams = [Stream(0, "video", codec, pix_fmt="yuvj420p")]
+
+        result = convert_one(profile, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert not any("may carry transparency" in note for note in result.notes)
+
+    @pytest.mark.parametrize("profile", [PNG, TIFF, BMP, WEBP], ids=lambda p: p.name)
+    def test_alpha_preserving_targets_never_fire(self, tmp_path, fake_ffmpeg, profile):
+        """png/tiff/bmp/webp keep alpha and declare `alpha_unsupported=False`
+        -- `webp` doubles as the copy-based-cheap-attempt guard, since its
+        remux is a bare `-c copy`."""
+        task = Task(tmp_path / "clip.png", tmp_path / "out" / f"clip{profile.target_suffix}")
+        task.src.write_bytes(b"data")
+        task.dst.parent.mkdir(parents=True)
+        fake_ffmpeg.streams = [Stream(0, "video", "png", pix_fmt="rgba")]
+
+        result = convert_one(profile, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert result.notes == ()
+
+    def test_output_pix_fmt_is_never_consulted(self, tmp_path, fake_ffmpeg, monkeypatch):
+        """The GIF false-negative case (Prior decisions, measured): an alpha
+        PNG into GIF writes a file whose own `pix_fmt` reads `bgra` even
+        though the channel is opaque, so an output-side comparison would get
+        this exactly backwards. Nothing is structurally dropped here, so the
+        run never even reaches the output probe -- the note fires from the
+        source alone, and the deliberately misleading `output_streams` below
+        is never read (`probes` proves it: only the source path appears)."""
+        task = Task(tmp_path / "clip.png", tmp_path / "out" / "clip.gif")
+        task.src.write_bytes(b"data")
+        task.dst.parent.mkdir(parents=True)
+        probes = spy_on_probe(
+            monkeypatch,
+            [Stream(0, "video", "gif", pix_fmt="rgba")],
+            output_streams=[Stream(0, "video", "gif", pix_fmt="bgra")],
+            task=task,
+        )
+
+        result = convert_one(GIF, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert probes == [task.src]
+        assert any("may carry transparency" in note for note in result.notes)
+
+    def test_selective_rung_fires_end_to_end(self, tmp_path, fake_ffmpeg):
+        """Mirrors the QA gate's `twovid-src.mkv` shape through the whole
+        `convert_one` path: the cheap attempt fails (a second video stream
+        trips the image2 muxer), the failure-side probe builds the selective
+        rung directly from the stream list, and that rung's own notes --
+        already complete -- carry both the drop note and the alpha note with
+        no second probe (`probed` is already `True` by the time it wins, so
+        `_verify_cheap_attempt` is never called for it)."""
+        task = Task(tmp_path / "clip.mkv", tmp_path / "out" / "clip.jpg")
+        task.src.write_bytes(b"data")
+        task.dst.parent.mkdir(parents=True)
+        fake_ffmpeg.exit_codes = [1, 0]
+        fake_ffmpeg.streams = [
+            Stream(0, "video", "mjpeg", pix_fmt="rgba"),
+            Stream(1, "video", "h264", pix_fmt="yuv420p"),
+        ]
+
+        result = convert_one(JPG, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert result.attempt == "selective"
+        assert len(fake_ffmpeg.calls) == 2
+        assert result.notes == (
+            "video stream 1 (h264) dropped: JPG holds 1 video stream",
+            "video stream 0 (mjpeg) may carry transparency, which JPG cannot hold",
+        )
+
+    def test_alpha_note_survives_the_confirm_against_output_path(
+        self, tmp_path, fake_ffmpeg, monkeypatch
+    ):
+        """Trap 1's *other* return path: every test above takes the early
+        `if not predicted: return within` branch, since nothing else is
+        structurally dropped there. Here an unmapped audio stream gives
+        `verify_success` a real prediction, which routes through
+        `_confirm_against_output` -- proving `within` is still carried on
+        `return (*within, *_confirm_against_output(...))` and is not lost by
+        the branch that adds a second probe."""
+        task = Task(tmp_path / "clip.png", tmp_path / "out" / "clip.jpg")
+        task.src.write_bytes(b"data")
+        task.dst.parent.mkdir(parents=True)
+        probes = spy_on_probe(
+            monkeypatch,
+            [Stream(0, "video", "mjpeg", pix_fmt="rgba"), Stream(1, "audio", "aac")],
+            # The muxer put nothing extra back, so the predicted drop stands.
+            output_streams=[],
+            task=task,
+        )
+
+        result = convert_one(JPG, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert probes == [task.src, task.dst]
+        # The cheap attempt's own static note ("the image was re-encoded")
+        # leads, exactly as it always does; the two dynamic notes follow.
+        assert result.notes == (
+            "the image was re-encoded",
+            "video stream 0 (mjpeg) may carry transparency, which JPG cannot hold",
+            "audio stream 1 (aac) dropped: not supported by JPG",
+        )
 
 
 class TestAttachedPictureVerification:
