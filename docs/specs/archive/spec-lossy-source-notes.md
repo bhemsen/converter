@@ -506,22 +506,27 @@ New-Item -ItemType Directory -Force in
   listed **four** costs and warned that getting the list right matters --
   amendments to `docs/architecture.md` Key flow 1, to
   `docs/design/degradation-ladder.md`, and to the engine docstring (named there
-  as `jobs._unmapped_notes`, which no longer exists; its boundary now lives on
-  `jobs.verify_success`), plus narrowing the test that pins the current
-  boundary. And it would add an advisory to `--to png` from a JPEG -- correct,
-  but judged more noise than an image batch wants.
+  as `jobs._unmapped_notes`, which issue #83 split into `jobs._predict_unmapped`
+  and `jobs.verify_success`; the boundary paragraph this cost item means sits on
+  the former), plus narrowing the test that pins the current boundary. And it
+  would add an advisory to `--to png` from a JPEG -- correct, but judged more
+  noise than an image batch wants.
 - 2026-09-14 (issue #111): What the correction does **not** buy, stated because
   the first draft of this entry got it wrong and #111's review caught it. It is
   tempting to conclude that re-opening the confinement now needs "only a new
   decision, not new machinery". That is true only of the selective rung: adding
-  the three names to the frozenset is free, and would fire for a
-  multi-video-stream image source -- which is near-never. The case the gate
-  actually weighed is `--to png` **from a JPEG**, an ordinary single-frame image
-  that succeeds at rung 1 (measured), and reaching *that* still requires the
+  the three names to the frozenset needs no new machinery -- only the frozenset
+  and the two tests pinning the silence -- and would fire solely for a
+  multi-video-stream image source, which is near-never. The case option 2
+  weighed is `--to png` **from a JPEG**, an ordinary single-frame image that
+  succeeds at rung 1 (measured), and reaching *that* still requires the
   success-side widening and all four of its amendments, exactly as option 2
-  said. So: the confinement's reach on the selective rung is a free scope
-  decision; covering the motivating case is not. Both costs are named together
-  in `converter/jobs.py`'s comment.
+  said. So: the confinement's reach on the selective rung is a cheap scope
+  decision; covering what the widening was for is not. Both costs are named
+  together in `converter/jobs.py`'s comment. Note that "motivating case" is
+  this spec's own term for MP3 into FLAC (Decisions row, "It covers the
+  motivating case"), which `flac` already covers -- it is deliberately not
+  reused here for the widening's case, to avoid contradicting that row.
 - 2026-09-14 (issue #111): No behaviour changed. The test pinning the three
   targets' silence
   (`tests/test_batch.py::TestLossySourceAdvisory::test_the_other_lossless_targets_stay_silent`)

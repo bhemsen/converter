@@ -299,18 +299,22 @@ def _build_selective(profile: Profile, streams: Sequence[Stream]) -> Attempt | N
 #: gate listed four costs for that and warned that getting the list right
 #: matters: amendments to `docs/architecture.md` Key flow 1, to
 #: `docs/design/degradation-ladder.md`, and to the engine docstring (named
-#: there as `_unmapped_notes`, which no longer exists -- its boundary now lives
-#: on :func:`verify_success` below), plus narrowing the test that pins the
-#: current boundary. And it would add an advisory to `--to png` from a JPEG --
-#: correct, but judged more noise than an image batch wants. The accepted cost
-#: is the inconsistency the gate recorded: the same MP3 says something on the
-#: way to FLAC and nothing on the way to WAV.
+#: there as `_unmapped_notes`, which #83 split into :func:`_predict_unmapped`
+#: and :func:`verify_success`; the boundary paragraph the gate meant sits on
+#: the former), plus narrowing the test that pins the current boundary. And it
+#: would add an advisory to `--to png` from a JPEG -- correct, but judged more
+#: noise than an image batch wants. The accepted cost is the inconsistency the
+#: gate recorded: the same MP3 says something on the way to FLAC and nothing on
+#: the way to WAV.
 #:
-#: Note which half of that is free. Adding these three names to the frozenset
-#: would cost nothing, but would fire only for a multi-video-stream image
-#: source -- near-never. The gate's motivating case, `--to png` from a JPEG, is
+#: Note which half of that is cheap. Adding these three names to the frozenset
+#: needs no new machinery -- only this frozenset and the two tests pinning the
+#: silence -- but would fire solely for a multi-video-stream image source,
+#: which is near-never. The case option 2 weighed, `--to png` from a JPEG, is
 #: an ordinary single-frame image that succeeds at rung 1 (measured), so
-#: reaching *it* still needs the success-side widening above.
+#: reaching *it* still needs the success-side widening above. ("Motivating
+#: case" is this spec's term for MP3 into FLAC, which `flac` already covers --
+#: not for the widening's.)
 #:
 #: That success-side verification (:func:`verify_success`) is unchanged, still
 #: reading only the structural verdicts of `stream-decision.md`, never a codec
