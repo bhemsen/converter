@@ -480,18 +480,21 @@ New-Item -ItemType Directory -Force in
   since both concern that milestone's material. Issue #101 (the
   `jpg`/`gif`/`avif` within-stream notes still firing unconditionally and
   naming no stream, tracked against milestone 6) remains open by design.
-- 2026-09-14 (issue #111, after the fact): This spec's fact table and its scope
-  decision both rest on a premise that is false for three of the four targets
-  they apply it to. "`wav`, `png`, `tiff` and `bmp` always encode in their cheap
-  attempt, so a lossy source *succeeds* at rung 1" holds for `wav` alone. The
-  image2 muxer behind `png`, `tiff` and `bmp` refuses a second video stream, so
-  such a source fails their cheap attempt and **succeeds on the selective
-  rung** -- the rung this advisory lives on. Measured at phase 8's QA gate,
-  where a two-video-stream source into `png` landed there and printed the
-  per-stream drop note. The rows are left as written, because they record what
-  was believed when the gate decided; this entry is the correction, and
-  `converter/jobs.py`'s comment above `_LOSSY_SOURCE_ADVISORY_TARGETS` now
-  states it rather than repeating the premise.
+- 2026-09-14 (issue #111, after the fact): This spec's fact table, its scope
+  decision, and the 2026-08-27 Decision log row above all rest on a premise that
+  is false for three of the four targets they apply it to. "`wav`, `png`, `tiff`
+  and `bmp` always encode in their cheap attempt, so a lossy source *succeeds*
+  at rung 1" holds for `wav` alone. The image2 muxer behind `png`, `tiff` and
+  `bmp` refuses a second video stream, so such a source fails their cheap
+  attempt and **succeeds on the selective rung** -- the rung this advisory lives
+  on. Measured twice with ffmpeg 9.0: at phase 8's QA gate a two-video-stream
+  source into `png` landed there and printed the per-stream drop note, and
+  #111's review ran the two argvs directly -- the cheap attempt exits -22 with
+  "Cannot write more than one file with the same name", the selective rung exits
+  0. The rows are left as written, because they record what was believed when
+  the gate decided; this entry is the correction, and `converter/jobs.py`'s
+  comment above `_LOSSY_SOURCE_ADVISORY_TARGETS` now states it rather than
+  repeating the premise.
 - 2026-09-14 (issue #111): The conclusion is unchanged -- `flac` only -- but it
   now rests on the grounds the gate actually weighed rather than on a
   reachability claim that does not hold. "The scope decision, in full" already
@@ -500,10 +503,27 @@ New-Item -ItemType Directory -Force in
   amendments to `docs/architecture.md` Key flow 1 and
   `docs/design/degradation-ladder.md` plus a narrowed boundary test, and it
   would add an advisory to `--to png` from a JPEG -- correct, but judged more
-  noise than an image batch wants. What changes is the standing of the
-  confinement: it is a scope decision the gate made, not a structural
-  impossibility, so re-opening it needs only a new decision, not new machinery.
-  No behaviour changed, and the test that pins the three targets' silence
+  noise than an image batch wants.
+- 2026-09-14 (issue #111): What the correction does **not** buy, stated because
+  the first draft of this entry got it wrong and #111's review caught it. It is
+  tempting to conclude that re-opening the confinement now needs "only a new
+  decision, not new machinery". That is true only of the selective rung: adding
+  the three names to the frozenset is free, and would fire for a two-video-stream
+  image source -- which is near-never. The case the gate actually weighed is
+  `--to png` **from a JPEG**, an ordinary single-frame image that succeeds at
+  rung 1, and reaching *that* still requires the success-side widening and its
+  amendments, exactly as option 2 said. So: the confinement's reach on the
+  selective rung is a free scope decision; covering the motivating case is not.
+  Both costs are named together in `converter/jobs.py`'s comment.
+- 2026-09-14 (issue #111): No behaviour changed. The test pinning the three
+  targets' silence
   (`tests/test_batch.py::TestLossySourceAdvisory::test_the_other_lossless_targets_stay_silent`)
-  is unchanged apart from its rationale -- it was already written to assert the
-  silence directly rather than to lean on the rung being unreachable.
+  keeps its assertion untouched -- it was always written to assert the silence
+  directly rather than to lean on the rung being unreachable, which is why the
+  false premise never reached an assertion and no behaviour was ever wrong. A
+  sibling test was added for the shape that genuinely reaches the rung (two
+  video streams), asserting the drop note rather than a bare empty tuple so the
+  silence cannot pass by the rung having collapsed to nothing. The ffmpeg half
+  of the claim -- that image2 refuses the second stream -- stays unpinnable
+  here, since the suite stubs the subprocess boundary by constitutional
+  requirement.

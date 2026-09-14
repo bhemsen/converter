@@ -292,14 +292,20 @@ def _build_selective(profile: Profile, streams: Sequence[Stream]) -> Attempt | N
 #: The conclusion survives on the grounds the gate actually weighed
 #: (spec-lossy-source-notes.md, "The scope decision, in full"): widening to all
 #: five would still have to widen the success-side verification for `wav`,
-#: costing amendments to `docs/architecture.md` Key flow 1 and
-#: `docs/design/degradation-ladder.md`, and it would add an advisory to
-#: `--to png` from a JPEG -- correct, but judged more noise than an image batch
-#: wants. The accepted cost is the inconsistency the gate recorded: the same MP3
-#: says something on the way to FLAC and nothing on the way to WAV.
+#: costing amendments to `docs/architecture.md` Key flow 1, the engine
+#: docstring and `docs/design/degradation-ladder.md`, and it would add an
+#: advisory to `--to png` from a JPEG -- correct, but judged more noise than an
+#: image batch wants. The accepted cost is the inconsistency the gate recorded:
+#: the same MP3 says something on the way to FLAC and nothing on the way to WAV.
 #:
-#: :func:`verify_success` itself is
-#: unchanged, still reading only the structural verdicts of
+#: Note which half of that is free. Adding these three names to the frozenset
+#: would cost nothing, but would fire only for a two-video-stream image source
+#: -- near-never. The gate's motivating case, `--to png` from a JPEG, is an
+#: ordinary single-frame image that succeeds at rung 1, so reaching *it* still
+#: needs the success-side widening above.
+#:
+#: That success-side verification (:func:`verify_success`) is unchanged,
+#: still reading only the structural verdicts of
 #: `stream-decision.md`, never a codec (issue #18). The boundary around it
 #: widened since (spec-within-stream-loss-notes.md, #106): a profile whose
 #: cheap attempt forces a single declared encoder unconditionally may declare
