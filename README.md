@@ -214,8 +214,9 @@ note    Show.S01E02.mkv: subtitle stream 2 (hdmv_pgs_subtitle) dropped: bitmap s
   `.gif` source decodes as if it had an alpha channel whether or not it did —
   in both cases the tool would rather warn about a loss that might not have
   happened than stay silent about one that did. An already-AVIF source is
-  the one case handled the other way: its transparency, if it had any, was
-  already gone before this tool ever opened the file, so no note fires.
+  the one case handled the other way: ffmpeg reports the same pixel format
+  whether or not the file carried alpha, so the tool cannot tell and stays
+  silent here — the one place it under-reports rather than over-reports.
   GIF's 256-colour palette limit and AVIF's single-frame limit are unrelated
   to this and still state a format fact on every conversion regardless of
   the source, since counting colours or frames would cost a decode or an
