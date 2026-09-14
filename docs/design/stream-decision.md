@@ -69,7 +69,25 @@ flowchart TD
   names the stream and its codec, but what it reports is the source's own
   history, not this conversion's sacrifice, so it is not bound by this rule the
   way a degradation note is (`docs/constitution.md`'s degradation-note/advisory
-  distinction).
+  distinction). A **format-limit statement** is exempt on a third footing:
+  `jpg`'s "the image was re-encoded", GIF's "GIF holds at most a 256-colour
+  palette", "AVIF holds a single frame", and every `last_resort` note. None
+  names a stream index or a codec, and none is a per-stream verdict at all —
+  each states what the *target format* can hold, true of the profile for
+  every input regardless of what that particular input carried
+  (`docs/specs/archive/spec-stream-disposition.md` records this first, for
+  AVIF's notes). This is the shape the widened success-side boundary
+  licenses: a profile whose cheap attempt forces a single declared encoder
+  unconditionally, for every input, may declare what that encoder cannot
+  hold — as this format-wide statement where the claim is not about any one
+  stream, or, where the source's probed properties let it name one, as an
+  ordinary per-stream note bound by this rule instead (`jpg`/`gif`/`avif`'s
+  transparency note, `converter.jobs.transparency_notes`,
+  `docs/specs/spec-within-stream-loss-notes.md`). A `last_resort` attempt
+  never sees a stream list at all, so every note it carries — the
+  transparency clause included — is necessarily this third kind, not the
+  conditional per-stream one the cheap attempt and the selective rung can
+  produce.
 - **A re-encode that gives up nothing carries no note.** Decoding to a container's
   only codec is the definition of that target format, not a loss — WAV's PCM rule
   declares no note, MP4's `aac` and `h264` fallbacks do. Whether the note exists

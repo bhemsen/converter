@@ -114,6 +114,15 @@ flowchart TD
   container already holding as many of that type as it can — never a codec-level
   one: ffmpeg exited 0, so whatever the attempt did with a codec worked, and
   naming a re-encode that never ran would trade one dishonest report for another.
+  The boundary widens exactly once: a profile whose cheap attempt forces a
+  single declared encoder unconditionally, for every input, may declare what
+  that encoder cannot hold, because there is no copy branch that attempt could
+  have taken instead — an encoder claim the profile itself makes, not a
+  codec-level verdict this module infers about what the attempt did (`jpg`,
+  `gif` and `avif`'s `Profile.alpha_unsupported`,
+  `converter.jobs.transparency_notes`,
+  `docs/specs/spec-within-stream-loss-notes.md`). A copy-based cheap attempt
+  (`webp`) is excluded by construction and by test.
 - **What a partial profile owes in exchange.** Reading the declared rules instead
   of the option list is sound only while the rules and the mapping agree, so a
   profile that sets `partial_mapping` must satisfy the equality that soundness

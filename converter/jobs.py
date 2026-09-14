@@ -7,6 +7,18 @@ here. ``batch.py`` calls this module's entry points directly and never reads a
 profile's rules itself -- the boundary ``docs/architecture.md`` draws between
 "carries a profile" and "decides with one".
 
+:func:`verify_success`, the success-side verifier for a partial cheap attempt,
+reads only the *structural* verdicts of ``stream-decision.md`` -- never a
+stream's codec (issue #18). :func:`transparency_notes` is the one licensed
+widening of that boundary: a profile whose cheap attempt forces a single
+declared encoder unconditionally, for every input, may declare what that
+encoder cannot hold (``Profile.alpha_unsupported``,
+``docs/specs/spec-within-stream-loss-notes.md``) -- an encoder claim the
+profile itself makes, not a codec-level verdict this module infers about what
+the attempt did, and sound only because such a profile has no copy branch that
+could have avoided it. A copy-based cheap attempt (``webp``) declares no such
+field and earns no such note.
+
 See ``docs/design/degradation-ladder.md`` for the order of attempts this module
 builds, ``docs/design/stream-decision.md`` for how one stream's fate is decided
 inside the engine-built rung, and
@@ -265,8 +277,17 @@ def _build_selective(profile: Profile, streams: Sequence[Stream]) -> Attempt | N
 #: spec-lossy-source-notes.md, "Only flac carries the advisory"). The other
 #: four lossless targets (`wav`, `png`, `tiff`, `bmp`) always succeed their
 #: cheap attempt, so the only place they could carry a codec-level statement is
-#: the success-side verification -- deliberately, and unchanged, off limits to
-#: any codec claim (:func:`verify_success`, issue #18).
+#: the success-side verification -- and :func:`verify_success` itself is
+#: unchanged, still reading only the structural verdicts of
+#: `stream-decision.md`, never a codec (issue #18). The boundary around it
+#: widened since (spec-within-stream-loss-notes.md, #106): a profile whose
+#: cheap attempt forces a single declared encoder unconditionally may declare
+#: what that encoder cannot hold (`Profile.alpha_unsupported`,
+#: :func:`transparency_notes`) -- but none of these four does. `png`, `tiff`
+#: and `bmp` are lossless and preserve alpha (measured,
+#: spec-within-stream-loss-notes.md), and `wav` carries no video stream to
+#: lose it from. `jpg`, `gif` and `avif` are the only profiles that declare
+#: the field.
 _LOSSY_SOURCE_ADVISORY_TARGETS = frozenset({"flac"})
 
 

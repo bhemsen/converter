@@ -549,3 +549,37 @@ New-Item -ItemType Directory -Force in
   cost "named" its transparency loss for every already-AVIF file, which is
   now the one case that note deliberately suppresses (`gbrp`) -- reworded to
   scope that sentence to the frame loss alone.
+- 2026-09-14 (issue #106): Restated the widened success-side boundary in all
+  five carriers the Risks table names, verifying each by content rather than
+  by the stale line numbers the issue itself carried (#104 and #105 had
+  added roughly 340 lines since the spec was written): `docs/architecture.md`
+  Key flow 1, `docs/design/degradation-ladder.md`'s "verified, not assumed"
+  bullet, the `jobs` module docstring (a new paragraph -- the previous text
+  had no restatement to widen), the comment above
+  `converter/jobs.py`'s `_LOSSY_SOURCE_ADVISORY_TARGETS` (whose "off limits
+  to any codec claim" clause was the one clause this issue's own body
+  flagged as now false), and `docs/design/stream-decision.md`'s third
+  carve-out. Each restatement uses the issue's own wording -- "a profile
+  whose cheap attempt forces a single declared encoder unconditionally may
+  declare what that encoder cannot hold" -- and none says the note is
+  conditional on `last_resort` too or that the declaration "asserts nothing
+  about the encode": `stream-decision.md`'s new carve-out says the opposite
+  explicitly, that a `last_resort` note is *always* the unconditional,
+  format-limit kind, never the conditional per-stream kind the cheap attempt
+  and the selective rung can produce.
+- 2026-09-14 (issue #106): `README.md`'s stale bullet (the one beginning "JPG,
+  GIF and AVIF always state the format's structural limits, even when the
+  source had nothing to lose") described behaviour #105 already removed --
+  rewritten to state the conditional transparency note, both residual
+  over-reports (`pal8`, any `.gif` source) named as deliberate, the
+  already-AVIF suppression, and that GIF's palette limit, AVIF's frame limit
+  and every `last_resort` note remain unconditional. The `--list-formats`
+  block above it was re-run against the worktree and still matches byte for
+  byte -- #105 left every `description` field untouched, as scoped.
+- 2026-09-14 (issue #106): Confirmed, not merely trusted, that
+  `tests/test_argv.py::test_a_codec_outside_the_copy_mask_produces_no_note`
+  and `::test_no_profile_invents_a_loss_for_a_source_it_fully_maps` are
+  narrowed rather than deleted, and that the latter's parametrisation does
+  carry all seven image profiles (`MP4, WAV, MKV, MOV, WEBM, PNG, JPG, TIFF,
+  BMP, GIF, WEBP, AVIF`) alongside the two shipped ones -- issue #105's own
+  report of this was accurate.
