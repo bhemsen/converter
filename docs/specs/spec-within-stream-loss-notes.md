@@ -383,8 +383,9 @@ New-Item -ItemType Directory -Force in
   nothing else wrong into `_confirm_against_output` for a probe it does not
   need. Implemented as the issue's own suggested shape: `within =
   engine.transparency_notes(...)` computed once, unconditionally, then
-  returned on *both* paths -- `return within` on the early return, `return
-  (*within, *_confirm_against_output(...))` on the other. Pinned by
+  returned on *both* paths -- `return within` on the early return, the
+  confirmed drops plus `within` on the other (see the 2026-09-14 review-round
+  1 entry below for the final argument order). Pinned by
   `tests/test_batch.py::TestTransparencyNote`, including one test
   (`test_alpha_note_survives_the_confirm_against_output_path`) built
   specifically because every other test in that class takes the early-return
@@ -460,11 +461,15 @@ New-Item -ItemType Directory -Force in
   - The module comment above `JPG` in `profiles.py` (issue #67's "half two"
     finding) is updated, not left stale as first decided: it now says
     plainly that issue #105 closed the transparency third of "half two" for
-    all three profiles (naming index and codec, conditional on the source),
-    while the colour-count and frame-count thirds remain exactly as #67 left
-    them -- unconditional, index-less standing notes, `stream-decision.md`'s
-    format-limit carve-out. The comment sits directly above the three
-    profiles this issue rewrites, in a file this issue already edits
+    the two rungs that ever hold a stream list (naming index and codec,
+    conditional on the source), while `last_resort` keeps the old combined
+    wording verbatim on all three profiles (it never sees a stream list),
+    and the colour-count and frame-count thirds remain exactly as #67 left
+    them everywhere -- unconditional, index-less standing notes, recorded as
+    an accepted deviation from `stream-decision.md`'s "every note names
+    three things" rule rather than a carve-out that document grants yet
+    (that amendment is #106's job). The comment sits directly above the
+    three profiles this issue rewrites, in a file this issue already edits
     heavily; leaving it to state the opposite of what the code beneath it
     now does was a defect in this issue's own diff, not a restatement
     belonging to #106's five carriers (`README.md`, architecture, the ladder
@@ -479,3 +484,34 @@ New-Item -ItemType Directory -Force in
     `alpha_unsupported`, and all three declare a video-only rule set), but
     correct by construction rather than by coincidence of today's roster,
     pinned by `test_a_non_video_stream_kept_under_a_hypothetical_rule_earns_no_note`.
+- 2026-09-14 (issue #105, review round 2): the round-1 comment rewrite above
+  `JPG` in `profiles.py` replaced four false claims with two new ones of the
+  same class, plus left two neighbouring comments stale by the same PR's own
+  change -- a fresh reviewer given the diff caught what the previous
+  self-review pass missed. All comment-only, no code or test change needed;
+  the behaviour, tests and process-count contract were independently
+  confirmed correct by mutation-testing every changed branch in isolation.
+  - The comment claimed "the transparency line no longer stands in the notes
+    tuples below at all" -- false, it still stands in all three `last_resort`
+    tuples (the rung that never sees a stream list, deliberately excluded
+    from this issue's widening per the Outcome and the entries above).
+    Reworded to say the clause is gone from the *cheap attempt's* `notes`
+    tuple specifically, and that `last_resort` keeps it on purpose.
+  - The comment attributed the colour-count/frame-count residual to "the
+    format-limit statement carve-out `docs/design/stream-decision.md`
+    names" -- that document names no such carve-out; the term lives only in
+    this spec, and the file itself is #106's territory to amend, untouched
+    by this issue. Reworded to record the residual as an accepted deviation
+    from that document's existing "every note names three things" rule,
+    with the amendment left to #106 rather than claimed early. The same
+    misattribution in this log's own round-1 entry above is corrected too.
+  - Two neighbouring comments -- above JPG's and GIF's `last_resort` --
+    described the combined re-encode-plus-transparency wording there as
+    simply "the cheap attempt's own standing note[s]" repeated. False as of
+    this issue's own change: the cheap attempt's note narrowed to just the
+    re-encode half, so `last_resort`'s wording is no longer identical to
+    it, only descended from it. Both reworded to say so.
+  - Non-blocking: the spec's own round-1 entry above quoted the shipped
+    return statement as `(*within, *_confirm_against_output(...))`, the
+    order before the note-ordering fix that same round also made -- fixed to
+    point at this entry instead of repeating a since-reversed order.

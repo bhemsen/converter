@@ -1233,14 +1233,21 @@ PNG = Profile(
 #   `jobs._selective_transparency_notes` now decide, per stream, whether
 #   *this* file's transparency was actually at risk, naming the surviving
 #   stream's index and codec when it fires and staying silent for an
-#   ordinary opaque source -- the transparency line no longer stands in the
-#   notes tuples below at all. The colour-count and frame-count thirds stay
-#   exactly as #67 left them: counting distinct colours needs a decode pass,
-#   and naming a frame count would need `-count_packets`, which this issue's
-#   own gate measured and declined (spec-within-stream-loss-notes.md's
-#   Decision log) -- both remain unconditional, index-less standing notes,
-#   the *format-limit statement* carve-out `docs/design/stream-decision.md`
-#   names for exactly this shape.
+#   ordinary opaque source. That closes it for the two rungs that ever hold a
+#   stream list -- the transparency clause is gone from the cheap attempt's
+#   own `notes` tuple below on all three profiles. `last_resort`, which never
+#   sees a stream list, is deliberately left out of that widening and keeps
+#   its old combined wording verbatim (spec-within-stream-loss-notes.md's
+#   Outcome and Decision log) -- so the transparency clause is still visible
+#   below, on that one rung only. The colour-count and frame-count thirds
+#   stay exactly as #67 left them everywhere: counting distinct colours needs
+#   a decode pass, and naming a frame count would need `-count_packets`,
+#   which this issue's own gate measured and declined
+#   (spec-within-stream-loss-notes.md's Decision log) -- both remain
+#   unconditional, index-less standing notes. That spec records them as an
+#   accepted deviation from stream-decision.md's "every note names three
+#   things" rule rather than a carve-out that document itself grants yet --
+#   #106 is where stream-decision.md is amended to say so.
 #
 # Retiring the colour-count and frame-count notes outright, leaving that
 # within-stream loss unsaid entirely, would violate docs/constitution.md's
@@ -1283,10 +1290,11 @@ JPG = Profile(
     last_resort=Attempt(
         label="single-frame",
         options=flags("-map 0:v:0 -frames:v 1 -c:v mjpeg -q:v 2"),
-        # Carries the cheap attempt's own transparency note too: this rung
-        # re-encodes just as the cheap attempt does, and the cheap attempt's
-        # standing note only actually prints for a source that never reaches
-        # here.
+        # Carries the old combined re-encode-plus-transparency wording that
+        # used to stand on the cheap attempt too, before issue #105 made the
+        # transparency half conditional there: this rung re-encodes just as
+        # the cheap attempt does, but never sees a stream list to compute
+        # that conditional verdict from, so it keeps the static statement.
         notes=(
             "only the first frame was kept; JPEG cannot hold more than one image",
             "transparency is not carried by JPEG; the image was re-encoded",
@@ -1425,10 +1433,13 @@ GIF = Profile(
         label="re-encode",
         options=flags("-map 0:v:0 -c:v gif"),
         notes=(
-            # Repeats the cheap attempt's own standing notes: this rung is only
-            # reached when that attempt failed, so its notes never printed --
-            # the same reasoning JPG's last_resort carries its transparency
-            # note for.
+            # The palette line repeats the cheap attempt's own standing note
+            # (this rung is only reached when that attempt failed, so its
+            # note never printed). The transparency line is different: issue
+            # #105 made it conditional on the cheap attempt, computed from a
+            # stream list this index-named rung never has, so it keeps the
+            # old static wording here instead -- the same reasoning JPG's
+            # last_resort keeps its old combined wording for.
             "transparency is not carried by GIF",
             "GIF holds at most a 256-colour palette",
             "non-video streams, and any video stream beyond the first, are not carried into GIF",
