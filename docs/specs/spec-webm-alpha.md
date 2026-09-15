@@ -125,10 +125,17 @@ Two consequences follow, and they are the shape of the whole phase:
       and loses it in silence — the phase's second defect, and the only one that
       is a live constitution breach rather than a failure.
 - [ ] An **opaque paletted** source still converts, now at 4:2:0 instead of
-      `gbrp`, and **the reduction is named**. Accepted at the gate as the cost of
-      firing for every `pal8`, since `pix_fmt` cannot tell the two apart.
+      `gbrp`, and **the reduction is named by the existing re-encode note**
+      ("re-encoded to vp9"), the same note every other fallback in this
+      registry already carries — not by the new depth note (#117), which
+      fires for bit depth only and does not fire for `pal8`, an 8-bit format
+      (Decision log, 2026-09-15). Accepted at the gate as the cost of firing
+      the *override* for every `pal8`, since `pix_fmt` cannot tell a
+      transparent palette from an opaque one.
 - [ ] A **>8-bit alpha** source keeps its alpha at 8-bit, and **the depth
-      truncation is named** by the same note.
+      truncation is named** by a dedicated note that covers depth only
+      (Decision log, 2026-09-15) — never chroma, which the opaque-paletted
+      bullet above already covers by the existing re-encode note.
 - [ ] A **10-bit** source into `webm` still produces 10-bit output
       (`yuv420p10le` in, `yuv420p10le` out), and an opaque high-depth source
       still reaches `gbrp12le`.
@@ -153,9 +160,12 @@ Two consequences follow, and they are the shape of the whole phase:
 - `converter/jobs.py`: the mechanism that appends `-pix_fmt:v:{n}` from that
   declaration when the stream takes the fallback branch and its `pix_fmt` is not
   alpha-free, for both rungs.
-- The **degradation note** for what the forced `yuva420p` reduces — bit depth and
-  chroma resolution, one note covering both (Prior decisions). This is the
-  phase's only new note machinery.
+- The **degradation note** for what the forced `yuva420p` reduces — **bit depth
+  only** (Decision log, 2026-09-15, resolving this spec's own contradiction).
+  Chroma resolution is never named by it: every fallback in this registry
+  subsamples and none says so specifically, so the existing re-encode note
+  already carries that half, consistently with the other sixteen profiles.
+  This is the phase's only new note machinery.
 - `docs/design/stream-decision.md` and `docs/design/degradation-ladder.md`: the
   node and the rung description for a source-dependent option.
 - `docs/architecture.md` Key flow 2, whose per-stream match is where the new
@@ -242,7 +252,7 @@ Two consequences follow, and they are the shape of the whole phase:
 | **A >8-bit alpha source gets `yuva420p`**: alpha kept, depth truncated to 8-bit, and the truncation **named** | Resolved at the gate, 2026-09-15. The alternative keeps both but needs `-strict experimental`, whose output ffmpeg itself calls "not widely supported" — shipping files some players cannot read is a worse cost than a depth reduction, and naming a loss is what this tool is for. The note is new machinery; see the coupling row below | 2026-09-15 |
 | **The pixel format is a declared scalar on the rule**; `converter/jobs.py` appends `-pix_fmt:v:{n}` when the stream takes the **fallback** branch *and* its `pix_fmt` is not in `ALPHA_FREE_PIX_FMTS` | Resolved at the gate, 2026-09-15. House style: every profile-declares-a-fact case in the tree is a scalar the engine reads (`partial_mapping`, `explicit_streams`, `alpha_unsupported`, `stream_limit`, `fallback_name`, `drop_reason`). A second options tuple would be the first of its kind. The engine contributes the flag, never the value, so `jobs.py` holds no format-specific fact | 2026-09-15 |
 | **The override fires for every `pal8`** | Resolved at the gate, 2026-09-15. It fixes a measured silent transparency loss — a live breach of "never report success for a conversion that silently dropped something" — and `pix_fmt` cannot tell a transparent palette from an opaque one, so the undecidable case errs toward the non-silent direction, exactly as phase 8 chose for `pal8`. The accepted cost is that opaque paletted sources move from `gbrp` (4:4:4) to 4:2:0 | 2026-09-15 |
-| **One note covers both losses the forced `yuva420p` causes** | The two decisions above land on the same pixel format and each gives up something the source had: bit depth (a >8-bit source) and chroma resolution (an opaque paletted source, visibly so at ≤256 colours). Both are the same shape — *this conversion reduced the stream so its alpha could be carried* — so they are one degradation note, not two, and its wording must cover both axes. This is the phase's one piece of genuinely new note machinery | 2026-09-15 |
+| **The new note covers bit depth only, never chroma** — corrected from an earlier "one note covers both losses" row that contradicted this spec's own Verification section | Resolved by the orchestrator at dispatch, 2026-09-15 (issue #117's body), on consistency grounds: every fallback in this registry subsamples and none names it specifically, so folding chroma into a new note only for the alpha case would be inconsistent with the other sixteen profiles. The opaque-paletted source's real cost (`gbrp` 4:4:4 -> 4:2:0) is carried by the existing re-encode note instead, exactly like every other fallback. See the Decision log entry below for the contradiction this replaces | 2026-09-15 |
 
 ### The three decisions, as resolved at the gate
 
@@ -343,8 +353,10 @@ Measured both ways:
   Keeps both properties; inherits decision 1's experimental-flag cost.
 
 **Resolved: fire for every `pal8`** — the first option. The silent-loss rule
-outranks a quality regression that is itself nameable, and the reduction note
-above covers it.
+outranks a quality regression that is itself nameable, and the existing
+re-encode note covers it (not the new depth-only note — Decision log,
+2026-09-15, corrected from an earlier version of this sentence written
+before that note's scope was resolved).
 
 With the combination resolved, `docs/design/stream-decision.md` gains the node that
 describes a source-dependent option and `docs/design/degradation-ladder.md`
@@ -378,9 +390,12 @@ never encoder behaviour):
 - [ ] A test that the other sixteen profiles' argv is unchanged by this phase,
       for both an alpha and an alpha-free source.
 - [ ] A test that the ffprobe process count per conversion is unchanged.
-- [ ] A test that the reduction note fires for a **>8-bit alpha** source (depth)
-      and for an **opaque paletted** source (chroma), and **not** for an ordinary
-      8-bit RGBA source, which gives up neither.
+- [ ] A test that the reduction note fires for a **>8-bit alpha** source (depth
+      only — corrected from an earlier draft of this line, which wrongly
+      expected the same note for an opaque paletted source too; that source's
+      chroma loss is carried by the existing re-encode note instead, Decision
+      log 2026-09-15) and **not** for an ordinary 8-bit RGBA source or a
+      `pal8` source, neither of which loses depth.
 - [ ] Each branch proven non-vacuous: inverting its condition must fail a test.
 
 Human milestone-QA gate. `$FF`/`$FP` are the absolute paths from *This machine*.
@@ -539,3 +554,40 @@ trusting it (`0x7F7C`, not `0xFFFF`).
   `StreamRule.alpha_pix_fmt`, the value declared on `webm`'s video rule, and a
   comment on `WEBM.last_resort` recording this choice for #117 to implement
   against.
+- 2026-09-15 (issue #117): The Prior-decisions row "One note covers both
+  losses the forced `yuva420p` causes" contradicted this spec's own
+  Verification section. That row said the note covers depth *and* chroma,
+  reasoning that both are "the same shape" (this conversion reduced the
+  stream so its alpha could be carried); but the Verification section already
+  required the note **not** to fire for an 8-bit RGBA source, "which gives up
+  neither" — and an 8-bit RGBA source is 4:4:4 while the forced `yuva420p` is
+  4:2:0, so it *does* give up chroma. The two statements cannot both hold.
+  **Resolved by the orchestrator at dispatch, on consistency grounds**: the
+  note covers **bit depth only**. Chroma subsampling is left to the existing
+  re-encode note, because every fallback in this registry subsamples its
+  output and none of them names that specifically — carving out a dedicated
+  chroma note only for the alpha case would make `webm` inconsistent with the
+  other sixteen profiles for no offsetting benefit. The Prior-decisions row,
+  the two Outcome bullets (the opaque-paletted one and the >8-bit-alpha one),
+  the Scope bullet naming the note, and the Verification bullet pinning its
+  firing conditions were all corrected in the same pass so the spec no longer
+  contradicts itself.
+- 2026-09-15 (issue #117): Investigated whether the depth note is exposed to
+  the rung-resurrection trap `converter.jobs._lossy_source_notes`'s docstring
+  documents — folding a note into `_build_selective`'s own `notes` list can
+  flip `if profile.explicit_streams and not notes: return None` and
+  resurrect a rung the ladder deliberately never builds (`wav` is the case on
+  record). **Finding: the trap does not apply to any profile shipped today**
+  — `StreamRule.alpha_pix_fmt` is declared only on `webm`'s video rule, and
+  `webm` sets `explicit_streams=False`, so `_build_selective`'s short-circuit
+  can never trigger for it regardless of the depth note's presence. But
+  nothing stops a future profile from declaring both `alpha_pix_fmt` and
+  `explicit_streams=True` at once, at which point folding the note into the
+  per-stream plan would silently resurrect that profile's selective rung the
+  same way an in-line lossy-source note would have for `wav`. **Decision:
+  compute the depth note as its own pass (`_alpha_depth_notes`), appended in
+  `retries()` exactly like `_lossy_source_notes` and
+  `_selective_transparency_notes`**, so the invariant holds by construction
+  for any future profile rather than by coincidence of today's roster — the
+  same reasoning `_selective_transparency_notes`'s own docstring already
+  applies to its sibling note.

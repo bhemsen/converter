@@ -31,7 +31,13 @@ from dataclasses import replace
 from typing import TypeVar
 
 from converter.ffmpegtool import Stream
-from converter.profiles import ALPHA_FREE_PIX_FMTS, LOSSY_CODECS, Attempt, Profile
+from converter.profiles import (
+    ALPHA_FREE_PIX_FMTS,
+    LOSSY_CODECS,
+    SHALLOW_ALPHA_PIX_FMTS,
+    Attempt,
+    Profile,
+)
 
 #: What a stream is counted under -- either its full :func:`_stream_key` or its
 #: bare type. :func:`_surplus` does the same arithmetic for both.
@@ -100,6 +106,26 @@ def _alpha_note(stream: Stream, profile: Profile) -> str:
     return (
         f"{kind} stream {stream.index} ({codec}) may carry transparency, "
         f"which {profile.label} cannot hold"
+    )
+
+
+def _alpha_depth_note(stream: Stream, profile: Profile) -> str:
+    """The alpha bit-depth note (spec-webm-alpha.md, #117).
+
+    Fires only for the *depth* the profile's forced ``alpha_pix_fmt`` gives up
+    -- chroma subsampling is never named here. Every fallback in this registry
+    subsamples and none says so specifically; :func:`_reencode_note`'s plain
+    "re-encoded to vp9" already carries that half, so naming it again only for
+    the alpha case would be inconsistent with the other sixteen profiles
+    (spec-webm-alpha.md's Decision log, resolving the spec's own
+    contradiction). An opaque paletted source's move from `gbrp` to a
+    subsampled format is therefore carried by :func:`_reencode_note` alone.
+    """
+    kind = stream.codec_type or "unknown"
+    codec = stream.codec_name or "unknown"
+    return (
+        f"{kind} stream {stream.index} ({codec}) alpha channel bit depth "
+        f"reduced to 8 bits to fit {profile.label}"
     )
 
 
@@ -238,6 +264,11 @@ def _decide_stream(
         note = None
     elif rule.fallback_options is not None:
         codecs = list(_substitute_position(rule.fallback_options, position))
+        if rule.alpha_pix_fmt is not None and stream.pix_fmt not in ALPHA_FREE_PIX_FMTS:
+            # Per-stream form (":v:{n}"), the same way the rest of this rule's
+            # options carry the position -- a bare "-pix_fmt" would apply to
+            # every video output stream, not just this one (spec-webm-alpha.md).
+            codecs += list(_substitute_position(("-pix_fmt:v:{n}", rule.alpha_pix_fmt), position))
         note = _reencode_note(stream, rule.fallback_name) if rule.fallback_name else None
     else:
         reason = rule.drop_reason or f"not supported by {profile.label}"
@@ -457,6 +488,93 @@ def _selective_transparency_notes(profile: Profile, streams: Sequence[Stream]) -
     return _alpha_notes(profile, streams, exclude_copies=True)
 
 
+def _alpha_depth_notes(profile: Profile, streams: Sequence[Stream]) -> tuple[str, ...]:
+    """The selective rung's alpha bit-depth verdict (spec-webm-alpha.md, #117).
+
+    Kept entirely outside :func:`_build_selective`'s own ``notes`` list, for
+    the same rung-resurrection reason :func:`_lossy_source_notes` documents:
+    folding a note into that list's own ``notes`` risks flipping
+    ``if profile.explicit_streams and not notes: return None`` for a future
+    profile that both declares ``StreamRule.alpha_pix_fmt`` and sets
+    ``explicit_streams`` -- no shipped profile does (only `webm`'s video rule
+    declares the field, and `webm` sets ``explicit_streams=False``), but
+    appending here keeps that true by construction rather than by coincidence
+    of today's roster, exactly the reasoning
+    :func:`_selective_transparency_notes` already applies to its own note.
+
+    Recomputes which streams took the fallback branch with the same technique
+    :func:`_lossy_source_notes` uses -- :func:`_structural_drop` for survival,
+    then the matched rule's own ``copy_mask``/``fallback_options`` for whether
+    the stream was re-encoded -- rather than reusing :func:`_build_selective`'s
+    own accounting.
+    """
+    notes: list[str] = []
+    counts: dict[str, int] = {}
+    for stream in streams:
+        if _structural_drop(profile, stream, counts) is not None:
+            continue
+        counts[stream.codec_type] = counts.get(stream.codec_type, 0) + 1
+        if stream.codec_type != "video":
+            continue
+        rule = profile.rules[_rule_key(profile, stream)]
+        if rule.alpha_pix_fmt is None:
+            continue
+        took_fallback = (
+            stream.codec_name not in rule.copy_mask and rule.fallback_options is not None
+        )
+        if not took_fallback:
+            continue
+        if stream.pix_fmt in ALPHA_FREE_PIX_FMTS or stream.pix_fmt in SHALLOW_ALPHA_PIX_FMTS:
+            continue
+        notes.append(_alpha_depth_note(stream, profile))
+    return tuple(notes)
+
+
+def _first_video_pix_fmt(streams: Sequence[Stream]) -> str | None:
+    """The probed ``pix_fmt`` of the first video stream in *streams*, or
+    ``None`` when the source carries none.
+
+    What a stream-independent ``last_resort``'s own ``-map 0:v:0?`` selector
+    actually reaches -- the only video stream such an attempt can ever map,
+    regardless of how many the source carries (spec-webm-alpha.md).
+    """
+    for stream in streams:
+        if stream.codec_type == "video":
+            return stream.pix_fmt
+    return None
+
+
+def _with_last_resort_alpha_override(
+    last_resort: Attempt, profile: Profile, streams: Sequence[Stream]
+) -> Attempt:
+    """Apply #117's pixel-format override to a stream-independent *last_resort*.
+
+    ``last_resort`` is not built from ``StreamRule``s and sees no per-stream
+    plan, so it cannot reuse :func:`_decide_stream`'s per-stream mechanism --
+    but the same source-dependent condition still applies: an unconditional
+    override would silently truncate a 10-bit source that reaches this rung
+    (spec-webm-alpha.md's Prior decisions). The value is reached by
+    cross-referencing the profile's own ``"video"`` rule, exactly as
+    ``WEBM.last_resort``'s comment records (issue #116's Decision log) --
+    guarding both the dict lookup and the attribute access, since five
+    profiles with a ``last_resort`` declare no ``"video"`` rule at all.
+
+    Global and index-less (``-pix_fmt``, not ``-pix_fmt:v:{n}``): a
+    stream-independent attempt names no output position to substitute into.
+
+    Carries no depth-reduction note of its own -- ``last_resort`` sees no
+    stream list to name an index or codec from, and per Prior decisions it is
+    unreachable for any source this phase can construct once the selective
+    rung is fixed, so it stays pinned by argv test alone.
+    """
+    video_rule = profile.rules.get("video")
+    alpha_pix_fmt = video_rule.alpha_pix_fmt if video_rule is not None else None
+    pix_fmt = _first_video_pix_fmt(streams)
+    if alpha_pix_fmt is None or pix_fmt is None or pix_fmt in ALPHA_FREE_PIX_FMTS:
+        return last_resort
+    return replace(last_resort, options=(*last_resort.options, "-pix_fmt", alpha_pix_fmt))
+
+
 def first_attempt(profile: Profile) -> Attempt:
     """Rung 1 of degradation-ladder.md: *profile*'s own cheap attempt."""
     return _with_container_options(profile.cheap_attempt, profile)
@@ -470,12 +588,14 @@ def retries(profile: Profile, streams: Sequence[Stream]) -> list[Attempt]:
         extra = (
             *_lossy_source_notes(profile, streams),
             *_selective_transparency_notes(profile, streams),
+            *_alpha_depth_notes(profile, streams),
         )
         if extra:
             selective = replace(selective, notes=(*selective.notes, *extra))
         attempts.append(_with_container_options(selective, profile))
     if profile.last_resort is not None:
-        attempts.append(_with_container_options(profile.last_resort, profile))
+        last_resort = _with_last_resort_alpha_override(profile.last_resort, profile, streams)
+        attempts.append(_with_container_options(last_resort, profile))
     return attempts
 
 

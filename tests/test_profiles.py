@@ -26,6 +26,7 @@ from converter.profiles import (
     OPUS,
     PNG,
     PROFILES,
+    SHALLOW_ALPHA_PIX_FMTS,
     SOURCE_SUFFIXES,
     TIFF,
     WAV,
@@ -2036,6 +2037,44 @@ class TestAlphaFreePixFmts:
         coercion; pin the shape too."""
         assert isinstance(ALPHA_FREE_PIX_FMTS, frozenset)
         assert all(isinstance(name, str) for name in ALPHA_FREE_PIX_FMTS)
+
+
+class TestShallowAlphaPixFmts:
+    """`SHALLOW_ALPHA_PIX_FMTS` (spec-webm-alpha.md, issue #117): the curated,
+    *generated* roster `converter.jobs._alpha_depth_notes` checks a source
+    stream's probed `pix_fmt` against before naming a bit-depth reduction.
+    Pinned as a literal for the same reason `ALPHA_FREE_PIX_FMTS` is -- this
+    class must never invoke ffprobe.
+    """
+
+    def test_pinned_count_is_13(self):
+        """Measured against ffmpeg 9.0: 67 pixel formats report
+        `flags.alpha == 1` and `flags.hwaccel == 0`; of those, 13 have every
+        component at 8 bits or fewer. A count drift here means the roster was
+        regenerated against a different ffmpeg build -- see the constant's own
+        docstring for the regeneration command."""
+        assert len(SHALLOW_ALPHA_PIX_FMTS) == 13
+
+    def test_includes_the_ordinary_8bit_alpha_formats(self):
+        """The common 8-bit alpha-capable formats the spec's fact table
+        names: an ordinary RGBA/BGRA source, WebM's own forced `yuva420p`,
+        and `pal8` -- whose real cost is chroma, not depth (Decision log)."""
+        assert {"rgba", "bgra", "yuva420p", "ya8", "gbrap", "pal8"} <= SHALLOW_ALPHA_PIX_FMTS
+
+    def test_excludes_every_format_deeper_than_8_bits(self):
+        """The formats decision 1's own measurement names as needing the
+        depth note -- a false inclusion here would silence a real
+        truncation, the direction the constitution forbids."""
+        assert SHALLOW_ALPHA_PIX_FMTS.isdisjoint(
+            {"rgba64be", "gbrap10le", "gbrap12le", "yuva444p12le", "yuva420p10le"}
+        )
+
+    def test_is_a_non_empty_frozenset_of_strings(self):
+        """A set could satisfy every test above by being some other
+        collection type or containing the right names by accident of type
+        coercion; pin the shape too."""
+        assert isinstance(SHALLOW_ALPHA_PIX_FMTS, frozenset)
+        assert all(isinstance(name, str) for name in SHALLOW_ALPHA_PIX_FMTS)
 
 
 def lossless_target_names(registry: dict[str, Profile]) -> set[str]:

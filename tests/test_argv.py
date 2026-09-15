@@ -1313,7 +1313,9 @@ class TestWebmRetries:
         assert selective.notes == ()
 
     def test_selective_reencodes_video_webm_cannot_hold(self):
-        streams = [Stream(0, "video", "h264"), Stream(1, "audio", "opus")]
+        # pix_fmt is alpha-free: this test is about the codec fallback, not
+        # #117's alpha override, which gets its own test class below.
+        streams = [Stream(0, "video", "h264", pix_fmt="yuv420p"), Stream(1, "audio", "opus")]
 
         selective = jobs.retries(WEBM, streams)[0]
 
@@ -1359,7 +1361,12 @@ class TestWebmRetries:
         reaches the ladder if some other stream also failed the cheap
         attempt -- but the selective rung still has to account for it, and
         does, the same way MP4's does."""
-        streams = [Stream(0, "video", "h264"), Stream(1, "attachment", "unknown")]
+        # pix_fmt is alpha-free: this test is about the attachment drop, not
+        # #117's alpha override.
+        streams = [
+            Stream(0, "video", "h264", pix_fmt="yuv420p"),
+            Stream(1, "attachment", "unknown"),
+        ]
 
         selective = jobs.retries(WEBM, streams)[0]
 
@@ -1380,7 +1387,9 @@ class TestWebmDegradationNotes:
     profile introduces, each pinning the exact note."""
 
     def test_video_reencode_note_is_exact(self):
-        streams = [Stream(0, "video", "h264"), Stream(1, "audio", "opus")]
+        # pix_fmt is alpha-free: this test is about the plain re-encode note,
+        # not #117's alpha depth note (its own test class below).
+        streams = [Stream(0, "video", "h264", pix_fmt="yuv420p"), Stream(1, "audio", "opus")]
 
         selective = jobs.retries(WEBM, streams)[0]
 
@@ -1452,18 +1461,20 @@ class TestWebmDegradationNotes:
         )
 
 
-@pytest.mark.parametrize("profile", PROFILES.values(), ids=lambda p: p.name)
+@pytest.mark.parametrize(
+    "profile", [p for p in PROFILES.values() if p.name != "webm"], ids=lambda p: p.name
+)
 class TestAlphaPixFmtDeclarationLeavesArgvUnchanged:
-    """Acceptance, issue #116, spec-webm-alpha.md: this issue only declares
+    """Acceptance, issue #116, narrowed by #117 (spec-webm-alpha.md,
+    Verification: "the other sixteen"). Issue #116 only declared
     `StreamRule.alpha_pix_fmt` (`webm`'s video rule, to `"yuva420p"`); #117 is
-    what teaches `converter/jobs.py` to read it. No argv anywhere in the
-    registry may change while the value is still unread, so this asserts the
-    same invariant across every shipped profile rather than one -- the guard
-    that would fail immediately if a stream's probed `pix_fmt` started moving
-    a single byte of built argv before #117 lands. Once #117 lands, `webm`'s
-    own argv is expected to start differing between the two streams below and
-    this parametrization must narrow to the other sixteen profiles
-    (Verification, spec-webm-alpha.md: "the other sixteen").
+    what teaches `converter/jobs.py` to read it, so `webm`'s own argv now
+    *does* differ between an alpha-carrying and an alpha-free source -- that
+    positive case has its own dedicated pinning class,
+    `TestWebmAlphaPixFmtOverride`, below. This class keeps proving the
+    negative for every profile the field was never declared on: no argv
+    anywhere else in the registry may move because a stream's probed
+    `pix_fmt` changed.
 
     Compares only `.options`, never `.notes`: `jpg`/`gif`/`avif` already vary
     their *notes* by `pix_fmt` (`Profile.alpha_unsupported`, #105) regardless
@@ -1490,6 +1501,192 @@ class TestAlphaPixFmtDeclarationLeavesArgvUnchanged:
         without_alpha = [attempt.options for attempt in jobs.retries(profile, alpha_free)]
 
         assert with_alpha == without_alpha
+
+
+class TestWebmAlphaPixFmtOverride:
+    """Acceptance, issue #117, spec-webm-alpha.md: `converter/jobs.py` reads
+    `StreamRule.alpha_pix_fmt` (declared by issue #116) and appends it
+    wherever a video stream takes the fallback branch and its probed
+    `pix_fmt` is outside `ALPHA_FREE_PIX_FMTS`. Per-stream form
+    (`-pix_fmt:v:{n}`) on the selective rung, global index-less form
+    (`-pix_fmt`) on `last_resort` -- both conditional on the source, never
+    unconditional (spec-webm-alpha.md's Prior decisions)."""
+
+    def test_selective_rung_differs_only_by_the_pixel_format_flag(self):
+        # A single video stream: the per-stream flag lands after that
+        # stream's own codec options, which is only the tail of the whole
+        # argv when nothing else follows it in map order.
+        alpha = [Stream(0, "video", "h264", pix_fmt="rgba")]
+        alpha_free = [Stream(0, "video", "h264", pix_fmt="yuv420p")]
+
+        with_alpha = jobs.retries(WEBM, alpha)[0].options
+        without_alpha = jobs.retries(WEBM, alpha_free)[0].options
+
+        assert with_alpha == (*without_alpha, "-pix_fmt:v:0", "yuva420p")
+
+    def test_selective_rung_alpha_free_argv_is_unchanged(self):
+        """Byte-for-byte what the selective rung already built before #117."""
+        streams = [Stream(0, "video", "h264", pix_fmt="yuv420p"), Stream(1, "audio", "aac")]
+
+        selective = jobs.retries(WEBM, streams)[0]
+
+        assert selective.options == (
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:v:0",
+            "libvpx-vp9",
+            "-crf:v:0",
+            "32",
+            "-b:v:0",
+            "0",
+            "-row-mt",
+            "1",
+            "-cpu-used",
+            "4",
+            "-c:a:0",
+            "libopus",
+            "-b:a:0",
+            "128k",
+        )
+
+    def test_last_resort_differs_only_by_the_global_pixel_format_flag(self):
+        alpha = [Stream(0, "video", "h264", pix_fmt="rgba")]
+        alpha_free = [Stream(0, "video", "h264", pix_fmt="yuv420p")]
+
+        with_alpha = jobs.retries(WEBM, alpha)[-1].options
+        without_alpha = jobs.retries(WEBM, alpha_free)[-1].options
+
+        assert with_alpha == (*without_alpha, "-pix_fmt", "yuva420p")
+
+    def test_last_resort_alpha_free_argv_is_unchanged(self):
+        """Byte-for-byte what `last_resort` already built before #117 -- the
+        defensive half of the fix, unreachable for any constructible source
+        once the selective rung is fixed (spec-webm-alpha.md's Prior
+        decisions), so it is pinned by argv alone and carries no QA line."""
+        streams = [Stream(0, "video", "h264", pix_fmt="yuv420p")]
+
+        reencode = jobs.retries(WEBM, streams)[-1]
+
+        assert reencode.options == (
+            "-map",
+            "0:v:0?",
+            "-map",
+            "0:a?",
+            "-c:v",
+            "libvpx-vp9",
+            "-crf",
+            "32",
+            "-b:v",
+            "0",
+            "-row-mt",
+            "1",
+            "-cpu-used",
+            "4",
+            "-c:a",
+            "libopus",
+            "-b:a",
+            "128k",
+        )
+
+    def test_ten_bit_source_carries_no_override_on_either_rung(self):
+        """The regression an unconditional override would cause -- measured,
+        spec-webm-alpha.md's Prior decisions: `yuv420p10le` survives today."""
+        streams = [Stream(0, "video", "h264", pix_fmt="yuv420p10le")]
+
+        selective = jobs.retries(WEBM, streams)[0]
+        last_resort = jobs.retries(WEBM, streams)[-1]
+
+        assert "-pix_fmt:v:0" not in selective.options
+        assert "-pix_fmt" not in last_resort.options
+
+    def test_last_resort_gets_no_flag_when_the_source_has_no_video_stream(self):
+        """`last_resort`'s override reaches for the first video stream's
+        pix_fmt (what its own `-map 0:v:0?` selects); a source with none
+        gives it nothing to condition on, so it must not add the flag."""
+        reencode = jobs.retries(WEBM, [Stream(0, "audio", "aac")])[-1]
+
+        assert "-pix_fmt" not in reencode.options
+
+    def test_copy_branch_gets_no_flag(self):
+        """A codec `webm`'s copy mask already accepts is copied verbatim,
+        even when its probed pix_fmt looks alpha-carrying -- the override
+        only ever touches the fallback branch, never the copy one."""
+        streams = [Stream(0, "video", "vp9", pix_fmt="rgba"), Stream(1, "audio", "opus")]
+
+        selective = jobs.retries(WEBM, streams)[0]
+
+        assert "-c:v:0" in selective.options
+        assert selective.options[selective.options.index("-c:v:0") + 1] == "copy"
+        assert "-pix_fmt:v:0" not in selective.options
+
+    def test_bgra_source_gets_the_override(self):
+        """Every `.gif` source reports `bgra` unconditionally, opaque or not
+        (measured, spec-webm-alpha.md) -- this fails today at exit -22."""
+        streams = [Stream(0, "video", "gif", pix_fmt="bgra")]
+
+        selective = jobs.retries(WEBM, streams)[0]
+
+        assert "-pix_fmt:v:0" in selective.options
+        assert selective.options[selective.options.index("-pix_fmt:v:0") + 1] == "yuva420p"
+
+    def test_pal8_source_gets_the_override(self):
+        """Converts today via `gbrp` and silently loses a transparent
+        palette's alpha (measured, spec-webm-alpha.md) -- the override turns
+        that silent loss into a correct conversion."""
+        streams = [Stream(0, "video", "png", pix_fmt="pal8")]
+
+        selective = jobs.retries(WEBM, streams)[0]
+
+        assert "-pix_fmt:v:0" in selective.options
+        assert selective.options[selective.options.index("-pix_fmt:v:0") + 1] == "yuva420p"
+
+
+class TestWebmAlphaDepthNote:
+    """Acceptance, issue #117, spec-webm-alpha.md: the new note covers bit
+    depth only, never chroma -- the spec's resolved contradiction (Decision
+    log, 2026-09-15). Chroma subsampling, including an opaque paletted
+    source's `gbrp` -> 4:2:0 move, is carried by the ordinary re-encode note
+    like every other fallback in this registry, not by this one."""
+
+    def test_fires_for_a_source_deeper_than_8_bits(self):
+        streams = [Stream(0, "video", "png", pix_fmt="rgba64be")]
+
+        selective = jobs.retries(WEBM, streams)[0]
+
+        assert (
+            "video stream 0 (png) alpha channel bit depth reduced to 8 bits to fit WebM"
+            in selective.notes
+        )
+
+    def test_does_not_fire_for_ordinary_8bit_rgba(self):
+        streams = [Stream(0, "video", "png", pix_fmt="rgba")]
+
+        selective = jobs.retries(WEBM, streams)[0]
+
+        assert selective.notes == ("video stream 0 (png) re-encoded to vp9",)
+
+    def test_does_not_fire_for_pal8(self):
+        """The pal8 case's real cost -- `gbrp`'s 4:4:4 to 4:2:0 -- is named
+        by the ordinary re-encode note instead, not this one."""
+        streams = [Stream(0, "video", "png", pix_fmt="pal8")]
+
+        selective = jobs.retries(WEBM, streams)[0]
+
+        assert selective.notes == ("video stream 0 (png) re-encoded to vp9",)
+
+    def test_does_not_fire_for_a_copied_stream_even_when_deeper_than_8_bits(self):
+        """A literal stream copy cannot drop anything a decode-encode
+        round-trip might, the same reasoning `_alpha_notes` already applies
+        to phase 8's transparency note -- proven deliberately with a
+        genuinely deep pix_fmt, not the incidental empty-string default the
+        pre-existing copy-branch fixtures happen to carry."""
+        streams = [Stream(0, "video", "vp9", pix_fmt="gbrap10le")]
+
+        selective = jobs.retries(WEBM, streams)[0]
+
+        assert selective.notes == ()
 
 
 class TestProfileArgvPinning:
@@ -1718,7 +1915,9 @@ class TestProfileArgvPinning:
         ]
 
     def test_webm_non_copyable_source(self):
-        streams = [Stream(0, "video", "h264"), Stream(1, "audio", "aac")]
+        # pix_fmt is alpha-free: #117's alpha override gets its own dedicated
+        # pinning test class (TestWebmAlphaPixFmtOverride) below.
+        streams = [Stream(0, "video", "h264", pix_fmt="yuv420p"), Stream(1, "audio", "aac")]
         selective = jobs.retries(WEBM, streams)[0]
 
         argv = build_argv("ffmpeg", "in.mkv", selective.options, "out.webm")
