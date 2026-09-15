@@ -60,6 +60,17 @@ class StreamRule:
     #: Why a stream is dropped when the copy mask misses and no fallback is
     #: declared -- irrelevant, and left ``None``, for a rule that always has one.
     drop_reason: str | None = None
+    #: The pixel format this rule's fallback must force onto a source stream
+    #: whose probed ``pix_fmt`` is not a member of ``ALPHA_FREE_PIX_FMTS`` --
+    #: the value this profile knows its fallback encoder needs to keep an
+    #: alpha channel it would otherwise refuse or silently discard. Applies
+    #: only when the fallback branch is taken; a stream the copy mask already
+    #: accepts is carried verbatim and never reaches an encoder at all.
+    #: ``None`` for every rule whose fallback either cannot hold alpha
+    #: regardless of pixel format, or needs no coercion to keep the one it
+    #: already has. Only ``webm``'s video rule declares it, as ``"yuva420p"``
+    #: (``docs/specs/spec-webm-alpha.md``).
+    alpha_pix_fmt: str | None = None
 
 
 @dataclass(frozen=True)
@@ -846,6 +857,16 @@ WEBM = Profile(
                 "-c:v:{n} libvpx-vp9 -crf:v:{n} 32 -b:v:{n} 0 -row-mt 1 -cpu-used 4"
             ),
             fallback_name="vp9",
+            # Measured (spec-webm-alpha.md): "yuva420p" is the only alpha
+            # pixel format libvpx-vp9 accepts without "-strict experimental",
+            # and it round-trips the channel (at 8-bit -- a >8-bit source's
+            # extra precision is truncated, not preserved losslessly, per the
+            # spec's decision 1). #117 teaches the engine to read this and
+            # append "-pix_fmt:v:{n}" on the fallback branch when a source
+            # stream's probed pix_fmt is not in ALPHA_FREE_PIX_FMTS; this
+            # issue (#116) only declares the value, and changes no argv this
+            # profile builds today.
+            alpha_pix_fmt="yuva420p",
         ),
         "audio": StreamRule(
             copy_mask=WEBM_AUDIO_CODECS,
@@ -870,6 +891,22 @@ WEBM = Profile(
         # no rule matches "attachment" -- the only place that drop is ever
         # reported (issue #67).
     },
+    # This Attempt is not built from rules and declares no alpha_pix_fmt of
+    # its own. Decision (spec-webm-alpha.md Decision log, 2026-09-15): #117's
+    # engine reaches the value by cross-referencing the "video" rule from
+    # here, e.g. "video_rule = rules.get('video'); value =
+    # video_rule.alpha_pix_fmt if video_rule else None" -- rather than this
+    # Profile declaring the same "yuva420p" a second time. One declaration,
+    # read from both rungs, instead of a duplicate literal the two could
+    # drift out of. Both the dict lookup *and* the attribute access on its
+    # result must be guarded: five profiles with a last_resort declare no
+    # "video" rule at all (mp3, flac, m4a, ogg, opus), so
+    # "rules['video'].alpha_pix_fmt" KeyErrors on all five and
+    # "rules.get('video').alpha_pix_fmt" AttributeErrors on the same five --
+    # neither shortcut is safe on its own. Costs nothing today: this rung is
+    # defensive (Prior decisions -- unreachable once the selective rung is
+    # fixed), so #116 adds no code for the cross-reference itself, only this
+    # record of the choice.
     last_resort=Attempt(
         label="re-encode",
         options=flags(

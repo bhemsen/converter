@@ -516,3 +516,26 @@ trusting it (`0x7F7C`, not `0xFFFF`).
   attempt had synthesised one with `color=...,format=rgba64be` and got an opaque
   file — the same decoder-versus-reality trap in a new place, caught by checking
   the fixture instead of trusting it.
+- 2026-09-15 (issue #116): Resolved the one choice open decision 2 left to the
+  implementer — how `webm`'s `last_resort` reaches the alpha pixel format
+  declared on the `video` rule. **Chosen: the engine cross-references the
+  `video` rule from `last_resort`** — `video_rule = profile.rules.get("video");
+  value = video_rule.alpha_pix_fmt if video_rule else None` — rather than the
+  `Profile` declaring a second value there. `jobs.retries` already receives
+  the whole `profile` when it builds `last_resort` (`converter/jobs.py`), so
+  reading the same rule's field costs no new declaration and keeps the value
+  single-sourced; a second field on `Attempt` or `Profile` would restate the
+  literal `"yuva420p"` a second time with nothing to keep the two in sync if
+  either ever changed — the same "no duplicated tuple" reasoning decision 2
+  itself used to prefer a scalar over a second options tuple. Both the dict
+  lookup *and* the attribute access on its result must be guarded: five
+  profiles declare a `last_resort` and no `"video"` rule at all (`mp3`,
+  `flac`, `m4a`, `ogg`, `opus`), so `rules["video"].alpha_pix_fmt` raises
+  `KeyError` on all five and `rules.get("video").alpha_pix_fmt` raises
+  `AttributeError` on the same five — an earlier revision of this entry made
+  exactly that second mistake while believing it had fixed the first. Issue
+  #116 adds no engine code for the cross-reference itself (that is #117's
+  mechanism, per this spec's own scope split); it adds only
+  `StreamRule.alpha_pix_fmt`, the value declared on `webm`'s video rule, and a
+  comment on `WEBM.last_resort` recording this choice for #117 to implement
+  against.

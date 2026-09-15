@@ -22,6 +22,7 @@ from converter.profiles import (
     OGG,
     OPUS,
     PNG,
+    PROFILES,
     TIFF,
     WAV,
     WEBM,
@@ -1449,6 +1450,46 @@ class TestWebmDegradationNotes:
         assert reencode.notes == (
             "re-encoded to vp9/opus (lossy); subtitles and extra video streams dropped",
         )
+
+
+@pytest.mark.parametrize("profile", PROFILES.values(), ids=lambda p: p.name)
+class TestAlphaPixFmtDeclarationLeavesArgvUnchanged:
+    """Acceptance, issue #116, spec-webm-alpha.md: this issue only declares
+    `StreamRule.alpha_pix_fmt` (`webm`'s video rule, to `"yuva420p"`); #117 is
+    what teaches `converter/jobs.py` to read it. No argv anywhere in the
+    registry may change while the value is still unread, so this asserts the
+    same invariant across every shipped profile rather than one -- the guard
+    that would fail immediately if a stream's probed `pix_fmt` started moving
+    a single byte of built argv before #117 lands. Once #117 lands, `webm`'s
+    own argv is expected to start differing between the two streams below and
+    this parametrization must narrow to the other sixteen profiles
+    (Verification, spec-webm-alpha.md: "the other sixteen").
+
+    Compares only `.options`, never `.notes`: `jpg`/`gif`/`avif` already vary
+    their *notes* by `pix_fmt` (`Profile.alpha_unsupported`, #105) regardless
+    of this issue, so a full-`Attempt` comparison would fail there for a
+    reason this issue does not own.
+    """
+
+    def test_selective_and_last_resort_argv_ignore_pix_fmt(self, profile):
+        # A codec no profile's copy mask names, so the selective rung's
+        # fallback (re-encode) branch fires for every profile that declares a
+        # "video" rule -- webm's included, which is the one branch #117 will
+        # actually touch, giving real multi-token coverage there. A profile
+        # with no "video" rule (wav/mp3/flac/m4a/ogg/opus) structurally drops
+        # this stream instead: wav's selective rung then never exists (both
+        # sides compare `[] == []`) and the audio profiles fall through to
+        # their stream-independent `last_resort` constant -- neither is a
+        # meaningful probe of the field on its own, but
+        # `tests/test_profiles.py::TestAlphaPixFmtField` is what actually
+        # proves exclusivity across those six, so the gap here costs nothing.
+        alpha = [Stream(0, "video", "not-a-real-codec", pix_fmt="rgba")]
+        alpha_free = [Stream(0, "video", "not-a-real-codec", pix_fmt="yuv420p")]
+
+        with_alpha = [attempt.options for attempt in jobs.retries(profile, alpha)]
+        without_alpha = [attempt.options for attempt in jobs.retries(profile, alpha_free)]
+
+        assert with_alpha == without_alpha
 
 
 class TestProfileArgvPinning:
