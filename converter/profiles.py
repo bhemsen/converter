@@ -484,6 +484,58 @@ ALPHA_FREE_PIX_FMTS = frozenset(
     }
 )
 
+#: Pixel formats `ffprobe -show_pixel_formats -of json` reports with
+#: ``flags.alpha == 1`` **and** ``flags.hwaccel == 0`` **and** every
+#: component's ``bit_depth <= 8`` -- 13 formats, measured against ffmpeg 9.0
+#: (docs/specs/spec-webm-alpha.md). A source stream whose probed ``pix_fmt``
+#: is a member of this set already carries its alpha channel at 8 bits or
+#: less, so forcing it into `webm`'s ``yuva420p`` fallback truncates nothing
+#: -- no depth-reduction note is owed. Every alpha-capable format *outside*
+#: this set (54 of the 67 that carry the alpha flag, `gbrap10le`,
+#: `rgba64be`, `yuva444p12le`, ...) is deeper than 8 bits per component, so
+#: the fallback's forced 8-bit `yuva420p` genuinely reduces it. `pal8` is a
+#: member -- ffprobe reports it with ``flags.alpha == 1`` (a palette entry
+#: may carry an alpha byte) but only 8 bits per index -- so an opaque
+#: paletted source's real cost, chroma subsampling from `gbrp` to 4:2:0, is
+#: carried by the ordinary re-encode note like every other fallback in this
+#: registry, never by the depth note.
+#:
+#: Same directionality as `ALPHA_FREE_PIX_FMTS` above: an omission from this
+#: set is read as "deeper than 8 bits" and fires the note, which is the safe
+#: default when the probe cannot decide (`docs/constitution.md`). Pinned as a
+#: literal for the same reason -- the test suite must pass with no ffmpeg
+#: installed.
+#:
+#: Regenerate with (PowerShell):
+#:
+#:   $pf = & ffprobe -v quiet -show_pixel_formats -of json | ConvertFrom-Json
+#:   $pf.pixel_formats |
+#:     Where-Object {
+#:       $depths = $_.components | ForEach-Object { [int]$_.bit_depth }
+#:       $_.flags.alpha -eq 1 -and $_.flags.hwaccel -eq 0 -and
+#:         ($depths | Measure-Object -Maximum).Maximum -le 8
+#:     } | Select-Object -ExpandProperty name | Sort-Object
+#:
+#: then paste the sorted names back in below and re-run
+#: ``tests/test_profiles.py::TestShallowAlphaPixFmts::test_pinned_count_is_13``.
+SHALLOW_ALPHA_PIX_FMTS = frozenset(
+    {
+        "abgr",
+        "argb",
+        "ayuv",
+        "bgra",
+        "gbrap",
+        "pal8",
+        "rgba",
+        "uyva",
+        "vuya",
+        "ya8",
+        "yuva420p",
+        "yuva422p",
+        "yuva444p",
+    }
+)
+
 MP4 = Profile(
     label="MP4",
     name="mp4",
