@@ -223,15 +223,15 @@ Two consequences follow, and they are the shape of the whole phase:
 
 ## Prior art
 
-- [Container/codec capability modelling (Phase 1)](../prior-art.md#containercodec-capability-modelling-phase-1)
+- [Container/codec capability modelling (Phase 1)](../../prior-art.md#containercodec-capability-modelling-phase-1)
   — the method for declaring what a target can hold. This phase adds a capability
   that is **encoder-bound and pixel-format-bound** rather than container-bound,
   which the copy-mask model does not itself express.
-- [FFmpeg/FFmpeg (the CLI as a capability source)](../prior-art.md#ffmpegffmpeg-the-cli-as-a-capability-source)
+- [FFmpeg/FFmpeg (the CLI as a capability source)](../../prior-art.md#ffmpegffmpeg-the-cli-as-a-capability-source)
   — its warning that the CLI reports what exists rather than what is legal is
   exactly the trap recorded above, in its decoder-versus-encoder form. Cited as
   the class of error, not as a matrix source.
-- [Image conversion through ffmpeg (Phase 5)](../prior-art.md#image-conversion-through-ffmpeg-phase-5)
+- [Image conversion through ffmpeg (Phase 5)](../../prior-art.md#image-conversion-through-ffmpeg-phase-5)
   — its AVOID (never promise what the tool cannot deliver) now cuts the other
   way: the tool *can* deliver this, so declaring the loss would be the dishonesty.
 
@@ -645,3 +645,33 @@ trusting it (`0x7F7C`, not `0xFFFF`).
     carries `-row-mt 1 -cpu-used 4`, both bare, no `{n}`. Narrowed to name
     only the rule's *positional* options (`-c:v:{n}`, `-crf:v:{n}`), which
     the claim is actually true of, in both the node label and the prose.
+- 2026-09-15 (milestone QA gate): Accepted. The Verification block ran against
+  ffmpeg 9.0 through the installed CLI, with every alpha assertion decoded by an
+  explicit `-c:v libvpx-vp9` -- the default decoder reports `A=255` for the same
+  files and would have confirmed each line falsely. All eight fixtures converted
+  at exit 0. Alpha round-trips: `rgba` 127 -> 127, transparent `pal8` 0 -> 0,
+  `rgba64be` 127 -> 127 with the depth note, and a `vp9` source copied by the
+  cheap attempt kept 127 at 614 -> 635 bytes. `yuv420p10le` stayed 10-bit, an
+  opaque JPEG took no override, a second run reported `0 converted` at exit 0,
+  and the full seventeen-target matrix showed no regression.
+- 2026-09-15 (milestone QA gate): The depth note fired **exactly once** across
+  the whole fixture tree -- for the 16-bit source alone, not for 8-bit `rgba`
+  and not for `pal8`. That is the resolved scope from the gate holding in
+  practice, and it is the assertion the note's conditional design is worth.
+- 2026-09-15 (milestone QA gate): The 16-bit fixture was verified to carry alpha
+  (`0x7F7C`, not `0xFFFF`) **before** being trusted. Building it with
+  `color=...,format=rgba64be` yields an opaque file, which is how an earlier
+  draft measured this phase wrong; the QA block builds it by converting a
+  known-alpha PNG instead.
+- 2026-09-15 (milestone QA gate): The accepted cost, restated at acceptance so it
+  is not rediscovered as a defect. Opaque paletted sources now reach 4:2:0 where
+  they previously reached `gbrp` (4:4:4), because the override fires for every
+  `pal8` and `pix_fmt` cannot tell a transparent palette from an opaque one. It
+  is carried by the generic re-encode note, not by the depth note -- the
+  resolution of the spec's own self-contradiction, recorded by #117.
+- 2026-09-15 (milestone QA gate): Issue #114, the defect report this phase
+  exists to fix, is closed as completed. It was held out of the implementation
+  frontier deliberately: as a tracking issue rather than an implementable step it
+  would otherwise have been dispatched to a subagent, so it was given
+  `Depends on: #116, #117, #118` at orchestration time and closed here, the way
+  #101 was closed at phase 8's gate.

@@ -235,7 +235,7 @@ flowchart TD
   first stream of that type does not already satisfy it. `webm`'s video rule is
   the only declared case today: a bare `-pix_fmt`, forced when the source's
   first video stream's probed `pix_fmt` is not already alpha-free
-  (`docs/specs/spec-webm-alpha.md`). This half is **defensive**: `webm`'s video
+  (`docs/specs/archive/spec-webm-alpha.md`). This half is **defensive**: `webm`'s video
   rule declares no `stream_limit`, so once the selective rung carries the same
   option, even a source with more than one video stream — the shape that might
   be expected to overflow onto this rung — already succeeds there instead

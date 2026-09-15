@@ -81,7 +81,7 @@ flowchart TD
   construction, not by a separate check. `webm`'s video rule is the only
   declared case today: `alpha_pix_fmt`, forcing an alpha-carrying pixel format
   onto a source stream whose probed `pix_fmt` is not a member of
-  `ALPHA_FREE_PIX_FMTS` (`docs/specs/spec-webm-alpha.md`). `last_resort` can
+  `ALPHA_FREE_PIX_FMTS` (`docs/specs/archive/spec-webm-alpha.md`). `last_resort` can
   carry the same kind of option too, but in its global, index-less form —
   covered in `degradation-ladder.md`, not here, since that attempt is not built
   from a per-stream plan at all.
