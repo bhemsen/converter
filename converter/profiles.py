@@ -893,17 +893,20 @@ WEBM = Profile(
     },
     # This Attempt is not built from rules and declares no alpha_pix_fmt of
     # its own. Decision (spec-webm-alpha.md Decision log, 2026-09-15): #117's
-    # engine reaches the value by cross-referencing
-    # rules.get("video").alpha_pix_fmt from here rather than this Profile
-    # declaring the same "yuva420p" a second time -- one declaration, read
-    # from both rungs, instead of a duplicate literal the two could drift out
-    # of. The ``.get`` matters: five profiles with a last_resort declare no
-    # "video" rule at all (mp3, flac, m4a, ogg, opus), so #117's cross-
-    # reference must guard the lookup rather than index rules["video"]
-    # unconditionally. Costs nothing today: this rung is defensive (Prior
-    # decisions -- unreachable once the selective rung is fixed), so #116
-    # adds no code for the cross-reference itself, only this record of the
-    # choice.
+    # engine reaches the value by cross-referencing the "video" rule from
+    # here, e.g. "video_rule = rules.get('video'); value =
+    # video_rule.alpha_pix_fmt if video_rule else None" -- rather than this
+    # Profile declaring the same "yuva420p" a second time. One declaration,
+    # read from both rungs, instead of a duplicate literal the two could
+    # drift out of. Both the dict lookup *and* the attribute access on its
+    # result must be guarded: five profiles with a last_resort declare no
+    # "video" rule at all (mp3, flac, m4a, ogg, opus), so
+    # "rules['video'].alpha_pix_fmt" KeyErrors on all five and
+    # "rules.get('video').alpha_pix_fmt" AttributeErrors on the same five --
+    # neither shortcut is safe on its own. Costs nothing today: this rung is
+    # defensive (Prior decisions -- unreachable once the selective rung is
+    # fixed), so #116 adds no code for the cross-reference itself, only this
+    # record of the choice.
     last_resort=Attempt(
         label="re-encode",
         options=flags(
