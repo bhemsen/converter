@@ -591,3 +591,57 @@ trusting it (`0x7F7C`, not `0xFFFF`).
   for any future profile rather than by coincidence of today's roster — the
   same reasoning `_selective_transparency_notes`'s own docstring already
   applies to its sibling note.
+- 2026-09-15 (issue #118): The re-dispatched agent resuming this issue's
+  uncommitted draft found two of the three carriers repeating the same false
+  claim: both `docs/architecture.md` Key flow 2 and
+  `docs/design/stream-decision.md` said the option fires "when the same
+  probed source property that decided the stream's fate" says the fallback
+  needs it. Reading `converter/jobs.py::_decide_stream` against that sentence
+  shows it is wrong: the stream's fate (copy vs. re-encode) turns on
+  `stream.codec_name` (`rule.copy_mask` membership), while the option's own
+  condition turns on `stream.pix_fmt` -- two different probed properties, not
+  the same one. Corrected in both files to say a *second, independent*
+  property decides the option, without changing anything else in the
+  drafted text -- the rest of the mechanism description (per-stream
+  `-pix_fmt:v:{n}` form, unreachable for a copy, `last_resort`'s global form,
+  the depth-note-covers-only-depth boundary) was checked against
+  `converter/jobs.py`/`converter/profiles.py` and found accurate.
+- 2026-09-15 (issue #118): `CHANGELOG.md`'s v3.0.0 *Known limitations* entry
+  is corrected in place (GIF sources named, the false "opaque sources are
+  unaffected" closing sentence removed, and a pointer to the fix added) and a
+  new `## [Unreleased]` section is added above it recording the fix,
+  including the second, undiscovered-in-v3.0.0 defect (a transparent
+  paletted source silently losing its transparency). Chose *add an
+  Unreleased section* over rewriting the v3.0.0 entry's own dates/version,
+  because Keep a Changelog reserves versioned sections for what actually
+  shipped under that tag -- the fix is on `main` but unreleased, so it has no
+  version number to file under yet (`converter/__init__.py` stays at 3.0.0;
+  `/loopkit:ship` owns the bump). The v3.0.0 entry itself keeps describing
+  what was true when 3.0.0 shipped, corrected only where it was factually
+  wrong (the GIF scope, the false "unaffected" claim), plus a forward
+  pointer -- it does not retroactively claim 3.0.0 shipped the fix.
+- 2026-09-15 (issue #118): The mandatory fresh-subagent review round (opus)
+  found two further confident-but-false statements in the first drafted
+  fix, and one real omission -- the same class of finding every prior round
+  of this spec produced. Corrected all three before merge:
+  - `CHANGELOG.md`'s new *Unreleased* entry listed "paletted" among the PNG
+    kinds that "previously failed outright". False: the spec's own fact
+    table (the `pal8` row) and Decision log both establish `pal8` converted
+    successfully before this fix, at `gbrp`; it never failed. Reworded to
+    keep the transparent-paletted case (a real, separate fix: silent loss
+    corrected) and dropped the false "failed outright" framing for
+    paletted sources generally.
+  - The same entry described the fix as a pure gain and never named the
+    cost decision 3 explicitly accepted: an *opaque* paletted source now
+    converts at 4:2:0 chroma subsampling instead of `gbrp` (4:4:4), because
+    `pix_fmt` cannot tell a transparent palette from an opaque one. Named
+    in the entry now, consistent with the vision's "whatever is lost gets
+    named rather than hidden" -- a release note is exactly the kind of
+    surface that rule was written for.
+  - `docs/design/stream-decision.md` claimed the option is applied "in the
+    same per-stream form ... every other option on this rung already
+    carries". False as a universal: `webm`'s own video fallback
+    (`converter/profiles.py`, `WEBM.rules["video"].fallback_options`) also
+    carries `-row-mt 1 -cpu-used 4`, both bare, no `{n}`. Narrowed to name
+    only the rule's *positional* options (`-c:v:{n}`, `-crf:v:{n}`), which
+    the claim is actually true of, in both the node label and the prose.

@@ -85,16 +85,24 @@ The internal import graph is acyclic today and must stay that way:
    disposition when it is an attached picture and the profile declares a rule for
    one, otherwise by its type — and the engine then matches it against that
    rule's copy mask: streams the mask accepts pass through unchanged — as a
-   literal `copy`, or
-   as the cheap in-kind transcode the rule declares, which is how a text subtitle
-   becomes `mov_text` — streams it does not are re-encoded with the profile's
-   fallback encoder, and streams are dropped when the container cannot hold that
-   stream type at all, when it is already holding as many streams of the type as
-   it can, or when the rule declares no fallback. Every sacrifice becomes a note
-   on the attempt. The last rung is the full re-encode the profile declares; a
-   profile may declare none, and then the rung before it ends the ladder. The
-   order of attempts and the per-stream branch are drawn in
-   `docs/design/degradation-ladder.md` and `docs/design/stream-decision.md`.
+   literal `copy`, or as the cheap in-kind transcode the rule declares, which is
+   how a text subtitle becomes `mov_text` — streams it does not are re-encoded
+   with the profile's fallback encoder, which may itself carry a
+   source-dependent option: a value the rule declares and the engine appends
+   only when a further probed source property — independent of whichever one
+   routed the stream to this branch — says the fallback would otherwise need
+   it (`webm`'s video rule is the only one that declares one today, an
+   alpha-carrying pixel format forced when the source's probed `pix_fmt` is not
+   already alpha-free — a stream the copy mask accepts never reaches this
+   option, since it never reaches the fallback encoder at all,
+   `docs/specs/spec-webm-alpha.md`) — and streams are dropped when the
+   container cannot hold that stream type at all, when it is already holding as
+   many streams of the type as it can, or when the rule declares no fallback.
+   Every sacrifice becomes a note on the attempt. The last rung is the full
+   re-encode the profile declares; a profile may declare none, and then the
+   rung before it ends the ladder. The order of attempts and the per-stream
+   branch are drawn in `docs/design/degradation-ladder.md` and
+   `docs/design/stream-decision.md`.
 3. **Idempotent re-run.** An output that already exists and no `--overwrite` makes
    the file `skipped` without starting a process, so a second run over a finished
    tree does no work for the files it already converted. A source whose output

@@ -29,6 +29,9 @@ flowchart TD
     ENC{"does the rule declare a fallback encoder?"}
     COPY["accept — map stream i, emit the rule's pass-through codec<br/>(literal copy, or a cheap in-kind transcode such as mov_text)"]
     REENC["re-encode — map stream i, emit the fallback encoder<br/>note: t stream i (c) re-encoded to TARGET_CODEC<br/>(a rule may declare no note where the re-encode gives up nothing)"]
+    OPT{"does the rule declare a source-dependent option,<br/>and does stream i's probed property not already satisfy it?"}
+    OVERRIDE["apply the option — append its value to stream i's re-encode,<br/>in the same per-stream form (:v:{n}) the rule's own positional<br/>options already carry"]
+    STAND["fallback stands as declared — the option's condition is not met"]
     D1["drop — note: t stream i (c) dropped: not supported by TARGET"]
     D2["drop — note: t stream i (c) dropped: TARGET holds LIMIT t stream<br/>(the noun agrees in number with LIMIT)"]
     D3["drop — note: t stream i (c) dropped: DROP_REASON"]
@@ -44,6 +47,9 @@ flowchart TD
     MASK -->|"no"| ENC
     ENC -->|"yes"| REENC
     ENC -->|"no"| D3
+    REENC --> OPT
+    OPT -->|"yes"| OVERRIDE
+    OPT -->|"no"| STAND
 ```
 
 ## Rules the diagram encodes
@@ -58,6 +64,38 @@ flowchart TD
 - **Three outcomes, never a fourth.** A stream is accepted, re-encoded, or
   dropped. Every drop edge names the reason, because a silent drop is exactly
   what the vision forbids.
+- **A re-encoded stream may also need a source-dependent option.** `OPT` sits
+  after `REENC`: a rule may declare a value its fallback needs only when a
+  second, independent probed property — not the one `MASK` already used to
+  route the stream here — says the fallback would otherwise not carry
+  something the source has. A rule that declares no such option, or whose
+  declared property is already satisfied, takes `OPT`'s `no` edge and
+  `REENC`'s plan stands unchanged. The option is applied in the same
+  per-stream form (`-pix_fmt:v:{n}`, never a bare `-pix_fmt`) the rule's own
+  positional options already carry (`webm`'s video rule also writes
+  `-c:v:{n}` and `-crf:v:{n}` this way — not every option on the rung is
+  positional; `-row-mt`/`-cpu-used` are not), substituted through
+  `_substitute_position` the same way. A stream the copy mask accepts
+  (`COPY`) never reaches `OPT` at all, because it never reaches the fallback
+  encoder in the first place — the option is unreachable for a copy by
+  construction, not by a separate check. `webm`'s video rule is the only
+  declared case today: `alpha_pix_fmt`, forcing an alpha-carrying pixel format
+  onto a source stream whose probed `pix_fmt` is not a member of
+  `ALPHA_FREE_PIX_FMTS` (`docs/specs/spec-webm-alpha.md`). `last_resort` can
+  carry the same kind of option too, but in its global, index-less form —
+  covered in `degradation-ladder.md`, not here, since that attempt is not built
+  from a per-stream plan at all.
+- **Forcing that option can cost more than the option's own value names.**
+  `webm`'s forced pixel format can also reduce a source's alpha channel from
+  more than 8 bits to 8, and that reduction earns a note of its own — but the
+  note is computed and appended as a separate pass once the whole rung is
+  built (`converter.jobs._alpha_depth_notes`), never folded into `OVERRIDE`'s
+  own step here, for the same rung-resurrection reason `_lossy_source_notes`
+  is kept out of this diagram's plan: folding it in could flip
+  `explicit_streams`'s short-circuit for a hypothetical future rule that
+  declares both. It names depth only — chroma subsampling stays with
+  `REENC`'s own re-encode note, exactly like every other fallback in this
+  registry, never doubled into the new note.
 - **Every note names three things:** the stream index, that stream's codec, and
   what was given up (`docs/vision.md`). A note that omits one of them is a review
   finding. A stream with no codec name reported by ffprobe reads as `unknown`.
