@@ -2313,3 +2313,27 @@ class TestAlphaUnsupportedField:
         so a future profile cannot combine the two flags without this test
         catching it."""
         assert profile.explicit_streams is False
+
+
+class TestAlphaPixFmtField:
+    """`StreamRule.alpha_pix_fmt` (spec-webm-alpha.md, #116): declared, not
+    derived -- only `webm`'s video rule names the pixel format its fallback
+    encoder needs to keep an alpha channel; every other rule in the registry
+    leaves it unset. The guard that stops a later profile acquiring it
+    silently, mirroring `TestAlphaUnsupportedField` above."""
+
+    def test_only_webms_video_rule_declares_it(self):
+        declaring = {
+            (profile.name, kind)
+            for profile in PROFILES.values()
+            for kind, rule in profile.rules.items()
+            if rule.alpha_pix_fmt is not None
+        }
+
+        assert declaring == {("webm", "video")}
+
+    def test_webm_video_rule_declares_yuva420p(self):
+        """Measured (spec Prior decisions, decision 1's table): the only
+        alpha pixel format libvpx-vp9 accepts without `-strict experimental`,
+        and it round-trips the channel."""
+        assert WEBM.rules["video"].alpha_pix_fmt == "yuva420p"
