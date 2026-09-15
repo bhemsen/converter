@@ -55,21 +55,38 @@ specifies.
 `-strict experimental` must be an **output** option; given as an input option the
 encoder still exits -22.
 
-**The defect is wider than "an alpha source".** The condition is the source's
-reported `pix_fmt`, not whether a channel is actually used, so every source whose
-format is outside `ALPHA_FREE_PIX_FMTS` fails today:
+**The defect is wider than "an alpha source" — but not as wide as roster
+membership.** What decides it is the format ffmpeg's negotiation lands the
+*encoder* on, which is not the same question as whether the source's reported
+`pix_fmt` is in `ALPHA_FREE_PIX_FMTS`. Measured against `webm`'s exact video
+fallback argv, and end to end through the CLI:
 
-| Source | Reported `pix_fmt` | `--to webm` today |
-|---|---|---|
-| RGBA PNG | `rgba` | **fails**, exit -22 |
-| **Any `.gif`, opaque included** | `bgra` — ffmpeg's gif decoder reports it unconditionally (phase 8 measured the same thing) | **fails**, exit -22 |
-| Paletted PNG | `pal8` | **fails**, exit -22 |
+| Source | Reported `pix_fmt` | Encoder negotiates | `--to webm` today |
+|---|---|---|---|
+| RGBA PNG | `rgba` | `gbrap` | **fails**, exit -22 |
+| **Any `.gif`, opaque included** | `bgra` — ffmpeg's gif decoder reports it unconditionally (phase 8 measured the same) | `gbrap` | **fails**, exit -22 |
+| 16-bit RGBA PNG | `rgba64be` | `gbrap` | **fails**, exit -22 |
+| Grey+alpha PNG | `ya8` | `gbrap` | **fails**, exit -22 |
+| **Paletted PNG, transparent or not** | `pal8` | **`gbrp`** — libvpx accepts it unconditionally | **succeeds**, exit 0 |
 
 `.gif` is in `SOURCE_SUFFIXES`, so `--to webm` currently fails for **every GIF
-source in a tree**, transparent or not — measured end to end through the CLI on
-an opaque GIF. The same conditional override fixes all three, because neither
-`bgra` nor `pal8` is in `ALPHA_FREE_PIX_FMTS`. v3.0.0's *Known limitations* entry
+source in a tree**, transparent or not. v3.0.0's *Known limitations* entry
 therefore understates the defect and is corrected by this phase.
+
+**`pal8` is the interesting one, and it is not a failure at all.** It converts
+today — and a *transparent* paletted PNG loses its transparency while being
+reported as a plain success. Measured: source corner pixel `A=0`, output `A=255`
+decoded with an explicit libvpx decoder, with only a `re-encoded to vp9` note
+that says nothing about the channel. That is a live breach of the constitution's
+"never report success for a conversion that silently dropped something",
+reachable from an ordinary paletted PNG, and nothing in the tree covers it —
+`webm` declares no `alpha_unsupported`, so phase 8's note cannot reach it.
+
+So `pal8` belongs in this phase's scope for a **better** reason than the first
+draft's: the override turns a silent loss into a correct conversion. But it also
+carries a cost the gate must weigh, because `pix_fmt` alone cannot tell a
+transparent paletted image from an opaque one — the ambiguity phase 8 already
+recorded for `pal8`. See open decision 3.
 
 > **The trap, recorded because this spec's first draft fell into it and the
 > acceptance review caught it.** `ffprobe` and `ffmpeg` default to the **native**
@@ -101,11 +118,15 @@ Two consequences follow, and they are the shape of the whole phase:
       intact** — verified by decoding with an explicit libvpx decoder, not by
       reading the output's reported `pix_fmt`.
 - [ ] A source whose `pix_fmt` **is a member of `ALPHA_FREE_PIX_FMTS`** is
-      byte-for-byte unaffected: same argv, same output, no note. Stated as the
-      roster test rather than as "carries no alpha", because an opaque GIF
-      reports `bgra` and an opaque paletted PNG reports `pal8` — both are outside
-      the roster, both fail today, and both are *meant* to change.
-- [ ] Every GIF source converts to `webm`. Today none does.
+      byte-for-byte unaffected: same argv, same output, no note.
+- [ ] Every GIF source converts to `webm`. Today none does — an opaque GIF
+      reports `bgra` and fails like a transparent one.
+- [ ] A **transparent paletted** source keeps its transparency. Today it converts
+      and loses it in silence, which is the phase's second defect and the only one
+      that is a live constitution breach rather than a failure.
+- [ ] Whatever open decision 3 settles for **opaque paletted** sources is
+      deliberate: they convert today via `gbrp`, so an override that fires for
+      every `pal8` would introduce chroma subsampling where there is none.
 - [ ] A **10-bit** source into `webm` still produces 10-bit output
       (`yuv420p10le` in, `yuv420p10le` out), and an opaque high-depth source
       still reaches `gbrp12le`.
@@ -216,8 +237,9 @@ Two consequences follow, and they are the shape of the whole phase:
 | Both re-encoding rungs are fixed, but `last_resort`'s half is **defensive** | Its argv fails identically on a `gbrap` source — reproduced at exit -22 — so leaving it inconsistent would be a trap for the next reader. But `webm`'s video rule declares **no `stream_limit`** (measured: `WEBM.rules["video"].stream_limit is None`; the only `stream_limit=1` rules in the tree are `wav`/`mp3`/`flac` and the image profiles), and with the selective rung fixed a two-video-stream source **succeeds there** — measured: `-pix_fmt:v:0 yuva420p` gives exit 0 and `vp9/yuva420p` + `vp9/gbrp`. `batch._attempt_conversion` returns on the first success, so `last_resort` is not reachable for any source this phase can construct. An earlier draft claimed a `stream_limit` that does not exist and gave it a QA line that could not pass | 2026-09-15 |
 | **OPEN — what happens to a >8-bit alpha source?** `yuva420p10le` is refused, so the non-experimental path can keep alpha *or* depth, not both. | resolved at the spec-acceptance gate | — |
 | **OPEN — how does the conditional pixel format reach the argv?** Every attempt's options are a static tuple today, varied only by `_substitute_position`'s stream index. | resolved at the spec-acceptance gate | — |
+| **OPEN — does the override fire for `pal8`?** It converts today, and `pix_fmt` cannot tell a transparent palette from an opaque one. Firing fixes a measured silent transparency loss; it also moves opaque paletted sources from `gbrp` to a subsampled format. | resolved at the spec-acceptance gate | — |
 
-### The two open decisions, in full
+### The three open decisions, in full
 
 **1. The >8-bit alpha source.** Now measured, on a fixture built by *converting*
 a known-alpha PNG (`-pix_fmt rgba64be`) rather than synthesising one — the
@@ -286,6 +308,28 @@ profile-declares-a-fact case in the tree is a scalar the engine reads —
 precedent anywhere in `converter/profiles.py`. Nothing *forces* B, so the
 decision is genuinely open, but A would be the first of its kind.
 
+**3. Does the override fire for `pal8`?** This is about the override's
+*condition*, not its mechanism, which is why it is its own decision. `pal8`
+converts today and `pix_fmt` cannot say whether the palette carries a transparent
+entry — the ambiguity phase 8 recorded when it chose to over-report for `pal8`.
+Measured both ways:
+
+- **Fire for every `pal8`.** A transparent paletted source keeps its
+  transparency, which today it loses in silence. The cost is that an *opaque*
+  paletted source moves from `gbrp` (4:4:4) to `yuva420p` (4:2:0) — this phase
+  would introduce chroma subsampling into a conversion that works fine, for every
+  paletted image in a tree. Consistent with phase 8's over-report-when-undecidable
+  precedent, and with the constitution's preference for the non-silent direction.
+- **Never fire for `pal8`.** No conversion that works today changes. The cost is
+  leaving the silent transparency loss in place — a known constitution breach the
+  phase measured and chose not to fix.
+- **Fire, and keep 4:4:4** by declaring an alpha format that does not subsample
+  (`yuva444p` and friends need `-strict experimental`, per decision 1's table).
+  Keeps both properties; inherits decision 1's experimental-flag cost.
+
+Whichever way this goes, it should be recorded as a deliberate trade rather than
+falling out of the condition chosen for decision 2.
+
 **Whichever option is chosen, it must also say where `last_resort` gets its
 value.** All three are phrased "on the rule", but `last_resort` is an `Attempt`
 on the `Profile`, not on a `StreamRule`, and is not built from rules at all — so
@@ -319,8 +363,9 @@ never encoder behaviour):
       override on either rung.
 - [ ] A test that a source whose codec is in `WEBM_VIDEO_CODECS` takes the copy
       branch, so no pixel-format flag is added.
-- [ ] A test that a `bgra` source (every `.gif`) and a `pal8` source **do** get
-      the override — they are outside `ALPHA_FREE_PIX_FMTS` and fail today.
+- [ ] A test that a `bgra` source (every `.gif`) gets the override — it fails
+      today. And a test pinning whatever open decision 3 settles for `pal8`,
+      which does **not** fail today.
 - [ ] A test that the other sixteen profiles' argv is unchanged by this phase,
       for both an alpha and an alpha-free source.
 - [ ] A test that the ffprobe process count per conversion is unchanged.
@@ -341,6 +386,8 @@ New-Item -ItemType Directory -Force in
 & $FF -y -i in/alpha-src.png -c:v libvpx-vp9 -pix_fmt yuva420p in/vp9-alpha-src.webm
 & $FF -y -i in/opaque-src.jpg -c:v gif in/opaque-gif-src.gif
 & $FF -y -i in/alpha-src.png -pix_fmt rgba64be in/alpha16-src.png
+& $FF -y -i in/alpha-src.png -vf "split[a][b];[a]palettegen=reserve_transparent=1[p];[b][p]paletteuse" -frames:v 1 in/pal-alpha-src.png
+& $FF -y -i in/opaque-src.jpg -vf "split[a][b];[a]palettegen[p];[b][p]paletteuse" -frames:v 1 in/pal-opaque-src.png
 ```
 
 Build `alpha16-src.png` by **converting** a known-alpha file, as above.
@@ -348,9 +395,11 @@ Build `alpha16-src.png` by **converting** a known-alpha file, as above.
 trusting it (`0x7F7C`, not `0xFFFF`).
 
 - [ ] **`--to webm` over `alpha-src.png` (selective rung)**: converts at exit 0.
-      Decode the output with `& $FF -c:v libvpx-vp9 -i <out> -pix_fmt rgba -f rawvideo -`
-      and confirm the centre pixel's alpha is ~127, not 255. This is the reported
-      defect; check it first.
+      Decode the output with
+      `& $FF -c:v libvpx-vp9 -i <out> -frames:v 1 -pix_fmt rgba -f rawvideo px.raw`
+      and read the bytes from the file, confirming the centre pixel's alpha is
+      ~127 and not 255. PowerShell mangles binary on stdout, so never pipe
+      rawvideo to `-`. This is the reported defect; check it first.
 - [ ] **`--to webm` over `opaque-src.jpg` (selective rung)**: converts, no
       transparency note, and the argv carries no pixel-format flag.
 - [ ] **`--to webm` over `tenbit-src.mkv` (selective rung)**: the output still
@@ -364,6 +413,14 @@ trusting it (`0x7F7C`, not `0xFFFF`).
       exit 0. It fails today at exit -22 even though it is fully opaque, because
       ffmpeg's gif decoder reports `bgra` for every GIF — so this line proves the
       phase fixes every GIF source, not only transparent ones.
+- [ ] **`--to webm` over `pal-alpha-src.png` (selective rung)**: whatever open
+      decision 3 settled. If the override fires, the corner pixel's alpha comes
+      back **0**, not 255 — today it converts at exit 0 and comes back 255, which
+      is the silent loss this phase found. This is the only QA line where the
+      phase turns a reported success into a correct one.
+- [ ] **`--to webm` over `pal-opaque-src.png` (selective rung)**: whatever open
+      decision 3 settled, checked deliberately — it converts today via `gbrp`, so
+      a firing override changes a working conversion to 4:2:0.
 - [ ] **`--to webm` over `alpha16-src.png` (selective rung)**: whatever open
       decision 1 settled, checked on the fixture above — alpha preserved at full
       depth (option B), or preserved at 8-bit **with the degradation named**
@@ -382,7 +439,8 @@ trusting it (`0x7F7C`, not `0xFFFF`).
 | An implementer checks alpha with `ffprobe` or a default-decoder round-trip and concludes it was dropped | The trap is a call-out block, a Prior-decisions row, a Constraint, and an instruction on every QA line that touches alpha. It is the error this spec's own first draft made |
 | The override is applied unconditionally and truncates 10-bit or high-depth sources | Its own Outcome bullet, two machine checks on the argv, and a QA line with a `yuv420p10le` fixture |
 | A literal `yuva420p` is written into `converter/jobs.py` | Named as a constitution violation in Constraints and inside open decision 2, which is what narrowed that decision's options |
-| `last_resort` is left unfixed because only the selective rung was reproduced | Its own Outcome bullet, its own machine check, and a QA line with a fixture that reaches it |
+| `last_resort` is left inconsistent with the selective rung | Its own Outcome bullet and its own argv machine check. Deliberately **no** QA line: the rung is unreachable once the selective rung is fixed, and an earlier draft's QA line invoked a `stream_limit` that does not exist |
+| The override's condition is inferred from roster membership rather than measured | The fact table states what the *encoder* negotiates per source, because `pal8` is outside the roster and yet succeeds today — the inference an earlier draft made and review round 3 refuted |
 | The `mp4`/`mkv`/`mov` selective-rung alpha loss is assumed to be covered here | Scoped out explicitly, with the mechanism stated and an instruction to file it as its own issue at acceptance |
 | A >8-bit alpha fixture is assumed rather than verified | The drafting attempt's fixture was opaque and is recorded as such, with the QA line requiring the fixture's alpha be confirmed before use |
 
@@ -423,9 +481,26 @@ trusting it (`0x7F7C`, not `0xFFFF`).
 - 2026-09-15: Review round 2 also established that the defect is **wider than an
   alpha source**. The condition is the reported `pix_fmt`, so every `.gif`
   source fails today — measured end to end on a fully opaque GIF, which the gif
-  decoder reports as `bgra` — as does any `pal8` source. The same fix covers
-  them, which makes the phase materially more valuable than its issue claimed
-  and means v3.0.0's *Known limitations* wording understates the defect.
+  decoder reports as `bgra`. That makes the phase materially more valuable than
+  its issue claimed and means v3.0.0's *Known limitations* wording understates
+  the defect.
+- 2026-09-15: Review round 3 refuted the generalisation that entry rested on.
+  "Outside `ALPHA_FREE_PIX_FMTS`, therefore it fails" is an inference, not a
+  measurement, and it is false for `pal8`: ffmpeg negotiates `gbrp` there, which
+  libvpx accepts, so a paletted source **converts today**. The governing
+  condition is what the encoder is landed on, not roster membership — the third
+  round in a row that a confident statement about the tree turned out to be one
+  step of reasoning past the evidence.
+- 2026-09-15: That refutation surfaced a second defect worth more than the wrong
+  row. A **transparent** paletted source converts at exit 0 and loses its
+  transparency in silence — measured, corner pixel `A=0` in, `A=255` out through
+  an explicit libvpx decoder, with only a `re-encoded to vp9` note. It is a live
+  breach of "never report success for a conversion that silently dropped
+  something", reachable from an ordinary PNG, and phase 8's note cannot reach it
+  because `webm` declares no `alpha_unsupported`. `pal8` stays in scope for that
+  reason instead, and the trade it forces — an opaque paletted source moving from
+  `gbrp` to a subsampled format — became open decision 3 rather than a side
+  effect of the condition picked for decision 2.
 - 2026-09-15: Open decision 1 was measured rather than deferred to the
   implementer, on a fixture built by converting a known-alpha PNG. The drafting
   attempt had synthesised one with `color=...,format=rgba64be` and got an opaque
