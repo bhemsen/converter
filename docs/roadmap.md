@@ -103,11 +103,14 @@ not seeded through `/loopkit:roadmap`: the PR that half-closed it filed the
 remainder as issue #101 rather than dropping it, and it was planned directly.
 
 Phase 9 follows phase 4, whose `webm` profile it corrects, and depends on phase 8
-for the machinery rather than the format: `Stream.pix_fmt`, `ALPHA_FREE_PIX_FMTS`
-and the transparency note all arrived there, so this phase reuses them instead of
-building its own. It is the second phase planned directly from an issue rather
-than seeded — the route phase 8 established, here starting from a release's own
-smoke test rather than from a PR's unresolved finding.
+for the data rather than the format: `Stream.pix_fmt` and `ALPHA_FREE_PIX_FMTS`
+arrived there and are exactly the source-side fact this phase needs, so it
+reuses them instead of building its own. It does **not** reuse phase 8's
+transparency note — `webm` preserves alpha, so it declares no
+`alpha_unsupported` and emits no such note. It is the second phase planned
+directly from an issue rather than seeded — the route phase 8 established, here
+starting from a release's own smoke test rather than from a PR's unresolved
+finding.
 
 There is deliberately no separate release or documentation phase. README changes
 belong to the phase that makes them necessary — phase 2 breaks the CLI, so phase 2

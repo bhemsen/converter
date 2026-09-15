@@ -48,9 +48,28 @@ specifies.
 | As shipped, no `-pix_fmt` | exit **-22**, no output — the defect |
 | **`-pix_fmt yuva420p`** | exit 0, `alpha_mode=1`, `BlockAdditional` present, **alpha round-trips at 127** |
 | `-pix_fmt gbrap` + `-strict experimental` | exit 0, **alpha round-trips at 127** |
-| `-pix_fmt yuva420p10le` | **refused**, exit -22 — the same "not widely supported" message |
+| `-pix_fmt yuva420p10le` | refused **without** `-strict experimental`, exit -22 — the same "not widely supported" message; **accepted with it** |
 | VP8 (`-c:v libvpx`) + `yuva420p` | fails on the default `auto_alt_ref`; with `-auto-alt-ref 0`, exit 0 and `alpha_mode=1` |
 | AV1 (`libaom-av1`) + `yuva420p` | alpha dropped — `libaom-av1` declares no `yuva*` pixel format |
+
+`-strict experimental` must be an **output** option; given as an input option the
+encoder still exits -22.
+
+**The defect is wider than "an alpha source".** The condition is the source's
+reported `pix_fmt`, not whether a channel is actually used, so every source whose
+format is outside `ALPHA_FREE_PIX_FMTS` fails today:
+
+| Source | Reported `pix_fmt` | `--to webm` today |
+|---|---|---|
+| RGBA PNG | `rgba` | **fails**, exit -22 |
+| **Any `.gif`, opaque included** | `bgra` — ffmpeg's gif decoder reports it unconditionally (phase 8 measured the same thing) | **fails**, exit -22 |
+| Paletted PNG | `pal8` | **fails**, exit -22 |
+
+`.gif` is in `SOURCE_SUFFIXES`, so `--to webm` currently fails for **every GIF
+source in a tree**, transparent or not — measured end to end through the CLI on
+an opaque GIF. The same conditional override fixes all three, because neither
+`bgra` nor `pal8` is in `ALPHA_FREE_PIX_FMTS`. v3.0.0's *Known limitations* entry
+therefore understates the defect and is corrected by this phase.
 
 > **The trap, recorded because this spec's first draft fell into it and the
 > acceptance review caught it.** `ffprobe` and `ffmpeg` default to the **native**
@@ -81,15 +100,22 @@ Two consequences follow, and they are the shape of the whole phase:
 - [ ] An RGBA source into `webm` **converts at exit 0 with its alpha channel
       intact** — verified by decoding with an explicit libvpx decoder, not by
       reading the output's reported `pix_fmt`.
-- [ ] A source whose pixel format carries **no** alpha is byte-for-byte
-      unaffected: same argv, same output, no note.
+- [ ] A source whose `pix_fmt` **is a member of `ALPHA_FREE_PIX_FMTS`** is
+      byte-for-byte unaffected: same argv, same output, no note. Stated as the
+      roster test rather than as "carries no alpha", because an opaque GIF
+      reports `bgra` and an opaque paletted PNG reports `pal8` — both are outside
+      the roster, both fail today, and both are *meant* to change.
+- [ ] Every GIF source converts to `webm`. Today none does.
 - [ ] A **10-bit** source into `webm` still produces 10-bit output
       (`yuv420p10le` in, `yuv420p10le` out), and an opaque high-depth source
       still reaches `gbrp12le`.
 - [ ] A source already in a WebM codec that the cheap attempt **copies** is
       untouched, alpha included.
 - [ ] Every rung that can re-encode carries the fix — the selective rung **and**
-      `last_resort`, which fails identically today.
+      `last_resort`, which fails identically today when reached. The
+      `last_resort` half is **defensive**: with the selective rung fixed, no
+      constructible source reaches it (see Prior decisions), so it is pinned by
+      argv test only and carries no QA line that would have to pass.
 - [ ] Whatever the gate decides for a **>8-bit alpha** source is implemented and
       named: either it keeps both, or what it gives up is reported.
 - [ ] `CHANGELOG.md`'s v3.0.0 *Known limitations* entry for this defect records
@@ -187,30 +213,52 @@ Two consequences follow, and they are the shape of the whole phase:
 | The verdict is **source-measured**, reusing `Stream.pix_fmt` against `ALPHA_FREE_PIX_FMTS` | Already probed (#104), no new process. The output side is unusable here for the decoder reason above, which is a second reason on top of phase 8's | 2026-09-15 |
 | The override is **conditional on the source carrying alpha**, never unconditional | Measured: `yuv420p10le` survives today and any blanket `-pix_fmt` truncates it; an opaque `rgb48be` reaches `gbrp12le` with no flag | 2026-09-15 |
 | `webm` does **not** declare `alpha_unsupported`, and emits no transparency note for the fixed case | It can hold alpha. Phase 8's forced-encoder boundary is therefore untouched by this phase — the first draft's open decision about widening it disappeared with the corrected facts | 2026-09-15 |
-| Both re-encoding rungs are fixed | `last_resort` fails identically to the selective rung on a `gbrap` source — reproduced at exit -22. Fixing one rung would leave the defect reachable | 2026-09-15 |
+| Both re-encoding rungs are fixed, but `last_resort`'s half is **defensive** | Its argv fails identically on a `gbrap` source — reproduced at exit -22 — so leaving it inconsistent would be a trap for the next reader. But `webm`'s video rule declares **no `stream_limit`** (measured: `WEBM.rules["video"].stream_limit is None`; the only `stream_limit=1` rules in the tree are `wav`/`mp3`/`flac` and the image profiles), and with the selective rung fixed a two-video-stream source **succeeds there** — measured: `-pix_fmt:v:0 yuva420p` gives exit 0 and `vp9/yuva420p` + `vp9/gbrp`. `batch._attempt_conversion` returns on the first success, so `last_resort` is not reachable for any source this phase can construct. An earlier draft claimed a `stream_limit` that does not exist and gave it a QA line that could not pass | 2026-09-15 |
 | **OPEN — what happens to a >8-bit alpha source?** `yuva420p10le` is refused, so the non-experimental path can keep alpha *or* depth, not both. | resolved at the spec-acceptance gate | — |
 | **OPEN — how does the conditional pixel format reach the argv?** Every attempt's options are a static tuple today, varied only by `_substitute_position`'s stream index. | resolved at the spec-acceptance gate | — |
 
 ### The two open decisions, in full
 
-**1. The >8-bit alpha source.** Measured: `yuva420p10le` is refused without
-`-strict experimental`; `gbrap` *with* it round-trips alpha at 8-bit. What a
->8-bit alpha source costs on the experimental path is **not yet measured** — the
-first attempt used a fixture that turned out to be opaque, so the implementing
-issue must measure it rather than inherit a guess.
+**1. The >8-bit alpha source.** Now measured, on a fixture built by *converting*
+a known-alpha PNG (`-pix_fmt rgba64be`) rather than synthesising one — the
+drafting attempt used `color=...,format=rgba64be`, which yields an **opaque**
+file, the same class of trap this spec records above. Verified source alpha
+`0x7F7C`:
+
+| Pixel format | Without `-strict experimental` | With it | Alpha back |
+|---|---|---|---|
+| `yuva420p` (8-bit) | **exit 0** | — | `0x7F00` — the low byte is gone |
+| `yuva420p10le` | exit -22 | exit 0 | `0x7F80` |
+| `gbrap10le` | exit -22 | exit 0 | `0x7F5F` |
+| `gbrap12le` | exit -22 | exit 0 | `0x7F77` |
+| `yuva444p12le` | exit -22 | exit 0 | `0x7F90` |
+
+So all four >8-bit paths keep sub-byte alpha precision (the spread is ordinary
+lossy-encode rounding around `0x7F7C`), and all four need the experimental flag.
 
 - **A — always `yuva420p`.** Simplest and never experimental. A >8-bit alpha
-  source keeps its alpha and loses depth, which is a real degradation and so
-  needs a note — and there is no depth-note machinery today (phase 7 recorded
-  `--to wav`'s bit-depth truncation as an open gap of the same kind).
-- **B — `-strict experimental` with a `gbrap*` format when the source is
-  >8-bit alpha.** Keeps both, if measurement confirms it. Costs shipping an
-  experimental flag by default, and the output is by ffmpeg's own words "not
-  widely supported" — a playability risk the user never asked for.
+  source keeps its alpha and loses depth — measured, `0x7F7C` -> `0x7F00` — which
+  is a real degradation and so needs a note. There is no depth-note machinery
+  today; phase 7 recorded `--to wav`'s bit-depth truncation as an open gap of the
+  same kind, so this option either builds one or ships a silent truncation the
+  constitution forbids.
+- **B — `-strict experimental` plus a >8-bit alpha format when the source is
+  >8-bit alpha.** Measured feasible, and cheaper than the first draft implied:
+  `yuva420p10le` is a **one-token change** from `yuva420p`, so a `gbrap*` format
+  is not required. Costs shipping an experimental flag by default, on output that
+  is by ffmpeg's own words "not widely supported" — a playability risk the user
+  never asked for.
 - **C — treat a >8-bit alpha source as the alpha-free path**: keep the depth,
-  drop the alpha, and name it with phase 8's existing note. Consistent with the
-  machinery already in the tree, at the cost of discarding a channel in the one
-  case the phase exists to protect.
+  drop the alpha, and name it. **This is the most expensive option, not the
+  cheapest** — an earlier draft had this backwards. Phase 8's note reaches
+  nothing unless the profile declares `alpha_unsupported`
+  (`converter/jobs.py`: `if not profile.alpha_unsupported: return ()`), and that
+  field's own docstring forbids exactly this profile from declaring it: a
+  copy-based cheap attempt "asserts nothing about any encoder's behaviour, so it
+  must never declare it". `tests/test_profiles.py` pins the declaring set to
+  `{jpg, gif, avif}`. So option C means either violating a documented boundary
+  and changing a pinned test, or building new note machinery — while discarding a
+  channel in the one case the phase exists to protect.
 
 **2. How the conditional pixel format reaches the argv.** Note that the
 constitution narrows this more than the first draft allowed: a literal
@@ -223,10 +271,27 @@ special-casing `webm` there. So the value must come from the profile either way.
   plus one flag.
 - **B — a declared pixel-format value** on the rule (e.g. an
   `alpha_pix_fmt` field), which `jobs.py` appends as `-pix_fmt:v:{n}` when the
-  source's `pix_fmt` is not in `ALPHA_FREE_PIX_FMTS`. One small declaration, no
-  duplicated tuple; the engine contributes the flag but never the value.
+  stream **takes the fallback branch** *and* its `pix_fmt` is not in
+  `ALPHA_FREE_PIX_FMTS`. Both conditions are required: without the first, a
+  vp9-alpha source that hits the copy mask would get a pixel-format flag beside
+  `-c:v:0 copy`. One small declaration, no duplicated tuple; the engine
+  contributes the flag but never the value.
 - **C — a declared map** from alpha format to replacement. More general than any
   present need; listed to be dismissed unless the gate wants the generality.
+
+**House style points at B**, and the gate should know it: every
+profile-declares-a-fact case in the tree is a scalar the engine reads —
+`partial_mapping`, `explicit_streams`, `alpha_unsupported`, `stream_limit`,
+`fallback_name`, `drop_reason`. A second parallel options tuple (option A) has no
+precedent anywhere in `converter/profiles.py`. Nothing *forces* B, so the
+decision is genuinely open, but A would be the first of its kind.
+
+**Whichever option is chosen, it must also say where `last_resort` gets its
+value.** All three are phrased "on the rule", but `last_resort` is an `Attempt`
+on the `Profile`, not on a `StreamRule`, and is not built from rules at all — so
+either the engine cross-references the `video` rule from a rung that has none, or
+the profile declares a second value on `last_resort` itself. Settle it in the
+same breath rather than leaving it to the implementer.
 
 Whichever pair is chosen, `docs/design/stream-decision.md` gains the node that
 describes a source-dependent option and `docs/design/degradation-ladder.md`
@@ -247,11 +312,15 @@ never encoder behaviour):
       alpha-carrying source and for an alpha-free one: the two differ only by the
       pixel-format flag, the flag carries the per-stream `:v:{n}` form, and the
       alpha-free case is byte-for-byte what ships today.
-- [ ] The same pair for **`last_resort`**, in its global (index-less) form.
+- [ ] The same pair for **`last_resort`**, in its global (index-less) form. This
+      is the whole of that rung's coverage — it is defensive and has no QA line,
+      per the Prior-decisions row.
 - [ ] A test that a `yuv420p10le` source's argv carries **no** pixel-format
       override on either rung.
 - [ ] A test that a source whose codec is in `WEBM_VIDEO_CODECS` takes the copy
       branch, so no pixel-format flag is added.
+- [ ] A test that a `bgra` source (every `.gif`) and a `pal8` source **do** get
+      the override — they are outside `ALPHA_FREE_PIX_FMTS` and fail today.
 - [ ] A test that the other sixteen profiles' argv is unchanged by this phase,
       for both an alpha and an alpha-free source.
 - [ ] A test that the ffprobe process count per conversion is unchanged.
@@ -270,8 +339,13 @@ New-Item -ItemType Directory -Force in
 & $FF -y -f lavfi -i color=c=blue:size=200x200:d=1 -frames:v 1 in/opaque-src.jpg
 & $FF -y -f lavfi -i testsrc=size=160x120:rate=10:duration=1 -c:v libx264 -pix_fmt yuv420p10le in/tenbit-src.mkv
 & $FF -y -i in/alpha-src.png -c:v libvpx-vp9 -pix_fmt yuva420p in/vp9-alpha-src.webm
-& $FF -y -i in/alpha-src.png -i in/opaque-src.jpg -map 0:v -map 1:v -c:v png in/twovid-src.mkv
+& $FF -y -i in/opaque-src.jpg -c:v gif in/opaque-gif-src.gif
+& $FF -y -i in/alpha-src.png -pix_fmt rgba64be in/alpha16-src.png
 ```
+
+Build `alpha16-src.png` by **converting** a known-alpha file, as above.
+`color=...,format=rgba64be` yields an opaque file — verify its alpha before
+trusting it (`0x7F7C`, not `0xFFFF`).
 
 - [ ] **`--to webm` over `alpha-src.png` (selective rung)**: converts at exit 0.
       Decode the output with `& $FF -c:v libvpx-vp9 -i <out> -pix_fmt rgba -f rawvideo -`
@@ -286,12 +360,17 @@ New-Item -ItemType Directory -Force in
       is copied; decode with the explicit libvpx decoder and confirm the alpha is
       still ~127. Note that `ffprobe` will report `yuv420p` for both input and
       output here — that is the decoder, not a loss.
-- [ ] **`--to webm` over `twovid-src.mkv` (`last_resort`)**: its second video
-      stream and the `stream_limit` force the ladder down to `last_resort`;
-      confirm it converts and the alpha of the first stream survives.
-- [ ] Whatever open decision 1 settles, exercised on a >8-bit alpha fixture built
-      at implementation time (the one used while drafting turned out to be
-      opaque — build it and verify its alpha before trusting it).
+- [ ] **`--to webm` over `opaque-gif-src.gif` (selective rung)**: converts at
+      exit 0. It fails today at exit -22 even though it is fully opaque, because
+      ffmpeg's gif decoder reports `bgra` for every GIF — so this line proves the
+      phase fixes every GIF source, not only transparent ones.
+- [ ] **`--to webm` over `alpha16-src.png` (selective rung)**: whatever open
+      decision 1 settled, checked on the fixture above — alpha preserved at full
+      depth (option B), or preserved at 8-bit **with the degradation named**
+      (option A).
+- [ ] No QA line exercises `last_resort`, by design: with the selective rung
+      fixed, no constructible source reaches it (Prior decisions). Its argv fix
+      is covered by machine check alone.
 - [ ] `CHANGELOG.md`'s v3.0.0 *Known limitations* entry has been updated.
 - [ ] A second run over any converted tree reports `0 converted`, exit 0.
 - [ ] The v3.0.0 smoke matrix still passes: all seventeen targets, no new failure.
@@ -330,3 +409,25 @@ New-Item -ItemType Directory -Force in
 - 2026-09-15: The 10-bit finding survived the rewrite unchanged and is what makes
   the override conditional rather than blanket. An opaque `rgb48be` source
   reaching `gbrp12le` today was added beside it.
+- 2026-09-15: Review round 2 found two more statements the codebase contradicts,
+  the same class as round 1's. The `last_resort` QA line invoked a
+  `stream_limit` that `webm`'s video rule does not declare, and the fixture it
+  named **succeeds on the selective rung** once the fix is applied — so the rung
+  is not reachable for any constructible source and the line could never have
+  passed. That half of the fix is now stated as defensive, pinned by argv test
+  and given no QA line. And open decision 1's option C was described as the
+  cheapest when it is the most expensive: phase 8's note is gated on
+  `alpha_unsupported`, whose docstring forbids a copy-based cheap attempt from
+  declaring it and whose declaring set is pinned by test to `{jpg, gif, avif}`.
+  A cost stated backwards can produce the wrong choice at the gate.
+- 2026-09-15: Review round 2 also established that the defect is **wider than an
+  alpha source**. The condition is the reported `pix_fmt`, so every `.gif`
+  source fails today — measured end to end on a fully opaque GIF, which the gif
+  decoder reports as `bgra` — as does any `pal8` source. The same fix covers
+  them, which makes the phase materially more valuable than its issue claimed
+  and means v3.0.0's *Known limitations* wording understates the defect.
+- 2026-09-15: Open decision 1 was measured rather than deferred to the
+  implementer, on a fixture built by converting a known-alpha PNG. The drafting
+  attempt had synthesised one with `color=...,format=rgba64be` and got an opaque
+  file — the same decoder-versus-reality trap in a new place, caught by checking
+  the fixture instead of trusting it.
