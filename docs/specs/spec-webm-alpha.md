@@ -519,15 +519,20 @@ trusting it (`0x7F7C`, not `0xFFFF`).
 - 2026-09-15 (issue #116): Resolved the one choice open decision 2 left to the
   implementer — how `webm`'s `last_resort` reaches the alpha pixel format
   declared on the `video` rule. **Chosen: the engine cross-references
-  `profile.rules["video"].alpha_pix_fmt` from `last_resort`**, rather than the
-  `Profile` declaring a second value there. `jobs.retries` already receives
-  the whole `profile` when it builds `last_resort` (`converter/jobs.py`), so
-  reading the same rule's field costs no new declaration and keeps the value
-  single-sourced; a second field on `Attempt` or `Profile` would restate the
-  literal `"yuva420p"` a second time with nothing to keep the two in sync if
-  either ever changed — the same "no duplicated tuple" reasoning decision 2
-  itself used to prefer a scalar over a second options tuple. Issue #116 adds
-  no engine code for the cross-reference itself (that is #117's mechanism,
-  per this spec's own scope split); it adds only `StreamRule.alpha_pix_fmt`,
-  the value declared on `webm`'s video rule, and a comment on `WEBM.last_resort`
-  recording this choice for #117 to implement against.
+  `profile.rules.get("video")` and reads its `alpha_pix_fmt` from
+  `last_resort`**, rather than the `Profile` declaring a second value there.
+  `jobs.retries` already receives the whole `profile` when it builds
+  `last_resort` (`converter/jobs.py`), so reading the same rule's field costs
+  no new declaration and keeps the value single-sourced; a second field on
+  `Attempt` or `Profile` would restate the literal `"yuva420p"` a second time
+  with nothing to keep the two in sync if either ever changed — the same "no
+  duplicated tuple" reasoning decision 2 itself used to prefer a scalar over a
+  second options tuple. The lookup must be guarded (`.get`, not `["video"]`):
+  five profiles declare a `last_resort` and no `"video"` rule at all (`mp3`,
+  `flac`, `m4a`, `ogg`, `opus`), so an unguarded index would raise `KeyError`
+  for every one of them the moment #117 wires the cross-reference in. Issue
+  #116 adds no engine code for the cross-reference itself (that is #117's
+  mechanism, per this spec's own scope split); it adds only
+  `StreamRule.alpha_pix_fmt`, the value declared on `webm`'s video rule, and a
+  comment on `WEBM.last_resort` recording this choice for #117 to implement
+  against.

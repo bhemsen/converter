@@ -2323,6 +2323,9 @@ class TestAlphaPixFmtField:
     silently, mirroring `TestAlphaUnsupportedField` above."""
 
     def test_only_webms_video_rule_declares_it(self):
+        """Exhaustive over the registry, not a spot-check: every profile's
+        every rule is swept, so a later profile that acquires this field on
+        any rule -- video or otherwise -- fails this immediately."""
         declaring = {
             (profile.name, kind)
             for profile in PROFILES.values()

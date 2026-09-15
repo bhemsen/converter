@@ -1460,7 +1460,10 @@ class TestAlphaPixFmtDeclarationLeavesArgvUnchanged:
     registry may change while the value is still unread, so this asserts the
     same invariant across every shipped profile rather than one -- the guard
     that would fail immediately if a stream's probed `pix_fmt` started moving
-    a single byte of built argv before #117 lands.
+    a single byte of built argv before #117 lands. Once #117 lands, `webm`'s
+    own argv is expected to start differing between the two streams below and
+    this parametrization must narrow to the other sixteen profiles
+    (Verification, spec-webm-alpha.md: "the other sixteen").
 
     Compares only `.options`, never `.notes`: `jpg`/`gif`/`avif` already vary
     their *notes* by `pix_fmt` (`Profile.alpha_unsupported`, #105) regardless
@@ -1470,11 +1473,16 @@ class TestAlphaPixFmtDeclarationLeavesArgvUnchanged:
 
     def test_selective_and_last_resort_argv_ignore_pix_fmt(self, profile):
         # A codec no profile's copy mask names, so the selective rung's
-        # fallback (re-encode) branch fires for every profile that has a
+        # fallback (re-encode) branch fires for every profile that declares a
         # "video" rule -- webm's included, which is the one branch #117 will
-        # actually touch. Profiles with no "video" rule structurally drop
-        # this stream instead (`_structural_drop`), which is just as valid a
-        # check of the same invariant.
+        # actually touch, giving real multi-token coverage there. A profile
+        # with no "video" rule (wav/mp3/flac/m4a/ogg/opus) structurally drops
+        # this stream instead: wav's selective rung then never exists (both
+        # sides compare `[] == []`) and the audio profiles fall through to
+        # their stream-independent `last_resort` constant -- neither is a
+        # meaningful probe of the field on its own, but
+        # `tests/test_profiles.py::TestAlphaPixFmtField` is what actually
+        # proves exclusivity across those six, so the gap here costs nothing.
         alpha = [Stream(0, "video", "not-a-real-codec", pix_fmt="rgba")]
         alpha_free = [Stream(0, "video", "not-a-real-codec", pix_fmt="yuv420p")]
 
