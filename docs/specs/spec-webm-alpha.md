@@ -65,7 +65,7 @@ fallback argv, and end to end through the CLI:
 |---|---|---|---|
 | RGBA PNG | `rgba` | `gbrap` | **fails**, exit -22 |
 | **Any `.gif`, opaque included** | `bgra` — ffmpeg's gif decoder reports it unconditionally (phase 8 measured the same) | `gbrap` | **fails**, exit -22 |
-| 16-bit RGBA PNG | `rgba64be` | `gbrap` | **fails**, exit -22 |
+| 16-bit RGBA PNG | `rgba64be` | `gbrap12le` | **fails**, exit -22 |
 | Grey+alpha PNG | `ya8` | `gbrap` | **fails**, exit -22 |
 | **Paletted PNG, transparent or not** | `pal8` | **`gbrp`** — libvpx accepts it unconditionally | **succeeds**, exit 0 |
 
@@ -121,12 +121,12 @@ Two consequences follow, and they are the shape of the whole phase:
       byte-for-byte unaffected: same argv, same output, no note.
 - [ ] Every GIF source converts to `webm`. Today none does — an opaque GIF
       reports `bgra` and fails like a transparent one.
-- [ ] A **transparent paletted** source keeps its transparency. Today it converts
-      and loses it in silence, which is the phase's second defect and the only one
-      that is a live constitution breach rather than a failure.
-- [ ] Whatever open decision 3 settles for **opaque paletted** sources is
-      deliberate: they convert today via `gbrp`, so an override that fires for
-      every `pal8` would introduce chroma subsampling where there is none.
+- [ ] Whatever open decision 3 settles for **paletted** sources is implemented
+      and deliberate, in both directions. A transparent paletted source converts
+      today and loses its transparency in silence — the phase's second defect,
+      and the only one that is a live constitution breach rather than a failure.
+      An opaque paletted source converts today via `gbrp`, so an override that
+      fires for every `pal8` introduces chroma subsampling where there is none.
 - [ ] A **10-bit** source into `webm` still produces 10-bit output
       (`yuv420p10le` in, `yuv420p10le` out), and an opaque high-depth source
       still reaches `gbrp12le`.
@@ -308,6 +308,13 @@ profile-declares-a-fact case in the tree is a scalar the engine reads —
 precedent anywhere in `converter/profiles.py`. Nothing *forces* B, so the
 decision is genuinely open, but A would be the first of its kind.
 
+**Whichever of A, B or C is chosen, it must also say where `last_resort` gets its
+value.** All three are phrased "on the rule", but `last_resort` is an `Attempt`
+on the `Profile`, not on a `StreamRule`, and is not built from rules at all — so
+either the engine cross-references the `video` rule from a rung that has none, or
+the profile declares a second value on `last_resort` itself. Settle it in the
+same breath rather than leaving it to the implementer.
+
 **3. Does the override fire for `pal8`?** This is about the override's
 *condition*, not its mechanism, which is why it is its own decision. `pal8`
 converts today and `pix_fmt` cannot say whether the palette carries a transparent
@@ -330,14 +337,7 @@ Measured both ways:
 Whichever way this goes, it should be recorded as a deliberate trade rather than
 falling out of the condition chosen for decision 2.
 
-**Whichever option is chosen, it must also say where `last_resort` gets its
-value.** All three are phrased "on the rule", but `last_resort` is an `Attempt`
-on the `Profile`, not on a `StreamRule`, and is not built from rules at all — so
-either the engine cross-references the `video` rule from a rung that has none, or
-the profile declares a second value on `last_resort` itself. Settle it in the
-same breath rather than leaving it to the implementer.
-
-Whichever pair is chosen, `docs/design/stream-decision.md` gains the node that
+Whichever combination is chosen, `docs/design/stream-decision.md` gains the node that
 describes a source-dependent option and `docs/design/degradation-ladder.md`
 follows.
 
