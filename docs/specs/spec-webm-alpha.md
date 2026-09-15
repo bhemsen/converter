@@ -353,8 +353,10 @@ Measured both ways:
   Keeps both properties; inherits decision 1's experimental-flag cost.
 
 **Resolved: fire for every `pal8`** — the first option. The silent-loss rule
-outranks a quality regression that is itself nameable, and the reduction note
-above covers it.
+outranks a quality regression that is itself nameable, and the existing
+re-encode note covers it (not the new depth-only note — Decision log,
+2026-09-15, corrected from an earlier version of this sentence written
+before that note's scope was resolved).
 
 With the combination resolved, `docs/design/stream-decision.md` gains the node that
 describes a source-dependent option and `docs/design/degradation-ladder.md`

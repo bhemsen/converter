@@ -561,9 +561,14 @@ def _with_last_resort_alpha_override(
 
     Global and index-less (``-pix_fmt``, not ``-pix_fmt:v:{n}``): a
     stream-independent attempt names no output position to substitute into.
+
+    Carries no depth-reduction note of its own -- ``last_resort`` sees no
+    stream list to name an index or codec from, and per Prior decisions it is
+    unreachable for any source this phase can construct once the selective
+    rung is fixed, so it stays pinned by argv test alone.
     """
     video_rule = profile.rules.get("video")
-    alpha_pix_fmt = video_rule.alpha_pix_fmt if video_rule else None
+    alpha_pix_fmt = video_rule.alpha_pix_fmt if video_rule is not None else None
     pix_fmt = _first_video_pix_fmt(streams)
     if alpha_pix_fmt is None or pix_fmt is None or pix_fmt in ALPHA_FREE_PIX_FMTS:
         return last_resort

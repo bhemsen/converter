@@ -1676,6 +1676,18 @@ class TestWebmAlphaDepthNote:
 
         assert selective.notes == ("video stream 0 (png) re-encoded to vp9",)
 
+    def test_does_not_fire_for_a_copied_stream_even_when_deeper_than_8_bits(self):
+        """A literal stream copy cannot drop anything a decode-encode
+        round-trip might, the same reasoning `_alpha_notes` already applies
+        to phase 8's transparency note -- proven deliberately with a
+        genuinely deep pix_fmt, not the incidental empty-string default the
+        pre-existing copy-branch fixtures happen to carry."""
+        streams = [Stream(0, "video", "vp9", pix_fmt="gbrap10le")]
+
+        selective = jobs.retries(WEBM, streams)[0]
+
+        assert selective.notes == ()
+
 
 class TestProfileArgvPinning:
     """Verification: the full argv each profile builds, pinned byte-for-byte
