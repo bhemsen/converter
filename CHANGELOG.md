@@ -10,15 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **`--to webm` no longer fails on a source carrying an alpha channel, and no
-  longer silently discards one.** An RGBA, 16-bit RGBA, grey+alpha or paletted
-  PNG now converts to WebM with its alpha channel intact instead of failing
-  outright; a source deeper than 8 bits per channel keeps its alpha but has its
-  depth reduced to 8 bits, and that reduction is named. Every `.gif` source now
+  longer silently discards one.** An RGBA, 16-bit RGBA or grey+alpha PNG now
+  converts to WebM with its alpha channel intact instead of failing outright;
+  a source deeper than 8 bits per channel keeps its alpha but has its depth
+  reduced to 8 bits, and that reduction is named. Every `.gif` source now
   converts too — previously all of them failed, transparent or fully opaque,
   because ffmpeg's own GIF decoder reports every GIF as carrying an alpha
-  channel regardless of whether it does. A transparent paletted PNG, which
-  previously converted "successfully" while silently losing its transparency,
-  now keeps it.
+  channel regardless of whether it does. A **transparent** paletted PNG,
+  which already converted but silently lost its transparency, now keeps it —
+  the cost is that an **opaque** paletted source, which already converted
+  too, now does so at 4:2:0 chroma subsampling instead of 4:4:4, because the
+  pixel format cannot tell the two apart.
 
 ## [3.0.0] - 2026-09-15
 

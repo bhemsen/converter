@@ -620,3 +620,28 @@ trusting it (`0x7F7C`, not `0xFFFF`).
   what was true when 3.0.0 shipped, corrected only where it was factually
   wrong (the GIF scope, the false "unaffected" claim), plus a forward
   pointer -- it does not retroactively claim 3.0.0 shipped the fix.
+- 2026-09-15 (issue #118): The mandatory fresh-subagent review round (opus)
+  found two further confident-but-false statements in the first drafted
+  fix, and one real omission -- the same class of finding every prior round
+  of this spec produced. Corrected all three before merge:
+  - `CHANGELOG.md`'s new *Unreleased* entry listed "paletted" among the PNG
+    kinds that "previously failed outright". False: the spec's own fact
+    table (the `pal8` row) and Decision log both establish `pal8` converted
+    successfully before this fix, at `gbrp`; it never failed. Reworded to
+    keep the transparent-paletted case (a real, separate fix: silent loss
+    corrected) and dropped the false "failed outright" framing for
+    paletted sources generally.
+  - The same entry described the fix as a pure gain and never named the
+    cost decision 3 explicitly accepted: an *opaque* paletted source now
+    converts at 4:2:0 chroma subsampling instead of `gbrp` (4:4:4), because
+    `pix_fmt` cannot tell a transparent palette from an opaque one. Named
+    in the entry now, consistent with the vision's "whatever is lost gets
+    named rather than hidden" -- a release note is exactly the kind of
+    surface that rule was written for.
+  - `docs/design/stream-decision.md` claimed the option is applied "in the
+    same per-stream form ... every other option on this rung already
+    carries". False as a universal: `webm`'s own video fallback
+    (`converter/profiles.py`, `WEBM.rules["video"].fallback_options`) also
+    carries `-row-mt 1 -cpu-used 4`, both bare, no `{n}`. Narrowed to name
+    only the rule's *positional* options (`-c:v:{n}`, `-crf:v:{n}`), which
+    the claim is actually true of, in both the node label and the prose.
