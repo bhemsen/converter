@@ -95,7 +95,7 @@ The internal import graph is acyclic today and must stay that way:
    alpha-carrying pixel format forced when the source's probed `pix_fmt` is not
    already alpha-free — a stream the copy mask accepts never reaches this
    option, since it never reaches the fallback encoder at all,
-   `docs/specs/spec-webm-alpha.md`) — and streams are dropped when the
+   `docs/specs/archive/spec-webm-alpha.md`) — and streams are dropped when the
    container cannot hold that stream type at all, when it is already holding as
    many streams of the type as it can, or when the rule declares no fallback.
    Every sacrifice becomes a note on the attempt. The last rung is the full

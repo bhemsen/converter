@@ -69,7 +69,7 @@ class StreamRule:
     #: ``None`` for every rule whose fallback either cannot hold alpha
     #: regardless of pixel format, or needs no coercion to keep the one it
     #: already has. Only ``webm``'s video rule declares it, as ``"yuva420p"``
-    #: (``docs/specs/spec-webm-alpha.md``).
+    #: (``docs/specs/archive/spec-webm-alpha.md``).
     alpha_pix_fmt: str | None = None
 
 
@@ -487,7 +487,7 @@ ALPHA_FREE_PIX_FMTS = frozenset(
 #: Pixel formats `ffprobe -show_pixel_formats -of json` reports with
 #: ``flags.alpha == 1`` **and** ``flags.hwaccel == 0`` **and** every
 #: component's ``bit_depth <= 8`` -- 13 formats, measured against ffmpeg 9.0
-#: (docs/specs/spec-webm-alpha.md). A source stream whose probed ``pix_fmt``
+#: (docs/specs/archive/spec-webm-alpha.md). A source stream whose probed ``pix_fmt``
 #: is a member of this set already carries its alpha channel at 8 bits or
 #: less, so forcing it into `webm`'s ``yuva420p`` fallback truncates nothing
 #: -- no depth-reduction note is owed. Every alpha-capable format *outside*
