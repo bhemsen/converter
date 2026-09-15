@@ -225,6 +225,26 @@ flowchart TD
 - **The last rung is optional.** A container that can always be reached by a full
   re-encode declares one; a container with nothing further to give up (WAV) does
   not, and a failure at the rung before it is then the end of the ladder.
+- **`last_resort` can carry the same kind of source-dependent option, in its
+  global form.** A per-stream option (`stream-decision.md`'s `OPT`/`OVERRIDE`
+  nodes) is substituted through a per-stream specifier because the selective
+  rung already has one to substitute into; `last_resort` is a single
+  stream-independent `Attempt` built straight from the profile, with no
+  per-stream plan at all, so the same option is applied instead as a bare,
+  index-less flag — set only when the profile declares one and the source's
+  first stream of that type does not already satisfy it. `webm`'s video rule is
+  the only declared case today: a bare `-pix_fmt`, forced when the source's
+  first video stream's probed `pix_fmt` is not already alpha-free
+  (`docs/specs/spec-webm-alpha.md`). This half is **defensive**: `webm`'s video
+  rule declares no `stream_limit`, so once the selective rung carries the same
+  option, even a source with more than one video stream — the shape that might
+  be expected to overflow onto this rung — already succeeds there instead
+  (measured: `-pix_fmt:v:0 yuva420p` on such a source exits 0), and
+  `batch._attempt_conversion` returns on that success before `last_resort` is
+  ever attempted. No source this project can construct reaches the option
+  through `last_resort` in practice; it is kept consistent with the selective
+  rung so a future reader never finds the two disagreeing, not because this
+  half is exercised.
 - **Every rung carries its own notes.** The notes of the attempt that actually
   succeeded are what the batch reports — the discarded rungs' notes are not. Only
   the cheap attempt's notes are ever added to, and only by the two verification

@@ -5,6 +5,21 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`--to webm` no longer fails on a source carrying an alpha channel, and no
+  longer silently discards one.** An RGBA, 16-bit RGBA, grey+alpha or paletted
+  PNG now converts to WebM with its alpha channel intact instead of failing
+  outright; a source deeper than 8 bits per channel keeps its alpha but has its
+  depth reduced to 8 bits, and that reduction is named. Every `.gif` source now
+  converts too — previously all of them failed, transparent or fully opaque,
+  because ffmpeg's own GIF decoder reports every GIF as carrying an alpha
+  channel regardless of whether it does. A transparent paletted PNG, which
+  previously converted "successfully" while silently losing its transparency,
+  now keeps it.
+
 ## [3.0.0] - 2026-09-15
 
 The target-format release. `converter --to <format>` replaces the two hard-wired
@@ -76,12 +91,15 @@ instead of Python. Whatever a conversion gives up is named rather than hidden.
 
 ### Known limitations
 
-- **`--to webm` fails for a source carrying an alpha channel.** Measured with
-  ffmpeg 9.0: an RGBA PNG is refused by `libvpx-vp9` with *"Pixel format 'gbrap'
-  is not widely supported"*, on every rung of the ladder. The failure is
-  reported and the batch continues with a non-zero exit — nothing is silently
-  corrupted — but the file is not converted. Opaque sources into `webm` are
-  unaffected.
+- **`--to webm` failed for a source carrying an alpha channel — fixed, not yet
+  released** (see *Unreleased* above). Measured with ffmpeg 9.0: an RGBA PNG
+  was refused by `libvpx-vp9` with *"Pixel format 'gbrap' is not widely
+  supported"*, on every rung of the ladder. This understated the defect: every
+  `.gif` source failed the same way, opaque ones included, because ffmpeg's
+  GIF decoder reports every GIF as carrying an alpha channel (`bgra`)
+  regardless of whether it actually does. The failure was reported and the
+  batch continued with a non-zero exit — nothing was silently corrupted — but
+  the file did not convert.
 - **`--to opus` can hand you a `.opus` file that is actually Vorbis**, because
   the Ogg muxer accepts either. The README documents when this happens.
 - **Metadata is not preserved.** ffmpeg strips it by default, and PNG cannot
