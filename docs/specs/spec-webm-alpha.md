@@ -86,7 +86,7 @@ So `pal8` belongs in this phase's scope for a **better** reason than the first
 draft's: the override turns a silent loss into a correct conversion. But it also
 carries a cost the gate must weigh, because `pix_fmt` alone cannot tell a
 transparent paletted image from an opaque one — the ambiguity phase 8 already
-recorded for `pal8`. See open decision 3.
+recorded for `pal8`. See decision 3, resolved at the gate.
 
 > **The trap, recorded because this spec's first draft fell into it and the
 > acceptance review caught it.** `ffprobe` and `ffmpeg` default to the **native**
@@ -121,12 +121,14 @@ Two consequences follow, and they are the shape of the whole phase:
       byte-for-byte unaffected: same argv, same output, no note.
 - [ ] Every GIF source converts to `webm`. Today none does — an opaque GIF
       reports `bgra` and fails like a transparent one.
-- [ ] Whatever open decision 3 settles for **paletted** sources is implemented
-      and deliberate, in both directions. A transparent paletted source converts
-      today and loses its transparency in silence — the phase's second defect,
-      and the only one that is a live constitution breach rather than a failure.
-      An opaque paletted source converts today via `gbrp`, so an override that
-      fires for every `pal8` introduces chroma subsampling where there is none.
+- [ ] A **transparent paletted** source keeps its transparency. Today it converts
+      and loses it in silence — the phase's second defect, and the only one that
+      is a live constitution breach rather than a failure.
+- [ ] An **opaque paletted** source still converts, now at 4:2:0 instead of
+      `gbrp`, and **the reduction is named**. Accepted at the gate as the cost of
+      firing for every `pal8`, since `pix_fmt` cannot tell the two apart.
+- [ ] A **>8-bit alpha** source keeps its alpha at 8-bit, and **the depth
+      truncation is named** by the same note.
 - [ ] A **10-bit** source into `webm` still produces 10-bit output
       (`yuv420p10le` in, `yuv420p10le` out), and an opaque high-depth source
       still reaches `gbrp12le`.
@@ -137,8 +139,6 @@ Two consequences follow, and they are the shape of the whole phase:
       `last_resort` half is **defensive**: with the selective rung fixed, no
       constructible source reaches it (see Prior decisions), so it is pinned by
       argv test only and carries no QA line that would have to pass.
-- [ ] Whatever the gate decides for a **>8-bit alpha** source is implemented and
-      named: either it keeps both, or what it gives up is reported.
 - [ ] `CHANGELOG.md`'s v3.0.0 *Known limitations* entry for this defect records
       which release fixed it.
 - [ ] Every branch ships with a test asserting the argv or note it produces, each
@@ -148,10 +148,14 @@ Two consequences follow, and they are the shape of the whole phase:
 
 ### In scope
 
-- `converter/profiles.py`: `webm`'s video rule and its `last_resort`, plus
-  whatever declaration open decision 2 settles on.
-- `converter/jobs.py`: the mechanism that makes an attempt's pixel format depend
-  on the probed source, for both rungs.
+- `converter/profiles.py`: `webm`'s video rule and its `last_resort`, plus the
+  declared pixel-format scalar (decision 2) and the value `last_resort` reads.
+- `converter/jobs.py`: the mechanism that appends `-pix_fmt:v:{n}` from that
+  declaration when the stream takes the fallback branch and its `pix_fmt` is not
+  alpha-free, for both rungs.
+- The **degradation note** for what the forced `yuva420p` reduces — bit depth and
+  chroma resolution, one note covering both (Prior decisions). This is the
+  phase's only new note machinery.
 - `docs/design/stream-decision.md` and `docs/design/degradation-ladder.md`: the
   node and the rung description for a source-dependent option.
 - `docs/architecture.md` Key flow 2, whose per-stream match is where the new
@@ -177,7 +181,7 @@ Two consequences follow, and they are the shape of the whole phase:
 - **Alpha for any other target.** `png`, `tiff`, `bmp` and `webp` preserve it;
   `jpg`, `gif` and `avif` declare and name the loss (phase 8).
 - **Auditing bit-depth handling across the other sixteen profiles.** This phase
-  must not *introduce* a truncation, and open decision 1 settles the one it could
+  must not *introduce* a truncation, and decision 1 settles the one it could
   introduce; the general audit is its own concern.
 - Changing which conversions happen for a source with no alpha.
 
@@ -185,7 +189,7 @@ Two consequences follow, and they are the shape of the whole phase:
 
 - **Never report success for a conversion that silently dropped something**
   (`docs/constitution.md`). This is what forbids an unconditional override — see
-  the 10-bit row — and what makes open decision 1 a decision rather than a
+  the 10-bit row — and what made decision 1 a decision rather than a
   detail.
 - A target format is data, not code: adding a target must still produce no diff
   in `cli.py`, `batch.py` or `paths.py`, and `jobs.py`'s own docstring forbids
@@ -235,11 +239,15 @@ Two consequences follow, and they are the shape of the whole phase:
 | The override is **conditional on the source carrying alpha**, never unconditional | Measured: `yuv420p10le` survives today and any blanket `-pix_fmt` truncates it; an opaque `rgb48be` reaches `gbrp12le` with no flag | 2026-09-15 |
 | `webm` does **not** declare `alpha_unsupported`, and emits no transparency note for the fixed case | It can hold alpha. Phase 8's forced-encoder boundary is therefore untouched by this phase — the first draft's open decision about widening it disappeared with the corrected facts | 2026-09-15 |
 | Both re-encoding rungs are fixed, but `last_resort`'s half is **defensive** | Its argv fails identically on a `gbrap` source — reproduced at exit -22 — so leaving it inconsistent would be a trap for the next reader. But `webm`'s video rule declares **no `stream_limit`** (measured: `WEBM.rules["video"].stream_limit is None`; the only `stream_limit=1` rules in the tree are `wav`/`mp3`/`flac` and the image profiles), and with the selective rung fixed a two-video-stream source **succeeds there** — measured: `-pix_fmt:v:0 yuva420p` gives exit 0 and `vp9/yuva420p` + `vp9/gbrp`. `batch._attempt_conversion` returns on the first success, so `last_resort` is not reachable for any source this phase can construct. An earlier draft claimed a `stream_limit` that does not exist and gave it a QA line that could not pass | 2026-09-15 |
-| **OPEN — what happens to a >8-bit alpha source?** `yuva420p10le` is refused, so the non-experimental path can keep alpha *or* depth, not both. | resolved at the spec-acceptance gate | — |
-| **OPEN — how does the conditional pixel format reach the argv?** Every attempt's options are a static tuple today, varied only by `_substitute_position`'s stream index. | resolved at the spec-acceptance gate | — |
-| **OPEN — does the override fire for `pal8`?** It converts today, and `pix_fmt` cannot tell a transparent palette from an opaque one. Firing fixes a measured silent transparency loss; it also moves opaque paletted sources from `gbrp` to a subsampled format. | resolved at the spec-acceptance gate | — |
+| **A >8-bit alpha source gets `yuva420p`**: alpha kept, depth truncated to 8-bit, and the truncation **named** | Resolved at the gate, 2026-09-15. The alternative keeps both but needs `-strict experimental`, whose output ffmpeg itself calls "not widely supported" — shipping files some players cannot read is a worse cost than a depth reduction, and naming a loss is what this tool is for. The note is new machinery; see the coupling row below | 2026-09-15 |
+| **The pixel format is a declared scalar on the rule**; `converter/jobs.py` appends `-pix_fmt:v:{n}` when the stream takes the **fallback** branch *and* its `pix_fmt` is not in `ALPHA_FREE_PIX_FMTS` | Resolved at the gate, 2026-09-15. House style: every profile-declares-a-fact case in the tree is a scalar the engine reads (`partial_mapping`, `explicit_streams`, `alpha_unsupported`, `stream_limit`, `fallback_name`, `drop_reason`). A second options tuple would be the first of its kind. The engine contributes the flag, never the value, so `jobs.py` holds no format-specific fact | 2026-09-15 |
+| **The override fires for every `pal8`** | Resolved at the gate, 2026-09-15. It fixes a measured silent transparency loss — a live breach of "never report success for a conversion that silently dropped something" — and `pix_fmt` cannot tell a transparent palette from an opaque one, so the undecidable case errs toward the non-silent direction, exactly as phase 8 chose for `pal8`. The accepted cost is that opaque paletted sources move from `gbrp` (4:4:4) to 4:2:0 | 2026-09-15 |
+| **One note covers both losses the forced `yuva420p` causes** | The two decisions above land on the same pixel format and each gives up something the source had: bit depth (a >8-bit source) and chroma resolution (an opaque paletted source, visibly so at ≤256 colours). Both are the same shape — *this conversion reduced the stream so its alpha could be carried* — so they are one degradation note, not two, and its wording must cover both axes. This is the phase's one piece of genuinely new note machinery | 2026-09-15 |
 
-### The three open decisions, in full
+### The three decisions, as resolved at the gate
+
+Recorded with the options that were on the table, so a later reader sees what was
+weighed rather than only what was picked.
 
 **1. The >8-bit alpha source.** Now measured, on a fixture built by *converting*
 a known-alpha PNG (`-pix_fmt rgba64be`) rather than synthesising one — the
@@ -334,10 +342,11 @@ Measured both ways:
   (`yuva444p` and friends need `-strict experimental`, per decision 1's table).
   Keeps both properties; inherits decision 1's experimental-flag cost.
 
-Whichever way this goes, it should be recorded as a deliberate trade rather than
-falling out of the condition chosen for decision 2.
+**Resolved: fire for every `pal8`** — the first option. The silent-loss rule
+outranks a quality regression that is itself nameable, and the reduction note
+above covers it.
 
-Whichever combination is chosen, `docs/design/stream-decision.md` gains the node that
+With the combination resolved, `docs/design/stream-decision.md` gains the node that
 describes a source-dependent option and `docs/design/degradation-ladder.md`
 follows.
 
@@ -363,14 +372,15 @@ never encoder behaviour):
       override on either rung.
 - [ ] A test that a source whose codec is in `WEBM_VIDEO_CODECS` takes the copy
       branch, so no pixel-format flag is added.
-- [ ] A test that a `bgra` source (every `.gif`) gets the override — it fails
-      today. And a test pinning whatever open decision 3 settles for `pal8`,
-      which does **not** fail today.
+- [ ] A test that a `bgra` source (every `.gif`) **and** a `pal8` source both get
+      the override — the first fails today, the second does not, and both are
+      meant to change.
 - [ ] A test that the other sixteen profiles' argv is unchanged by this phase,
       for both an alpha and an alpha-free source.
 - [ ] A test that the ffprobe process count per conversion is unchanged.
-- [ ] Whatever open decision 1 settles: a test for the >8-bit alpha branch,
-      including the note if that option emits one.
+- [ ] A test that the reduction note fires for a **>8-bit alpha** source (depth)
+      and for an **opaque paletted** source (chroma), and **not** for an ordinary
+      8-bit RGBA source, which gives up neither.
 - [ ] Each branch proven non-vacuous: inverting its condition must fail a test.
 
 Human milestone-QA gate. `$FF`/`$FP` are the absolute paths from *This machine*.
