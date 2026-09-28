@@ -20,6 +20,7 @@
 | 7 | lossy-source-notes | [spec-lossy-source-notes.md](specs/archive/spec-lossy-source-notes.md) | [#7](https://github.com/bhemsen/converter/milestone/7) |
 | 8 | within-stream-loss-notes | [spec-within-stream-loss-notes.md](specs/archive/spec-within-stream-loss-notes.md) | [#8](https://github.com/bhemsen/converter/milestone/8) |
 | 9 | webm-alpha | [spec-webm-alpha.md](specs/archive/spec-webm-alpha.md) | [#9](https://github.com/bhemsen/converter/milestone/9) |
+| 10 | single-file-input | — | — |
 
 A phase gets a Spec link once `/plan` drafts it, and a Milestone link once the
 spec is merged. The milestone (open/closed + issue progress) is where status
@@ -34,6 +35,7 @@ record -- phase 6 corrected a verdict's reason, phase 7 flipped one:
 - Phase 7 — Foundation impact: vision — none; constitution — yes: the notes convention and its test gate assume a note describes what *this* conversion gave up, and an advisory about loss the source already carried is a second kind that has to be defined; architecture — **none** (corrected at planning: cross-cutting codec data already lives in `converter/profiles.py` as a module-level frozenset — `TEXT_SUBTITLE_CODECS` is shared by `mp4`, `mov` and `webm` — so a lossy-codec set beside it needs no architectural change).
 - Phase 8 — Foundation impact: vision — none; constitution — none; architecture — yes: Key flow 1's success-side verification widens from structural verdicts to structural plus stream-property ones. **Five carriers, all named in the spec's Scope**: `docs/architecture.md` Key flow 1, `docs/design/degradation-ladder.md`, the `jobs` module docstring, the comment above `converter/jobs.py`'s `_LOSSY_SOURCE_ADVISORY_TARGETS` (line numbers go stale as the file grows, so locate it by content), and `docs/design/stream-decision.md`, which additionally gains a third carve-out from the three-things rule.
 - Phase 9 — Foundation impact: vision — none; constitution — none; architecture — yes: the engine gains an attempt option that depends on a probed *source* property rather than only on the stream index. **Three carriers, all named in the spec's Scope**: `docs/architecture.md` Key flow 2, whose per-stream match is where the branch sits, `docs/design/stream-decision.md`, which gains the node describing it, and `docs/design/degradation-ladder.md`, which follows. Phase 8's forced-encoder boundary is **not** touched — the first draft thought it might be, on a premise the acceptance review refuted: `webm` preserves alpha, so it declares no `alpha_unsupported` and the boundary is untouched.
+- Phase 10 — Foundation impact: vision — yes: the Scope's *In* list names only a recursive batch over a directory tree, so a single named file needs its own entry there; constitution — none: no principle assumes a directory, and "one broken input file must not abort the batch" holds trivially for a batch of one; architecture — yes: Key flow 1 starts at `paths.find_sources` walking a root, and `docs/design/source-selection.md`'s first node is "file under the input root" — both gain the branch where INPUT is itself a file, which bypasses the suffix set and derives its output directory differently.
 
 ## What each phase covers
 
@@ -77,6 +79,21 @@ record -- phase 6 corrected a verdict's reason, phase 7 flipped one:
    `yuv420p` for a file that carries it, so every check must decode with an
    explicit libvpx decoder. Filed by v3.0.0's pre-release smoke test as issue
    #114 and shipped as a documented limitation rather than held back.
+10. **single-file-input** — Let `INPUT` name one file instead of a directory, so
+    a single conversion gets the ladder and the loss notes rather than sending
+    the user back to raw ffmpeg. Decided in the sparring: exactly one file (not
+    several — that would need `-o` in place of the positional `OUTPUT`, a second
+    CLI break); `OUTPUT` stays a directory and becomes optional for a file, the
+    result landing beside the source when it is omitted; `--to` stays the only
+    way to name the format (no ImageMagick-style inference from an output file
+    name); and a file named explicitly bypasses the source-suffix set, because
+    the user chose it and ffprobe, not an extension list, decides whether it is
+    readable — an unreadable one fails as any other conversion does, exit
+    non-zero. Left open for `/plan`: what `-r` and `--mirror-to` mean for a file
+    (ignore, re-root its parent, or refuse), a file whose output would be itself
+    (`a.mp4 --to mp4` with no `OUTPUT` — the existing self-write guard should
+    already refuse it, to be confirmed), the `--dry-run` wording, and whether the
+    interactive prompt offers the file case at all.
 
 ## Sequencing rationale
 
@@ -111,6 +128,13 @@ transparency note — `webm` preserves alpha, so it declares no
 directly from an issue rather than seeded — the route phase 8 established, here
 starting from a release's own smoke test rather than from a PR's unresolved
 finding.
+
+Phase 10 depends only on phase 2, whose target-driven CLI it extends; it touches
+no profile, so it is independent of every coverage and loss-note phase. It is a
+CLI-surface change rather than a format one, which is why it is exempt from the
+vision's "no diff in `cli.py`, `batch.py` or `paths.py`" criterion — that rule
+governs adding a *target format*, and this phase adds none. It is additive: every
+existing directory invocation keeps its meaning, so it needs no major version.
 
 There is deliberately no separate release or documentation phase. README changes
 belong to the phase that makes them necessary — phase 2 breaks the CLI, so phase 2
