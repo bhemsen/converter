@@ -13,11 +13,13 @@ from converter.paths import (
     find_collisions,
     find_overwrite_hazards,
     find_sources,
+    input_root,
     is_self_write,
     list_directories,
     mirror_to_drive,
     normalise_suffixes,
     output_for,
+    select_input,
 )
 
 on_windows = pytest.mark.skipif(os.name != "nt", reason="Windows drive-letter semantics")
@@ -122,6 +124,76 @@ class TestFindSources:
     def test_missing_directory_raises(self, tmp_path):
         with pytest.raises(NotADirectoryError):
             find_sources(tmp_path / "nope", [".mkv"])
+
+
+class TestInputRoot:
+    """`docs/specs/spec-single-file-input.md`: a file INPUT behaves like its
+    parent directory, so the root these functions build on is the parent,
+    as typed and never resolved."""
+
+    def test_file_returns_its_parent(self, tmp_path):
+        touch(tmp_path / "song.flac")
+
+        assert input_root(tmp_path / "song.flac") == tmp_path
+
+    def test_bare_relative_file_name_returns_dot(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        touch(tmp_path / "song.flac")
+
+        assert input_root("song.flac") == Path()
+
+    def test_directory_is_returned_unchanged(self, tmp_path):
+        assert input_root(tmp_path) == tmp_path
+
+    def test_missing_path_is_returned_unchanged(self, tmp_path):
+        missing = tmp_path / "nope"
+
+        assert input_root(missing) == missing
+
+
+class TestSelectInput:
+    """A file bypasses the suffix set and the directory walk entirely; a
+    directory or a missing path defers to `find_sources` unchanged."""
+
+    def test_file_is_its_own_one_file_batch(self, tmp_path):
+        target = touch(tmp_path / "song.flac")
+
+        assert select_input(target, [".mkv"]) == [target]
+
+    def test_file_suffix_outside_the_set_still_yields_it(self, tmp_path):
+        """The user named the file, so ffprobe -- not an extension list --
+        decides whether it is readable."""
+        target = touch(tmp_path / "clip.dat")
+
+        assert select_input(target, [".mkv", ".mp4"]) == [target]
+
+    def test_bare_relative_file_name(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        touch(tmp_path / "song.flac")
+
+        assert select_input("song.flac", [".mkv"]) == [Path("song.flac")]
+
+    def test_directory_matches_find_sources(self, tmp_path):
+        touch(tmp_path / "a.mkv")
+        touch(tmp_path / "b.mp4")
+
+        assert select_input(tmp_path, [".mkv"]) == find_sources(tmp_path, [".mkv"])
+
+    def test_directory_honours_recursive_and_exclude(self, tmp_path):
+        touch(tmp_path / "top.mkv")
+        touch(tmp_path / "nested" / "deep.mkv")
+        touch(tmp_path / "converted" / "done.mkv")
+
+        result = select_input(tmp_path, [".mkv"], recursive=True, exclude=tmp_path / "converted")
+
+        assert result == find_sources(
+            tmp_path, [".mkv"], recursive=True, exclude=tmp_path / "converted"
+        )
+        assert [p.name for p in result] == ["deep.mkv", "top.mkv"]
+
+    def test_missing_path_raises_not_a_directory(self, tmp_path):
+        with pytest.raises(NotADirectoryError):
+            select_input(tmp_path / "nope", [".mkv"])
 
 
 class TestOutputFor:

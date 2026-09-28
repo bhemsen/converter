@@ -88,6 +88,39 @@ def find_sources(
     )
 
 
+def input_root(path: str | os.PathLike[str]) -> Path:
+    """Return the directory a file `INPUT` behaves as, per the spec's model.
+
+    A file's parent -- ``.`` for a bare relative name -- as typed and never
+    resolved (``docs/specs/spec-single-file-input.md``, *Prior decisions*), so
+    a `subst`/junction input still mirrors onto the shallow tree the user
+    sees. A directory, or anything else including a missing path, is returned
+    unchanged; ``select_input`` is what raises for those.
+    """
+    typed = Path(path)
+    return typed.parent if typed.is_file() else typed
+
+
+def select_input(
+    path: str | os.PathLike[str],
+    suffixes: Iterable[str],
+    *,
+    recursive: bool = False,
+    exclude: str | os.PathLike[str] | None = None,
+) -> list[Path]:
+    """Return the candidate files for `INPUT`, file or directory alike.
+
+    A file is its own one-file batch -- *suffixes* is not consulted, since the
+    user named the file and ffprobe, not an extension list, decides whether it
+    is readable. Anything else goes through ``find_sources`` unchanged,
+    including its ``NotADirectoryError`` for a missing path.
+    """
+    typed = Path(path)
+    if typed.is_file():
+        return [typed]
+    return find_sources(typed, suffixes, recursive=recursive, exclude=exclude)
+
+
 def output_for(
     src: Path,
     input_root: str | os.PathLike[str],
