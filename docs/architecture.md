@@ -121,22 +121,26 @@ only on `cli`.
    tree does no work for the files it already converted. A source whose output
    path would be its own input path is `skipped` too — reported rather than passed
    over in silence, and counted, per `docs/design/source-selection.md`.
-4. **Failure.** The `.partial` file is removed — an existing output replaced
-   under `--overwrite` is left untouched, since only the rename replaces it — the file is recorded as
+4. **Failure.** The `.partial` file is removed — an existing output is left
+   untouched even under `--overwrite`, since only the rename replaces it — the
+   file is recorded as
    `failed` with ffmpeg's stderr, the batch keeps going for every other file, and
    the process exits 1 at the end.
 5. **Unsupported.** Reached only from the failure-side probe of step 2: when the
    source carries no stream of any type the target profile has a rule for at
    all, `jobs.py` reports that as a distinguishable signal instead of climbing
    the rest of the ladder, `batch.py` maps it onto a counted `unsupported`
-   outcome, and the partially written output is removed the same way a
+   outcome, and the `.partial` file is removed the same way a
    `failed` one is -- but the outcome does not set the exit code, so a re-run
    over a mixed tree reports the same thing rather than failing forever
    (`docs/specs/archive/spec-target-driven-cli.md`).
-6. **Termination.** Ctrl+C / SIGINT, or SIGTERM on POSIX, reaches the main
-   thread, which sets the interrupt flag, calls `ffmpegtool.terminate_all` to
-   kill and reap every running process, and has `batch` delete every in-flight
-   `.partial`; the run exits 130 or 143 without a summary. A Windows
+6. **Termination.** Ctrl+C / SIGINT, or SIGTERM on POSIX, raises in the main
+   thread (`KeyboardInterrupt`, or `ffmpegtool.Terminated` from the SIGTERM
+   handler), which calls `ffmpegtool.terminate_all`: the registry closes to new
+   spawns and every running process is killed and reaped. Each worker sees the
+   shutdown flag after its `run()` returns, deletes its own `.partial` and stops
+   without a result; the main thread waits for them, then removes any partial
+   still in flight. The run exits 130 or 143 without a summary. A Windows
    `TerminateProcess` cannot be caught: the Job Object kills ffmpeg with the
    converter, and the next run's sweep removes the partial
    (`docs/specs/spec-abort-safe-writes.md`).

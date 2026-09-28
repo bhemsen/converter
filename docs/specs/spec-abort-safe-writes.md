@@ -79,16 +79,18 @@ format"; the same with `-f mp4` exits 0, as do `-f image2`, `-f apng` and
 
 - `converter/profiles.py`: a required `Profile.muxer: str` on every profile, the
   values above.
+- `converter/paths.py`: `partial_for(dst)`.
 - `converter/ffmpegtool.py`: `build_argv` gains a keyword `output_format: str |
   None = None`, emitted as `-f <muxer>` directly before the output path; `run()`
   becomes a tracked, killable process — a registry of live `Popen` objects, a
-  `terminate_all(timeout)` that kills and reaps them, and on Windows a Job Object
-  with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` every ffmpeg/ffprobe is assigned to.
+  shutdown flag, `terminate_all(timeout)`, `terminated()`, the `Terminated`
+  exception, and a function that binds the current process to a Job Object with
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` on Windows.
 - `converter/batch.py`: write to `<dst>.partial`, verify against it, then move it
   into place; remove it on failure; sweep a stale one per task; on interrupt,
   delete every in-flight partial after `terminate_all`.
-- `converter/cli.py`: a SIGTERM handler that runs the same termination as Ctrl+C
-  and exits 143.
+- `converter/cli.py`: the SIGTERM handler, the 143 mapping, and binding the
+  process to the Job Object on Windows.
 - Tests for every outcome, with the subprocess boundary stubbed.
 - `README.md`: the partial-file behaviour, the reserved `.partial` name, exit
   143, and what each platform guarantees on a kill.
@@ -109,6 +111,12 @@ format"; the same with `-f mp4` exits 0, as do `-f image2`, `-f apng` and
   file, which is worthless when the partial is deleted anyway.
 - **JSON output** — phase 11. This phase adds exit 143 to the README's exit-code
   table; under phase 11's contract a 143 stream is simply one without a summary.
+
+**Overlap with phase 11.** Both phases touch `batch.run_batch` (phase 11 adds
+`on_result`; this phase changes its wait loop and interrupt path), `cli.main`'s
+interrupt branch, and the README's exit-code table. They are independent in
+design; whichever merges second rebases onto the other. A killed attempt never
+reaches `on_result`.
 
 ## Constraints
 
@@ -145,13 +153,17 @@ none
 | `-f` is added by `build_argv(..., output_format=...)`, not baked into each profile's attempt options | The attempt options are what `tests/test_argv.py` pins per profile; the output format belongs to the write, not to a rung, and adding it at the one place the output path is placed keeps every existing argv test valid | 2026-09-28 |
 | The partial file is renamed into place **after** the success-side verification, which probes the partial | The output path then only ever holds a file whose notes were computed. A kill between ffmpeg's exit and the rename leaves a partial that the next run sweeps and redoes — never a finished-looking file whose losses were never reported | 2026-09-28 |
 | With `--overwrite`, the previous output stays in place until the rename replaces it | Today ffmpeg truncates it at start, so a failed `--overwrite` destroys a good file. Writing elsewhere first removes that hazard for free | 2026-09-28 |
-| The stale-partial sweep deletes exactly `<dst>.partial` for each task of the current run, at the start of that task — whether it converts or is skipped | The only cleanup a Windows kill allows. Scoping it to paths this run computed means the tool never deletes a file it cannot prove it wrote; `<output>.partial` is documented as reserved | 2026-09-28 |
-| ffmpeg stays in the converter's own process group (no `start_new_session`) | A terminal's Ctrl+C and a caller's group-wide kill (`docker stop`, systemd, `kill -- -PGID`) then still reach ffmpeg directly. ffmpeg spawns no children of its own, so killing the `Popen` kills the whole tree; the explicit registry covers a SIGTERM aimed at the Python process alone | 2026-09-28 |
-| Termination: the signal handler (main thread) sets the interrupt flag and calls `ffmpegtool.terminate_all`, which kills and reaps every registered process; `batch` then deletes every in-flight partial before the exception propagates | cpython#121649: a handler must not shut the executor down. Reaping before deleting matters on Windows, where a file cannot be removed while the killed process still holds it | 2026-09-28 |
+| The stale-partial sweep deletes exactly `<dst>.partial` for each batch task, at the start of that task — whether it converts or is skipped as already existing; not for self-write skips (decided in `cli`, and their output is their source) and never under `--dry-run`. A sweep that cannot delete (a locked file on Windows) is ignored; ffmpeg's own failure to open the path then reports it | The only cleanup a Windows kill allows, scoped to paths this run computed. `<output>.partial` is **reserved**: two converter runs over the same tree at once are unsupported, since one run's sweep would delete the other's live partial | 2026-09-28 |
+| The partial path is built by a new `paths.partial_for(dst) -> Path` (`dst` plus `.partial`), and any path-length diagnosis for an output is made on the partial path, the longer of the two | `docs/architecture.md`: output-path construction belongs to `paths`; `.partial` adds 8 characters, which is what can cross Windows' `MAX_PATH` first | 2026-09-28 |
+| ffmpeg stays in the converter's own process group (no `start_new_session`) — a deliberate departure from the prior-art note ("give it its own session") and the phase-12 roadmap impact line, which this PR amends | A terminal's Ctrl+C and a caller's group-wide kill (`docker stop`, systemd, `kill -- -PGID`) then still reach ffmpeg directly. ffmpeg spawns no children of its own, so killing the `Popen` kills the whole tree; the registry covers a SIGTERM aimed at the Python process alone. The research's reason for a new session — killing a whole group — does not apply to a child with no children | 2026-09-28 |
+| **Signals.** `cli.main` installs, for the convert command only, a SIGTERM handler that does nothing but `raise ffmpegtool.Terminated()`; SIGINT keeps Python's default `KeyboardInterrupt`. `Terminated` subclasses `BaseException`, so `convert_one`'s `except Exception` never swallows it. `cli.main` maps `KeyboardInterrupt` to 130 and `Terminated` to 143 | The handler runs in the main thread and must not take locks or shut down the executor (cpython#121649); raising is the only way out of a wait that PEP 475 would otherwise resume. Keeping SIGINT on its default path leaves today's 130 behaviour intact | 2026-09-28 |
+| **Termination state.** `ffmpegtool` owns one process-wide shutdown flag. `terminate_all(timeout=10)` sets it, kills every registered process and reaps each for up to `timeout` seconds. Once the flag is set, `run()` refuses to spawn and raises `Terminated`; a process spawned concurrently is killed on registration. The registry lock is a plain `Lock`, never touched from the handler | Closes the race the review found: without a closed registry, a worker whose ffmpeg was killed would treat the kill as an ordinary failure, probe, and start the next rung *after* `terminate_all` had run | 2026-09-28 |
+| **Workers after a kill.** A worker checks `ffmpegtool.terminated()` after every `run()` — before it probes, starts the next rung, verifies or renames. When set, it deletes **its own** partial and raises `Terminated`/`KeyboardInterrupt` instead of returning a `Result`. The main thread, after `terminate_all`, waits for the in-flight futures (bounded by the same timeout) and only then removes any partial still listed in `batch`'s in-flight set | Each partial has exactly one owner at any moment, so the main thread's clean-up cannot race a worker's rename; a killed attempt never becomes a `failed` Result, and so never reaches phase 11's `on_result` | 2026-09-28 |
+| The main loop waits with `concurrent.futures.wait(..., timeout=0.5, return_when=FIRST_COMPLETED)` in a loop rather than blocking in `as_completed` | Whether a blocking lock wait in the main thread is interruptible by Ctrl+C on Windows under Python 3.11-3.13 is unverified; a short poll makes the signal's delivery independent of it | 2026-09-28 |
 | SIGTERM exits 143, SIGINT keeps 130 | The 128+n convention a Node parent or a shell expects (`docs/prior-art.md`). Windows has no catchable SIGTERM; a `TerminateProcess` exit code is whatever the terminator chose | 2026-09-28 |
-| The Job Object is created once per process, lazily, and each spawned ffmpeg/ffprobe is assigned right after `Popen`; any failure to create or assign it is reported once on stderr and the run continues | Best effort: nested jobs work from Windows 8 on, and a missing job only loses the orphan protection, never a conversion. ffmpeg spawns no children, so the window between spawn and assignment cannot leak a grandchild | 2026-09-28 |
-| A task interrupted mid-conversion produces no `Result` | As today (`batch._interruptible` raises instead of fabricating one); under phase 11 a stream without a summary is incomplete | 2026-09-28 |
-| OPEN — The temporary name: `<name><ext>.partial` (needs `-f`), `<stem>.partial<ext>` (no `-f`, but the next directory walk would collect it as a *source*), or a hidden `.<name><ext>.partial`? | resolved at the spec-acceptance gate | — |
+| On Windows, `cli.main` assigns **the converter's own process** to a Job Object with `KILL_ON_JOB_CLOSE` once, at the start of the convert command, before any spawn; every ffmpeg/ffprobe it starts inherits the membership. Failure to create or assign is reported once on stderr and the run continues | Assigning the parent removes the spawn-then-assign window entirely and needs no lazy, thread-safe creation. Nested jobs work from Windows 8 on; a missing job only loses the orphan protection, never a conversion. When the converter dies, the OS closes the job handle and kills what is left | 2026-09-28 |
+| A task interrupted mid-conversion produces no `Result` — including one whose ffmpeg was killed, which today would surface as `failed` | Under phase 11 a stream without a summary is incomplete; a killed attempt is not a conversion failure | 2026-09-28 |
+| OPEN — The temporary name: `<name><ext>.partial` (needs `-f`), `<stem>.partial<ext>` (no `-f`, but the next directory walk would collect it as a *source*), or a hidden `.<name><ext>.partial`? The spec is written for the first; choosing another changes the Outcome, `paths.partial_for`, the muxer rows and both carriers | resolved at the spec-acceptance gate | — |
 | OPEN — `os.replace` on Windows when the target is held open (scanner, indexer, a player): retry a bounded number of times, or fail at once? | resolved at the spec-acceptance gate | — |
 
 ## Tracking
@@ -168,7 +180,9 @@ Each issue references this spec path in its body.
 - [ ] `tests/test_ffmpegtool.py`: `build_argv` places `-f <muxer>` directly
       before the output path and emits nothing without `output_format`; `run`
       still passes no shell and closes stdin; the registry holds a process only
-      while it runs; `terminate_all` kills and reaps every registered process.
+      while it runs; `terminate_all` kills and reaps every registered process;
+      `paths.partial_for` appends `.partial`; on Windows, a failed Job Object
+      binding only warns.
 - [ ] `tests/test_batch.py`, subprocess stubbed:
   - [ ] a success writes the partial, verifies it, then the final path appears
         and no partial remains;
@@ -179,17 +193,29 @@ Each issue references this spec path in its body.
         converts; one beside an existing output is removed and the file is
         skipped;
   - [ ] an interrupt with conversions in flight calls `terminate_all` and
-        leaves no partial.
+        leaves no partial;
+  - [ ] a worker whose `run()` returns after `terminate_all` neither probes nor
+        starts another rung nor renames, deletes its partial, and yields no
+        `Result`;
+  - [ ] after `terminate_all`, `run()` raises `Terminated` without spawning;
+  - [ ] a killed success-side probe does not rename the partial;
+  - [ ] the sweep skips self-write skips and `--dry-run`, and ignores a partial
+        it cannot delete.
 - [ ] `tests/test_cli.py`: SIGTERM (POSIX only, skipped on Windows) exits 143 and
       leaves no partial; Ctrl+C still exits 130.
-- [ ] `tests/test_argv.py` passes unchanged.
+- [ ] `tests/test_argv.py`'s attempt-option pins pass unchanged; its
+      `TestRunIsShellFree` (which stubs `subprocess.run`) moves to
+      `tests/test_ffmpegtool.py` against `Popen`, and the `test_batch.py` tests
+      that assert the output probe targets `task.dst` now expect the partial.
 - [ ] Tests for whichever way each OPEN row is resolved.
 - [ ] **QA smoke test with real ffmpeg** (paths from `docs/workflow.md`):
   - [ ] all 17 targets convert; compared with the same conversions run on
         `v3.1.0`, each output has the same `format_name` and the same streams and
-        codecs by `ffprobe`, and a pure remux (`--to mkv` of an h264/aac `.mp4`)
-        is byte-identical — re-encodes are not compared byte for byte, because
-        multi-threaded encoders need not be deterministic;
+        codecs by `ffprobe`, and a pure remux into MP4 (`--to mp4` of an
+        h264/aac `.mkv`) is byte-identical — not Matroska, whose muxer writes a
+        random SegmentUID (measured: two identical `-c copy` runs into `.mkv`
+        differ), and not re-encodes, because multi-threaded encoders need not be
+        deterministic;
   - [ ] a long re-encode killed by Ctrl+C: exit 130, no `.partial`, no ffmpeg
         left in Task Manager;
   - [ ] the same run killed from Node.js with `child.kill()` on Windows: no
@@ -207,6 +233,7 @@ Each issue references this spec path in its body.
 | `image2` on a `.partial` name treats it as a pattern or needs `-update 1` | Measured: `-f image2` on `out.png.partial` exits 0 with one image; the QA run covers every image target |
 | Replacing `subprocess.run` with `Popen` loses its timeout/cleanup semantics | `run()` keeps its signature and `CommandResult`; `communicate()` plus `kill()` on timeout mirrors `subprocess.run`'s own implementation |
 | The Job Object code is Windows-only and untested on Linux CI | The Windows CI matrix runs it; a test asserts the assignment is attempted and that a failure only warns |
+| A killed attempt is mistaken for a failure and climbs the ladder | The closed registry plus the worker's post-`run()` check, each pinned by a test |
 | Signal handling differs between platforms and flakes in CI | The SIGTERM test runs on POSIX only; the termination logic itself is tested through `terminate_all` with fake processes on both |
 
 ## Decision log
@@ -215,3 +242,12 @@ Each issue references this spec path in its body.
   muxer table was measured for this spec. The seed's open questions on the
   SIGTERM code and partial handling are settled above; the temporary name and the
   Windows rename retry stay open for the gate.
+- 2026-09-28: Acceptance review (REQUEST_CHANGES) addressed: the termination
+  race (a killed attempt climbing the ladder, or a killed verification probe
+  still renaming) is closed by a shutdown flag in `ffmpegtool`, a registry that
+  refuses spawns, and a post-`run()` check in every worker that owns its own
+  partial; the SIGTERM handler only raises `Terminated`, mapped to 143; the main
+  loop polls instead of blocking; the Job Object binds the converter itself; the
+  byte-identity QA check moves from Matroska (random SegmentUID, measured) to an
+  MP4 remux; `paths.partial_for`, the sweep's limits, the reserved name and the
+  overlap with phase 11 are stated.

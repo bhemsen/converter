@@ -42,7 +42,7 @@
   `cli.py`, `batch.py` or `paths.py`.
 - One broken input file must not abort the batch.
 - Every output is written under `<output>.partial` and moved into place only
-  after its conversion and its verification succeeded. A partial file is
+  after its conversion succeeded and its verification ran. A partial file is
   removed when its conversion fails or the run is interrupted, and a stale one
   is removed by the next run that targets the same output.
 
