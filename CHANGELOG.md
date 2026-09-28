@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-09-28
+
+A single file can now be converted on its own, with the same degradation ladder
+and loss notes a directory run gives it, and `--to webm` keeps an alpha channel
+instead of failing on it.
+
+### Added
+
+- **`INPUT` may name a single file.** `converter --to FORMAT FILE [OUTPUT]`
+  converts that one file exactly as a non-recursive run over its directory
+  would, so a one-off conversion no longer means falling back to raw ffmpeg and
+  losing the notes on what was given up. `OUTPUT` is optional for a file — the
+  result lands beside the source — and `--mirror-to` re-roots the file's
+  directory as typed. A file you name is converted whatever its extension:
+  ffmpeg, not the extension list, decides whether it is readable, and one it
+  cannot read fails with ffmpeg's reason, exit 1.
+- **An `OUTPUT` that looks like a file name is refused for a file `INPUT`.**
+  `converter --to mp4 a.mkv b.mp4` exits 2 with `OUTPUT must be a directory; the
+  output file name comes from INPUT and --to` instead of quietly creating a
+  directory named `b.mp4`. A directory `INPUT` behaves exactly as before.
+- **The interactive prompt accepts a file.** Given one, it skips the
+  sub-directory question, and an empty output answer means the file's own
+  directory.
+
+### Changed
+
+- A path that does not exist is now reported as `error: input does not exist`
+  rather than `input directory does not exist`, since it may name either.
+
 ### Fixed
 
 - **`--to webm` no longer fails on a source carrying an alpha channel, and no
@@ -118,4 +147,5 @@ the history starts somewhere honest rather than at 3.0.0.
   `converter` CLI with `video` and `audio` sub-commands, installable with
   `pip install -e .`.
 
+[3.1.0]: https://github.com/bhemsen/converter/releases/tag/v3.1.0
 [3.0.0]: https://github.com/bhemsen/converter/releases/tag/v3.0.0
