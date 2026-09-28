@@ -166,6 +166,23 @@ none
 | OPEN — The temporary name: `<name><ext>.partial` (needs `-f`), `<stem>.partial<ext>` (no `-f`, but the next directory walk would collect it as a *source*), or a hidden `.<name><ext>.partial`? The spec is written for the first; choosing another changes the Outcome, `paths.partial_for`, the muxer rows and both carriers | resolved at the spec-acceptance gate | — |
 | OPEN — `os.replace` on Windows when the target is held open (scanner, indexer, a player): retry a bounded number of times, or fail at once? | resolved at the spec-acceptance gate | — |
 
+### Implementation notes from the acceptance review
+
+- **The Job Object handle lives as long as the process.** The converter is itself
+  in the job, so closing the handle kills it: keep it in a module-level reference,
+  never `CloseHandle` it, never let a wrapper's finaliser close it. `tests/test_cli.py`
+  calls `cli.main` repeatedly inside pytest, so the tests stub the binding.
+- **The shutdown flag is one-way per process.** Tests reset it through a fixture;
+  production never resets it.
+- **Check the flag again directly before `os.replace`.** A worker can pass the
+  post-`run()` check and then reach the rename while the main thread is already
+  shutting down. Re-checking immediately before the rename (and deleting the
+  partial instead) keeps "the output path only holds a file whose notes were
+  reported"; results of futures that still complete during the bounded wait are
+  reported through `on_result` / the text renderer rather than dropped.
+- **Spawn and register in one critical section**, so a SIGTERM landing between
+  `Popen` and registration cannot leave an unregistered process.
+
 ## Tracking
 
 - Milestone: filled at the acceptance gate
