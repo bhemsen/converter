@@ -291,3 +291,147 @@ evidenced, not assumed — see the image-conversion concern.
     USP — so no search was needed to justify the phase. Unchecked: how other
     batch CLIs word a file-vs-directory INPUT in `--help` and errors.
   - Foundation impact: vision — yes: the Scope's *In* list gains single-file input next to the recursive batch; constitution — none; architecture — yes: Key flow 1 and `docs/design/source-selection.md` gain the branch where INPUT is a file
+
+## Machine-readable CLI output (Phase 11)
+
+### restic, cargo, docker events — JSON Lines with a type discriminator
+
+- Path: `restic/internal/ui/backup/json.go`
+  (<https://github.com/restic/restic/blob/master/internal/ui/backup/json.go>);
+  <https://restic.readthedocs.io/en/stable/075_scripting.html>;
+  <https://doc.rust-lang.org/cargo/reference/external-tools.html>;
+  <https://docs.docker.com/reference/cli/docker/system/events/>;
+  <https://jsonlines.org/>
+- License: BSD-2-Clause (restic), MIT/Apache-2.0 (cargo), Apache-2.0 (docker CLI)
+- Verdict: reference-only
+- Date: 2026-09-28
+- Notes:
+  - ADOPT: one JSON object per line on stdout, human noise on stderr — restic
+    (`message_type`: `status`, `summary`, `error`) and cargo (`reason`:
+    `compiler-artifact`, `build-finished`) both do exactly this, with a final
+    summary object distinguished by a discriminator field.
+  - ADOPT: an open schema — docker documents that its event objects may gain
+    fields, which is what lets a consumer tolerate a later addition such as
+    phase 14's sidecars.
+  - AVOID: leaving versioning implicit by accident. None of the three versions
+    its per-line schema in-band; whether this tool should is a decision for
+    phase 11's `/plan`, not a precedent to copy.
+  - AVOID: `ffprobe -of json`'s single document — it cannot be consumed while a
+    batch is still running.
+  - Research mode: websearch, 2026-09-28. JSON Lines is explicitly "not yet
+    standardized" (jsonlines.org).
+  - Foundation impact: vision — yes: Scope *In* gains machine-readable per-file output and a stable exit-code contract; constitution — none; architecture — yes: `batch.Result` becomes a public contract and reporting gets one seam for text and JSON
+
+## Abort-safe writes and child-process termination (Phase 12)
+
+### Windows Job Objects, Node's kill semantics, POSIX process groups
+
+- Path: <https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects>;
+  <https://nikhilism.com/post/2017/windows-job-objects-process-tree-management/>;
+  <https://nodejs.org/api/child_process.html>;
+  <https://man7.org/linux/man-pages/man2/pr_set_pdeathsig.2const.html>;
+  <https://docs.python.org/3/library/signal.html>;
+  <https://github.com/python/cpython/issues/121649>
+- License: n/a — platform documentation and a method
+- Verdict: adopt the method (Job Object via `ctypes`, no new dependency)
+- Date: 2026-09-28
+- Notes:
+  - ADOPT: on Windows, a Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
+    Node's `subprocess.kill()` is a `TerminateProcess` there whatever signal
+    name is passed, so the Python child can neither catch it nor clean up, and
+    the ffmpeg grandchild survives — only the job, closed by the OS when the
+    Python process dies, takes it down.
+  - ADOPT: on POSIX, signal handlers run in the main thread only, even while
+    worker threads block in `subprocess.run()`; the handler must not shut down
+    the executor (cpython#121649 is a deadlock report on exactly that). Track
+    each ffmpeg `Popen` in a registry, give it its own session, and terminate
+    the registry from the handler. Exit 128+n (130 for SIGINT, 143 for SIGTERM)
+    — a shell convention the tool should follow when it exits deliberately.
+  - ADOPT: a sweep of stale partial files on the next run — the only cleanup a
+    Windows kill leaves room for.
+  - AVOID: stopping ffmpeg gracefully (`q` on stdin) — it produces a playable
+    truncated file, which is worthless when the partial is deleted anyway.
+  - AVOID: trusting `os.replace` to be atomic and unconditional on Windows: it
+    maps to `MoveFileEx`, and a scanner or indexer holding the target open makes
+    it raise `PermissionError`. Several projects retry a bounded number of times
+    on Windows only (cpython#143909 discusses the "atomic" wording). The literal
+    python.org text was not fetched — re-read it before quoting.
+  - **Measured, not searched (ffmpeg 9.0, 2026-09-28):** `-c copy out.mp4.partial`
+    fails with "Unable to choose an output format"; the same with `-f mp4`
+    succeeds, as do `-f image2`, `-f apng` and `-f ipod` on `.partial` names.
+    `ffmpeg -muxers` lists dedicated muxers for `webm`, `opus`, `avif`, `webp`
+    and `gif` — the web research had wrongly folded them into `matroska`, `ogg`
+    and `image2`, which is why these names are measured rather than cited.
+  - Foundation impact: vision — none; constitution — yes: partial-output removal widens to interrupted runs, with write-then-rename and a Windows Job Object recorded in the tech stack; architecture — yes: `ffmpegtool.run()` becomes a tracked, killable process, profiles declare their muxer, and Key flow 1 gains write-then-rename and a termination flow
+
+## Browser-playable target (Phase 13)
+
+### jellyfin-web's browser device profile
+
+- Path: `src/scripts/browserDeviceProfile.js`
+  (<https://github.com/jellyfin/jellyfin-web/blob/master/src/scripts/browserDeviceProfile.js>)
+- License: GPL-2.0
+- Verdict: reference-only
+- Date: 2026-09-28
+- Notes:
+  - ADOPT: decide copy-or-transcode per stream against a browser profile, and
+    gate on profile and bit depth, not the codec family alone — jellyfin-web
+    probes `canPlayType` with codec strings such as `avc1.6e0033` (H.264 High
+    10) before it direct-plays. Here the equivalent is a copy condition on the
+    probed `pix_fmt`.
+  - AVOID: feature-testing a live browser. A file written once must play in
+    every browser, so the mask is the intersection, fixed at conversion time.
+
+### Browser codec support in MP4 (MDN, caniuse)
+
+- Path: <https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Formats/Video_codecs>;
+  <https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Formats/Audio_codecs>;
+  <https://caniuse.com/ac3-ec3>; <https://caniuse.com/audiotracks>;
+  <https://bitmovin.com/blog/apple-av1-support/>
+- License: n/a — documentation
+- Verdict: the evidence for the copy mask
+- Date: 2026-09-28
+- Notes:
+  - ADOPT: copy video only as 8-bit 4:2:0 H.264, audio only as AAC or MP3 — the
+    two audio codecs every browser decodes in MP4. No browser decodes AC-3 or
+    E-AC-3 in `<video>`, HEVC needs a hardware decoder in Chrome and very recent
+    Firefox, and AV1 has no Safari fallback below M3 Macs and iPhone 15 Pro.
+  - AVOID: copying Opus or FLAC into MP4 for the browser. MDN lists support, but
+    Safari's `<video>` path for either is thinly evidenced (medium confidence),
+    and a file that plays nowhere is worse than one re-encoded with a note.
+  - ADOPT: keep every audio track. Only Safari exposes `audioTracks` by default;
+    elsewhere the default track plays — keeping the rest costs nothing a
+    browser notices and loses nothing.
+  - ADOPT: `-movflags +faststart` — without it a progressive player must fetch
+    the index from the end of the file before playback can start.
+  - Pi 4: one published data point, libx264 at 8–10 fps for 1080p, preset
+    unstated (<https://www.willusher.io/general/2020/11/15/hw-accel-encoding-rpi4/>);
+    no per-preset figures exist — phase 13's spec measures them. `h264_v4l2m2m`
+    reaches 53–60 fps there, but hardware encoders are out of scope.
+  - Research mode: websearch, 2026-09-28.
+  - Foundation impact: vision — yes: the target list grows to 18 and the "a new format is data" criterion is shown to hold for `web`; constitution — yes: a probe-first profile becomes a third kind in the ffprobe-on-the-happy-path principle; architecture — yes: the degradation ladder gains a probe-first entry and stream decisions gain a `pix_fmt` copy condition
+
+## Subtitle sidecars for browsers (Phase 14)
+
+### External WebVTT via `<track>`, Jellyfin's subtitle extraction
+
+- Path: <https://developer.mozilla.org/docs/Web/Guide/Audio_and_video_delivery/Adding_captions_and_subtitles_to_HTML5_video>;
+  <https://caniuse.com/webvtt>;
+  <https://github.com/jellyfin/jellyfin-plugin-subtitleextract>;
+  <https://jellyfin.org/docs/general/clients/codec-support/>;
+  <https://github.com/WebKit/WebKit/pull/47763>
+- License: GPL-3.0 (jellyfin-plugin-subtitleextract); documentation otherwise
+- Verdict: reference-only
+- Date: 2026-09-28
+- Notes:
+  - ADOPT: text subtitles as WebVTT files beside the video, loaded through
+    `<track>` — universally supported, and what Jellyfin serves browsers instead
+    of relying on in-band tracks.
+  - AVOID: in-band `mov_text` for a browser target. No source confirms any
+    browser exposing it as a `TextTrack` in a plain progressive `<video>`;
+    WebKit's tx3g work targets MSE/HLS pipelines. Uncertain rather than ruled
+    out — which is enough not to call an in-band track a carried subtitle.
+  - AVOID: burning subtitles in — irreversible, and it forces a video re-encode
+    on a stream that could otherwise be copied.
+  - Research mode: websearch, 2026-09-28.
+  - Foundation impact: vision — yes: Scope *In* gains sidecar outputs; constitution — none; architecture — yes: one source may write several paths, so every guard in `source-selection.md`, the JSON record and partial-file handling cover sidecars
