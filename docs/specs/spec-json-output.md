@@ -77,7 +77,7 @@ starts — exactly as the text mode lists it today.
 |---|---|---|
 | `type` | `"summary"` | discriminator |
 | `converted`, `skipped`, `failed`, `unsupported`, `total` | integer | `batch.Summary`'s counts |
-| `planned` | integer | `--dry-run`: the number of `planned` records; `0` otherwise |
+| `planned` | integer | `--dry-run`: the number of `planned` records; `0` otherwise. Computed by the renderer, **not** a `batch.Summary` field — adding it there would change `describe()` and the text output |
 | `exit_code` | integer | the code the process is about to exit with |
 | `dry_run` | boolean | whether this was `--dry-run` |
 
@@ -147,8 +147,8 @@ Phase 12 decides the code for SIGTERM; this phase documents only what exists.
 - `docs/architecture.md`: the import graph stays acyclic; `report` may import
   `batch` (for `Result`, `Summary`, `Outcome`) and nothing below it imports
   `report` or `cli`.
-- `converter/cli.py` names no target format in a string literal (the `ast`
-  test).
+- `converter/cli.py` and the new `converter/report.py` name no target format in a
+  string literal (the `ast` test).
 - Runtime dependencies stay `tqdm` only — `json` is the standard library.
 - Verify stays green and under 60 s; the suite stays ffmpeg-free.
 
@@ -240,9 +240,9 @@ Each issue references this spec path in its body.
 | Risk | Mitigation |
 |---|---|
 | A stray `print` reaches stdout under `--json` and breaks a consumer's parser | The end-to-end test parses every stdout line; the text renderer is never installed under `--json` |
-| Moving `_report` into `report.py` changes text-mode output | The existing text-mode tests stay unchanged and must pass |
+| Moving `_report` into `report.py` changes text-mode output | The existing text-mode tests keep their expectations unchanged (the `_report` ones move to `tests/test_report.py`) and must pass |
 | Records written from worker threads interleave mid-line | Records are written only from the main thread, in the `as_completed` loop, like `_report` today |
-| Windows stdout encoding mangles paths | `ensure_ascii=True`, plus the QA check with a non-ASCII name from a Windows console |
+| Windows stdout encoding mangles paths | `ensure_ascii=True`, plus the QA check with a non-ASCII name through the Node spawn pipe |
 
 ## Decision log
 
