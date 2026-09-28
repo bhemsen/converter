@@ -65,9 +65,8 @@ flowchart TD
   (`docs/specs/spec-single-file-input.md`).
 - **A file the walk finds that is not a media file is not a candidate**, not a
   failure. The set of source suffixes is curated data in the profile registry,
-  for the same reason
-  the copy mask is (`docs/prior-art.md`): ffmpeg can be asked what it contains,
-  never what it will accept. A tree full of `.txt` and `.nfo` produces no work and
+  for the same reason the copy mask is (`docs/prior-art.md`): ffmpeg can be
+  asked what it contains, never what it will accept. A tree full of `.txt` and `.nfo` produces no work and
   no noise.
 - **The tool's own output tree is not an input — but only when it really is
   nested.** A nested output root (`--to mp4 -r D:\Media D:\Media\converted`) is
