@@ -68,6 +68,8 @@ shell loop around ffmpeg.
 - Loss accounting per file.
 - Skipping existing outputs, and refusing colliding output paths up front.
 - Bounded parallelism, progress reporting, non-zero exit when anything failed.
+- Machine-readable output: one JSON record per file plus a summary, and exit
+  codes documented as a stable contract.
 - An interactive prompt for people who do not want to pass flags.
 
 ### Out
