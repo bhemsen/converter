@@ -25,13 +25,20 @@ that one file as the only candidate — and the suffix set not consulted.**
 
 Every decision below falls out of that sentence, which is why the existing
 machinery needs almost no change. The rule itself is new path semantics, so per
-`docs/architecture.md` (*Where new code goes*) it lives in `paths.py`: one new
-pure function, `paths.select_input(path, suffixes, *, recursive, exclude) ->
-tuple[Path, list[Path]]`, returns the input root and the candidates —
-`(Path(path).parent, [Path(path)])` for a file, `(Path(path), find_sources(...))`
-for a directory — and `cli.py` calls it once and uses the root for both
-output-root resolution and `output_for`. From there the input root becomes `INPUT`'s parent *as
-typed*, `paths.output_for` maps the file to `<output root>/<stem><target
+`docs/architecture.md` (*Where new code goes*) it lives in `paths.py`, as two
+new pure functions — two, because the output root depends on the input root and
+the directory walk's `exclude` depends on the output root:
+
+- `paths.input_root(path) -> Path` — `Path(path).parent` as typed for a file,
+  `Path(path)` otherwise;
+- `paths.select_input(path, suffixes, *, recursive, exclude) -> list[Path]` —
+  `[Path(path)]` for a file, `find_sources(...)` otherwise (so a missing or
+  non-directory, non-file path raises `NotADirectoryError` exactly as today).
+
+`cli.convert_command` then runs, in this order: the existence check,
+`input_root`, output-root resolution from that root, `select_input` with
+`exclude=output_root`, and `output_for` against the same root. From there the
+input root becomes `INPUT`'s parent *as typed*, `paths.output_for` maps the file to `<output root>/<stem><target
 suffix>`, `--mirror-to` re-roots that parent, and the self-write, collision,
 overwrite-hazard and existing-output rules of `docs/design/source-selection.md`
 apply unchanged to a batch of one. The only two departures from "its parent
@@ -66,12 +73,12 @@ directory" are the ones the sparring decided: the suffix set is bypassed, and
 
 ### In scope
 
-- `converter/paths.py`: the new pure `select_input` — **additive only**; every
-  existing function keeps its signature and behaviour.
-- `converter/cli.py`: calling `select_input`, the existence check, output-root
-  resolution from the returned root, the `INPUT` / `OUTPUT` help text, and the
+- `converter/paths.py`: the new pure `input_root` and `select_input` —
+  **additive only**; every existing function keeps its signature and behaviour.
+- `converter/cli.py`: the existence check, calling both functions in the order
+  above, output-root resolution from the input root, the `INPUT` / `OUTPUT` help text, and the
   interactive prompt.
-- Tests in `tests/test_paths.py` for `select_input` and in `tests/test_cli.py`
+- Tests in `tests/test_paths.py` for both functions and in `tests/test_cli.py`
   for every outcome above.
 - `README.md`: the usage block, the options table and one example.
 - Foundation and design carriers, **authored in this spec PR** so they are
@@ -136,8 +143,8 @@ none
 | `OUTPUT` stays a directory; for a file it is optional and defaults to the input root (the source's own directory) | Sparring. Omitting it for a *directory* stays a usage error — see Out of scope | 2026-09-28 |
 | `OUTPUT` and `--mirror-to` together stay a usage error, for a file as for a directory | Existing rule in `_resolve_output_root`; the model gives no reason to relax it | 2026-09-28 |
 | `-r` is accepted and has no effect on a file | A file has no sub-directories; `cp -r file dst` and `rsync -r file dst` accept it the same way, and a script that passes `-r` uniformly over mixed paths must not break. No note: nothing was given up | 2026-09-28 |
-| The file-vs-directory rule lives in `paths.select_input`, not in `cli.py` | `docs/architecture.md`, *Where new code goes*: "New path semantics (discovery rules, naming, mirroring) → `paths.py`"; it also keeps the rule in the pure, unit-tested module. Raised as blocking by the acceptance review | 2026-09-28 |
-| The strict-descendant output exclusion (`OWN`) is not consulted for a file | It exists so a *walk* does not rediscover its own output. A named file is never walked to, and with the parent as input root the file can never lie strictly under a descendant of it — so the check is not merely skipped, it cannot fire | 2026-09-28 |
+| The file-vs-directory rule lives in `paths.input_root` + `paths.select_input`, not in `cli.py` | `docs/architecture.md`, *Where new code goes*: "New path semantics (discovery rules, naming, mirroring) → `paths.py`"; it also keeps the rule in the pure, unit-tested module. Two functions, not one returning both, because the walk's `exclude` needs the output root, which needs the input root. Raised as blocking by the acceptance review (both rounds) | 2026-09-28 |
+| The strict-descendant output exclusion (`OWN`) is not consulted for a file | It exists so a *walk* does not rediscover its own output. A named file is never walked to, and with the parent as input root the file can never lie strictly under a descendant of it — except through a symlink or junction whose target is there, which `find_sources`' `p.resolve()` would catch in a walk. A named file deliberately ignores that case: the user asked for exactly this file | 2026-09-28 |
 | A missing path is `error: input does not exist: <path>`, exit 2, checked **first** in `convert_command`, before `_resolve_output_root` | Otherwise `--to mp3 nosuch.flac` with no `OUTPUT` falls into the directory branch and reports "OUTPUT is required" instead. The old "input directory" text is wrong for a file. `paths.find_sources`'s own contract stays untouched | 2026-09-28 |
 | A path that exists but is neither a file nor a directory is treated as a directory and fails as today — with `find_sources`'s "input directory does not exist", which is inaccurate for it | Accepted knowingly: no realistic media input takes that shape, and a dedicated branch would be untestable ceremony | 2026-09-28 |
 | `--dry-run`, the summary line, `--jobs` and the progress bar are unchanged for a file | A batch of one already prints `src -> dst` and `1 file(s) would be converted.` correctly; no wording is wrong, so none changes | 2026-09-28 |
@@ -195,16 +202,18 @@ Each issue references this spec path in its body.
   - [ ] `converter --help` describes `INPUT` as a file or a directory and says
         `OUTPUT` is optional for a file;
   - [ ] `--dry-run` prints the one pair and `1 file(s) would be converted.`
-- [ ] `tests/test_paths.py` pins `select_input` for a file (root is the parent as
-      typed, suffix set ignored), a directory (identical to `find_sources`, root
-      unchanged), and a missing path.
+- [ ] `tests/test_paths.py` pins `input_root` for a file (the parent as typed,
+      including `.` for a bare name) and a directory (unchanged), and
+      `select_input` for a file (`[file]`, suffix set ignored), a directory
+      (identical to `find_sources`), and a missing path (`NotADirectoryError`, as
+      `find_sources` raises today).
 - [ ] Every existing test passes unchanged.
 - [ ] `README.md`'s usage block, options table and one example show a file
       `INPUT`.
 - [ ] Tests for whichever way each OPEN row is resolved.
 - [ ] `git diff main -- converter/batch.py converter/jobs.py converter/profiles.py`
       is empty over the phase, and the `converter/paths.py` diff only adds
-      `select_input`.
+      `input_root` and `select_input`.
 - [ ] **QA smoke test with real ffmpeg** (the only end-to-end evidence; paths from
       `docs/workflow.md`, *This machine*), on copies of fixture files:
   - [ ] `--to mp3 song.flac` writes `song.mp3` beside it; exit 0.
@@ -224,8 +233,8 @@ Each issue references this spec path in its body.
 | Risk | Mitigation |
 |---|---|
 | A relative `INPUT` like `song.flac` has parent `.`, and `output_for`'s `relative_to` or `mirror_to_drive` mishandles it | Pinned by a test with a bare relative file name, with and without `--mirror-to`; the directory counterpart (`--to mp4 . OUT`) already takes the same path |
-| The file branch grows into a second pipeline beside the directory one | The model sentence, one `select_input` returning the same shape for both, and the empty-diff check on `batch`, `jobs` and `profiles` |
-| A function in `cli.py` crosses 50 lines when the branch is added | The decision lives in `paths.select_input`; `cli.py` only threads the returned root through `_selected_pairs` and `_resolve_output_root` |
+| The file branch grows into a second pipeline beside the directory one | The model sentence, `input_root` and `select_input` each covering both cases, and the empty-diff check on `batch`, `jobs` and `profiles` |
+| A function in `cli.py` crosses 50 lines when the branch is added | The decision lives in `paths`; `cli.py` only threads the input root through `_selected_pairs` and `_resolve_output_root` |
 | The ffmpeg-free suite hides a real-ffmpeg problem with a file outside the suffix set | QA smoke test covers both the readable and the unreadable case |
 
 ## Decision log
@@ -241,3 +250,7 @@ Each issue references this spec path in its body.
   `OWN` test is replaced by the statement that it cannot fire; the bare relative
   name, help text, README and directory-without-`OUTPUT` cases gain Verification
   items; `converter mirror FILE` is recorded as out of scope.
+- 2026-09-28: Second review round: `select_input` as first specified needed the
+  output root to compute the input root it returned, so it is split into
+  `input_root` and `select_input`, and the call order is fixed. The `OWN` row now
+  names the symlink/junction exception instead of claiming it cannot fire.

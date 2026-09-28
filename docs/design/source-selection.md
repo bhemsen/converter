@@ -64,8 +64,8 @@ flowchart TD
   and `a.mp4 --to mp4` with no `OUTPUT` meets `SELF` and is a counted skip
   (`docs/specs/spec-single-file-input.md`).
 - **A file the walk finds that is not a media file is not a candidate**, not a
-  failure. The set
-  of source suffixes is curated data in the profile registry, for the same reason
+  failure. The set of source suffixes is curated data in the profile registry,
+  for the same reason
   the copy mask is (`docs/prior-art.md`): ffmpeg can be asked what it contains,
   never what it will accept. A tree full of `.txt` and `.nfo` produces no work and
   no noise.
