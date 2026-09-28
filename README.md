@@ -73,14 +73,19 @@ That gives you a `converter` command. If you would rather not install anything,
 ## Usage
 
 ```sh
-converter --to FORMAT INPUT_DIR OUTPUT_DIR   # e.g. --to mp4, --to wav
+converter --to FORMAT INPUT [OUTPUT]         # INPUT: a file or a directory; e.g. --to mp4, --to wav
 converter mirror INPUT_ROOT OUTPUT_ROOT      # re-create a directory tree elsewhere
 converter --list-formats                     # print the target formats above
 ```
 
+`OUTPUT` is required for a directory `INPUT`, but optional for a file: omitted,
+the result lands beside the source.
+
 Run `converter` with no arguments for an interactive prompt that asks the same
-questions and then runs the same code, or `converter --help` for the full
-option list (`converter mirror --help` for the mirror sub-command's own).
+questions and then runs the same code — it adapts to a file `INPUT` too,
+skipping the sub-directory question and taking an empty output answer as the
+file's own directory — or `converter --help` for the full option list
+(`converter mirror --help` for the mirror sub-command's own).
 
 > **Coming from an older version?** The `video` and `audio` sub-commands are
 > gone; a target format replaces them:
@@ -98,23 +103,32 @@ option list (`converter mirror --help` for the mirror sub-command's own).
 | `--to FORMAT` | target format to convert everything to (required); a name or a dotted suffix, e.g. `mp4` or `.mp4` — see `--list-formats` |
 | `--list-formats` | list the target formats available and exit |
 | `-r`, `--recursive` | also convert files in sub-directories, keeping the tree in the output |
-| `--mirror-to ROOT` | derive the output directory by re-rooting `INPUT_DIR` onto `ROOT`, e.g. `E:` — use instead of `OUTPUT_DIR` |
+| `--mirror-to ROOT` | derive the output directory by re-rooting `INPUT` onto `ROOT`, e.g. `E:` — use instead of `OUTPUT` |
 | `-j N`, `--jobs N` | conversions to run in parallel, not capped (default: 4, or fewer if the machine has fewer CPUs) |
 | `--overwrite` | replace existing output files instead of skipping them |
 | `--dry-run` | print what would be converted and stop |
 | `-q`, `--quiet` | hide the progress bar |
 | `--ffmpeg`, `--ffprobe` | use a specific executable instead of searching `PATH` |
 
+> **A file as `INPUT`.** A named file is converted whatever its suffix — it
+> bypasses the curated suffix list used for a directory walk, since ffmpeg
+> decides whether it is readable; a file ffmpeg cannot read still ends
+> `FAILED` with its reason, exit 1, never a usage error. `OUTPUT` stays a
+> directory: an existing non-directory `OUTPUT`, or a missing one whose
+> suffix already matches the target format, is refused up front (`error:
+> OUTPUT must be a directory; the output file name comes from INPUT and
+> --to`, exit 2).
+
 > **`--mirror-to` and `subst`/junction/symlinked inputs.** `--mirror-to` re-roots
-> `INPUT_DIR` onto `ROOT` using the path you typed, not the physical path it
+> `INPUT` onto `ROOT` using the path you typed, not the physical path it
 > resolves to. So `subst Q: <fixtures>` followed by
 > `converter --to mp4 -r Q:\ --mirror-to R:` writes to `R:\Season1\...`, mirroring
 > the shallow tree under `Q:\` — **not** `R:\Users\...\<physical path>\Season1\...`,
 > the whole physical path `Q:` happens to resolve to. The same holds for a
-> directory junction, an NTFS symlink standing in for `INPUT_DIR`, or a relative
-> `INPUT_DIR` (mirrored from the path as given, not resolved against the current
+> directory junction, an NTFS symlink standing in for `INPUT`, or a relative
+> `INPUT` (mirrored from the path as given, not resolved against the current
 > working directory first). This only changes the *shape* of the mirrored tree,
-> never its safety: a self-write (`INPUT_DIR` and `--mirror-to` resolving to the
+> never its safety: a self-write (`INPUT` and `--mirror-to` resolving to the
 > same file) is still reported as a skipped file at exit 0, and an `--overwrite`
 > hazard that would destroy one of the run's own inputs is still refused at
 > exit 2 — both checks resolve the input and the derived output path to their
@@ -137,6 +151,9 @@ converter --to mp4 D:\Rips E:\Done -r -j 6 --overwrite
 
 # Rip audio out to WAV instead
 converter --to wav D:\Rips E:\Audio --recursive
+
+# Convert a single file; with no OUTPUT, song.mp3 lands next to song.flac
+converter --to mp3 D:\Rips\song.flac
 ```
 
 Existing outputs are **skipped** by default, so re-running after an interruption
