@@ -47,9 +47,10 @@ The internal import graph is acyclic today and must stay that way:
 ## Key flows
 
 1. **Happy path.** `cli` resolves the target profile and the output root,
-   `paths.find_sources` collects the inputs — or, when `INPUT` names a file,
-   `cli` takes that file as the only input and its parent as the input root
-   (`docs/design/source-selection.md`) — `paths.find_collisions` refuses up
+   `paths.select_input` collects the inputs — a directory walk through
+   `paths.find_sources`, or, when `INPUT` names a file, that file alone with its
+   parent as the input root (`docs/design/source-selection.md`) —
+   `paths.find_collisions` refuses up
    front if two inputs would write to the same output, then `batch.run_batch`
    runs the profile's cheapest attempt per file through the engine in `jobs.py`.
    Every profile shipped or currently specced declares its cheap attempt
