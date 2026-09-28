@@ -17,6 +17,8 @@ selection is complete before ffmpeg is even located, which is what lets
 
 ```mermaid
 flowchart TD
+    IN{"does INPUT name a file?"}
+    ONE["that file, with its parent as typed<br/>as the input root"]
     F["file under the input root<br/>(recursive only with -r)"]
     MEDIA{"is its suffix in the registry's<br/>source-suffix set?"}
     OWN{"is the output root a strict descendant of<br/>the input root, and does this file lie under it?"}
@@ -30,6 +32,9 @@ flowchart TD
     NOTCAND["not a candidate — never counted, never reported"]
     REFUSE["the whole run is refused before any conversion<br/>(exit 2, every offending pair printed)"]
 
+    IN -->|"no — a directory"| F
+    IN -->|"yes"| ONE
+    ONE --> OUT
     F --> MEDIA
     MEDIA -->|"no"| NOTCAND
     MEDIA -->|"yes"| OWN
@@ -48,10 +53,20 @@ flowchart TD
 
 ## Rules the diagram encodes
 
-- **A file that is not a media file is not a candidate**, not a failure. The set
-  of source suffixes is curated data in the profile registry, for the same reason
-  the copy mask is (`docs/prior-art.md`): ffmpeg can be asked what it contains,
-  never what it will accept. A tree full of `.txt` and `.nfo` produces no work and
+- **A file `INPUT` is its parent directory with one candidate.** It enters at
+  `OUT`, not at `F`: the suffix set is not consulted, because the user named the
+  file and ffprobe, not an extension list, decides whether it is readable — an
+  unreadable one fails in the ladder like any other conversion. `OWN` is not
+  consulted either, because it exists so a *walk* does not rediscover its own
+  output, and a named file is never walked to. Everything from `OUT` on applies
+  unchanged to a batch of one: the parent, taken as typed, is the input root, so
+  `--mirror-to` re-roots it exactly as a directory run over that parent would,
+  and `a.mp4 --to mp4` with no `OUTPUT` meets `SELF` and is a counted skip
+  (`docs/specs/spec-single-file-input.md`).
+- **A file the walk finds that is not a media file is not a candidate**, not a
+  failure. The set of source suffixes is curated data in the profile registry,
+  for the same reason the copy mask is (`docs/prior-art.md`): ffmpeg can be
+  asked what it contains, never what it will accept. A tree full of `.txt` and `.nfo` produces no work and
   no noise.
 - **The tool's own output tree is not an input — but only when it really is
   nested.** A nested output root (`--to mp4 -r D:\Media D:\Media\converted`) is

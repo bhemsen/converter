@@ -63,6 +63,8 @@ shell loop around ffmpeg.
 - Target-format-driven conversion across audio, video and image formats.
 - Declarative target profiles: copy mask plus fallback encoder per stream type.
 - Recursive batch over a directory tree, mirroring its structure.
+- A single named file, converted with the same ladder and loss accounting as a
+  tree.
 - Loss accounting per file.
 - Skipping existing outputs, and refusing colliding output paths up front.
 - Bounded parallelism, progress reporting, non-zero exit when anything failed.
