@@ -200,7 +200,7 @@ def _resolve_output_root(args: argparse.Namespace) -> Path:
     choice, not the safety of the guards.
 
     A file INPUT may omit OUTPUT altogether: the result then lands beside the
-    source, its own directory (``docs/specs/spec-single-file-input.md``). A
+    source, its own directory (``docs/specs/archive/spec-single-file-input.md``). A
     directory INPUT keeps the existing requirement.
     """
     if args.output_dir is not None and args.mirror_to is not None:
@@ -227,7 +227,7 @@ def _check_output_shape(output: Path | None, target_suffix: str) -> None:
     would otherwise create a directory of that name and write into it --
     surprising rather than destructive, but worth refusing up front. A missing
     OUTPUT with no such suffix, or an existing directory whatever its name, is
-    accepted unchanged (``docs/specs/spec-single-file-input.md``).
+    accepted unchanged (``docs/specs/archive/spec-single-file-input.md``).
     """
     if output is None:
         return
@@ -256,7 +256,7 @@ def _selected_pairs(
 
     ``paths.select_input`` covers a file INPUT (the file itself, the suffix set
     bypassed) and a directory INPUT (``find_sources``, unchanged) with one call
-    (``docs/specs/spec-single-file-input.md``). The output root is handed to
+    (``docs/specs/archive/spec-single-file-input.md``). The output root is handed to
     it unconditionally: it is skipped only when it really is a strict
     descendant of the input root, which is the one shape where a directory
     walk could otherwise rediscover its own output
@@ -383,7 +383,7 @@ def convert_command(args: argparse.Namespace) -> int:
     ``--dry-run`` and a refusal work on a machine that has no ffmpeg. The
     existence check runs first among the path-handling steps, before
     ``_resolve_output_root``, so a missing file INPUT is never mistaken for a
-    missing OUTPUT (``docs/specs/spec-single-file-input.md``).
+    missing OUTPUT (``docs/specs/archive/spec-single-file-input.md``).
     """
     if args.jobs is not None and args.jobs < 1:
         raise UsageError(f"--jobs must be 1 or more, got {args.jobs}")
@@ -519,7 +519,7 @@ def _prompt_convert_argv(target: str, input_root: str) -> list[str] | None:
     A file `input_root` matches the CLI's own defaults: OUTPUT is optional (an
     empty answer lands beside the source), `--mirror-to` is not offered, and
     "Include sub-directories?" is not asked -- a file has none
-    (``docs/specs/spec-single-file-input.md``). A directory answer keeps every
+    (``docs/specs/archive/spec-single-file-input.md``). A directory answer keeps every
     prompt and default exactly as before.
     """
     argv = ["--to", target, input_root]

@@ -127,7 +127,7 @@ class TestFindSources:
 
 
 class TestInputRoot:
-    """`docs/specs/spec-single-file-input.md`: a file INPUT behaves like its
+    """`docs/specs/archive/spec-single-file-input.md`: a file INPUT behaves like its
     parent directory, so the root these functions build on is the parent,
     as typed and never resolved."""
 

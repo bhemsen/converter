@@ -624,7 +624,7 @@ class TestSourceSelection:
 
 class TestFileInput:
     """A file INPUT behaves exactly like its parent directory, non-recursively,
-    with that one file as the only candidate (docs/specs/spec-single-file-input.md)."""
+    with that one file as the only candidate (docs/specs/archive/spec-single-file-input.md)."""
 
     def test_missing_input_is_a_usage_error_without_output(self, tmp_path, capsys):
         missing = tmp_path / "song.flac"
@@ -775,7 +775,7 @@ class TestFileInput:
 
 class TestFileOutputGuard:
     """The file-name OUTPUT guard: refused for a file INPUT only
-    (docs/specs/spec-single-file-input.md, *Prior decisions*)."""
+    (docs/specs/archive/spec-single-file-input.md, *Prior decisions*)."""
 
     def test_an_existing_file_as_output_is_refused(self, tmp_path, capsys):
         source = make_source(tmp_path, "song.flac")
@@ -1057,7 +1057,7 @@ class TestInteractivePrompt:
 
     def test_a_file_answer_skips_the_sub_directory_question(self, monkeypatch, tmp_path):
         """A file answer takes the CLI's own defaults: no OUTPUT means beside the
-        source, and --mirror-to is not offered (`docs/specs/spec-single-file-input.md`)."""
+        source, and --mirror-to is not offered (`docs/specs/archive/spec-single-file-input.md`)."""
         source = make_source(tmp_path / "in", "clip.mkv")
         index = sorted(PROFILES).index(VIDEO_TARGET) + 1
         self._answers(monkeypatch, [str(index), str(source), "", "n"])
