@@ -163,8 +163,8 @@ none
 | SIGTERM exits 143, SIGINT keeps 130 | The 128+n convention a Node parent or a shell expects (`docs/prior-art.md`). Windows has no catchable SIGTERM; a `TerminateProcess` exit code is whatever the terminator chose | 2026-09-28 |
 | On Windows, `cli.main` assigns **the converter's own process** to a Job Object with `KILL_ON_JOB_CLOSE` once, at the start of the convert command, before any spawn; every ffmpeg/ffprobe it starts inherits the membership. Failure to create or assign is reported once on stderr and the run continues | Assigning the parent removes the spawn-then-assign window entirely and needs no lazy, thread-safe creation. Nested jobs work from Windows 8 on; a missing job only loses the orphan protection, never a conversion. When the converter dies, the OS closes the job handle and kills what is left | 2026-09-28 |
 | A task interrupted mid-conversion produces no `Result` — including one whose ffmpeg was killed, which today would surface as `failed` | Under phase 11 a stream without a summary is incomplete; a killed attempt is not a conversion failure | 2026-09-28 |
-| OPEN — The temporary name: `<name><ext>.partial` (needs `-f`), `<stem>.partial<ext>` (no `-f`, but the next directory walk would collect it as a *source*), or a hidden `.<name><ext>.partial`? The spec is written for the first; choosing another changes the Outcome, `paths.partial_for`, the muxer rows and both carriers | resolved at the spec-acceptance gate | — |
-| OPEN — `os.replace` on Windows when the target is held open (scanner, indexer, a player): retry a bounded number of times, or fail at once? | resolved at the spec-acceptance gate | — |
+| The temporary name is `<name><ext>.partial` (`clip.mp4.partial`) | Resolved at the spec-acceptance gate, 2026-09-28: `.partial` is no source suffix, so the next directory walk never collects it (`clip.partial.mp4` would be, and would need an exclusion rule in `paths`); it is visibly unfinished in any file browser, where a hidden `.clip.mp4.partial` would hide a kill's leftovers from the user on POSIX and not even hide it on Windows. The cost is the declared muxer, measured above | 2026-09-28 |
+| On Windows only, and only on `PermissionError`, the rename is retried up to 5 times with exponential backoff starting at 0.1 s (0.1, 0.2, 0.4, 0.8, 1.6 s — about 3 s in all); after the last failure the file is `failed` with the lock as its reason, the partial is deleted, and an existing output is left untouched. POSIX renames once | Resolved at the spec-acceptance gate, 2026-09-28: a scanner or indexer briefly holding the target is routine on Windows, and failing a finished conversion over it would be the worse outcome; the bound keeps a genuinely locked target (a player holding it open) from stalling the run. The pattern several projects use (`docs/prior-art.md`) | 2026-09-28 |
 
 ### Implementation notes from the acceptance review
 
@@ -185,7 +185,7 @@ none
 
 ## Tracking
 
-- Milestone: filled at the acceptance gate
+- Milestone: [abort-safe-writes](https://github.com/bhemsen/converter/milestone/12)
 - Issues: created from this spec once it is merged (one per implementable step)
 
 Each issue references this spec path in its body.
@@ -224,7 +224,10 @@ Each issue references this spec path in its body.
       `TestRunIsShellFree` (which stubs `subprocess.run`) moves to
       `tests/test_ffmpegtool.py` against `Popen`, and the `test_batch.py` tests
       that assert the output probe targets `task.dst` now expect the partial.
-- [ ] Tests for whichever way each OPEN row is resolved.
+- [ ] Tests pin the rename retry: on a stubbed `PermissionError`, Windows retries
+      with the stated backoff (sleep stubbed) and ends `failed` with the partial
+      removed and the old output intact; POSIX does not retry; a success on the
+      third try converts.
 - [ ] **QA smoke test with real ffmpeg** (paths from `docs/workflow.md`):
   - [ ] all 17 targets convert; compared with the same conversions run on
         `v3.1.0`, each output has the same `format_name` and the same streams and
@@ -268,3 +271,6 @@ Each issue references this spec path in its body.
   byte-identity QA check moves from Matroska (random SegmentUID, measured) to an
   MP4 remux; `paths.partial_for`, the sweep's limits, the reserved name and the
   overlap with phase 11 are stated.
+- 2026-09-28: Spec-acceptance gate: the temporary name is `<name><ext>.partial`,
+  and the Windows rename retries 5 times with exponential backoff from 0.1 s
+  before failing. Human prerequisites: none. Accepted.
