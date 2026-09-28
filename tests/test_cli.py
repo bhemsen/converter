@@ -622,6 +622,209 @@ class TestSourceSelection:
         assert "0 converted" in capsys.readouterr().out
 
 
+class TestFileInput:
+    """A file INPUT behaves exactly like its parent directory, non-recursively,
+    with that one file as the only candidate (docs/specs/spec-single-file-input.md)."""
+
+    def test_missing_input_is_a_usage_error_without_output(self, tmp_path, capsys):
+        missing = tmp_path / "song.flac"
+
+        code = main(convert_argv(str(missing)))
+        err = capsys.readouterr().err
+
+        assert code == 2
+        assert f"input does not exist: {missing}" in err
+
+    def test_missing_input_is_a_usage_error_with_output(self, tmp_path, capsys):
+        missing = tmp_path / "song.flac"
+
+        code = main(convert_argv(str(missing), str(tmp_path / "out")))
+        err = capsys.readouterr().err
+
+        assert code == 2
+        assert f"input does not exist: {missing}" in err
+
+    def test_with_output_writes_stem_and_target_suffix_under_output(self, tmp_path, capsys):
+        source = make_source(tmp_path, "song.flac")
+
+        code = main(convert_argv(str(source), str(tmp_path / "out"), "--dry-run"))
+        out = capsys.readouterr().out
+
+        assert code == 0
+        assert f"{source} -> {tmp_path / 'out' / f'song{VIDEO_SUFFIX}'}" in out
+        assert "1 file(s) would be converted." in out
+
+    def test_without_output_writes_beside_the_source(self, tmp_path, capsys):
+        source = make_source(tmp_path, "song.flac")
+
+        code = main(convert_argv(str(source), "--dry-run"))
+        out = capsys.readouterr().out
+
+        assert code == 0
+        assert f"{source} -> {tmp_path / f'song{VIDEO_SUFFIX}'}" in out
+
+    def test_mirror_to_reroots_the_parent_as_typed(self, tmp_path, capsys):
+        """The same output a directory run over the parent would produce."""
+        parent = tmp_path / "in"
+        source = make_source(parent, "song.flac")
+
+        file_code = main(convert_argv(str(source), "--mirror-to", "M:", "--dry-run"))
+        file_out = capsys.readouterr().out
+        dir_code = main(convert_argv(str(parent), "--mirror-to", "M:", "--dry-run"))
+        dir_out = capsys.readouterr().out
+
+        assert file_code == dir_code == 0
+        assert file_out == dir_out
+
+    def test_a_suffix_outside_source_suffixes_still_yields_a_task(self, tmp_path, capsys):
+        source = make_source(tmp_path, "weird.strangesuffix")
+
+        code = main(convert_argv(str(source), "--dry-run"))
+
+        assert code == 0
+        assert "1 file(s) would be converted." in capsys.readouterr().out
+
+    def test_recursive_has_no_effect_on_a_file(self, tmp_path, capsys):
+        source = make_source(tmp_path, "song.flac")
+
+        assert main(convert_argv(str(source), "-r", "--dry-run")) == 0
+        with_r = capsys.readouterr().out
+        assert main(convert_argv(str(source), "--dry-run")) == 0
+        without_r = capsys.readouterr().out
+
+        assert with_r == without_r
+
+    def test_self_write_without_output_is_a_counted_skip_with_no_tool_resolution(
+        self, tmp_path, capsys, monkeypatch
+    ):
+        def explode(*_args, **_kwargs):
+            raise AssertionError("a self-write must not resolve a tool")
+
+        monkeypatch.setattr(cli.ffmpegtool, "resolve_tools", explode)
+        source = make_source(tmp_path, f"a{VIDEO_SUFFIX}")
+        before = source.read_bytes()
+
+        code = main(convert_argv(str(source)))
+        out = capsys.readouterr().out
+
+        assert code == 0
+        assert "0 converted, 1 skipped" in out
+        assert "this file itself" in out
+        assert source.read_bytes() == before
+
+    def test_an_existing_output_without_overwrite_is_skipped(self, tmp_path, capsys, stub_ffmpeg):
+        source = make_source(tmp_path, "clip.mkv")
+        existing = tmp_path / "out" / f"clip{VIDEO_SUFFIX}"
+        existing.parent.mkdir(parents=True)
+        existing.write_bytes(b"already done")
+
+        code = main(convert_argv(str(source), str(tmp_path / "out"), "-q"))
+
+        assert code == 0
+        assert "1 skipped" in capsys.readouterr().out
+        assert existing.read_bytes() == b"already done"
+
+    def test_bare_relative_file_name_without_mirror_to(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        Path("song.flac").write_bytes(b"data")
+
+        code = main(convert_argv("song.flac", "--dry-run"))
+        out = capsys.readouterr().out
+
+        assert code == 0
+        assert f"song.flac -> song{VIDEO_SUFFIX}" in out
+
+    def test_bare_relative_file_name_with_mirror_to(self, tmp_path, monkeypatch, capsys):
+        """The same output a directory run over `.` would produce."""
+        monkeypatch.chdir(tmp_path)
+        Path("song.flac").write_bytes(b"data")
+
+        file_code = main(convert_argv("song.flac", "--mirror-to", "M:", "--dry-run"))
+        file_out = capsys.readouterr().out
+        dir_code = main(convert_argv(".", "--mirror-to", "M:", "--dry-run"))
+        dir_out = capsys.readouterr().out
+
+        assert file_code == dir_code == 0
+        assert file_out == dir_out
+
+    def test_output_together_with_mirror_to_is_still_a_usage_error(self, tmp_path, capsys):
+        source = make_source(tmp_path, "song.flac")
+
+        code = main(convert_argv(str(source), "out", "--mirror-to", "E:"))
+
+        assert code == 2
+        assert "not both" in capsys.readouterr().err
+
+    def test_a_directory_input_without_output_or_mirror_to_keeps_the_usage_error(
+        self, tmp_path, capsys
+    ):
+        (tmp_path / "in").mkdir()
+
+        code = main(convert_argv(str(tmp_path / "in")))
+
+        assert code == 2
+        assert "OUTPUT is required" in capsys.readouterr().err
+
+    def test_help_describes_input_as_file_or_directory_and_output_as_optional_for_a_file(self):
+        help_text = build_parser().format_help()
+
+        assert "file" in help_text
+        assert "directory" in help_text
+        assert "optional" in help_text.lower()
+
+
+class TestFileOutputGuard:
+    """The file-name OUTPUT guard: refused for a file INPUT only
+    (docs/specs/spec-single-file-input.md, *Prior decisions*)."""
+
+    def test_an_existing_file_as_output_is_refused(self, tmp_path, capsys):
+        source = make_source(tmp_path, "song.flac")
+        blocker = tmp_path / "blocker"
+        blocker.write_bytes(b"x")
+
+        code = main(convert_argv(str(source), str(blocker)))
+        err = capsys.readouterr().err
+
+        assert code == 2
+        assert "OUTPUT must be a directory; the output file name comes from INPUT and --to" in err
+        assert not blocker.is_dir()
+
+    def test_a_missing_output_with_the_targets_suffix_is_refused(self, tmp_path, capsys):
+        source = make_source(tmp_path, "song.flac")
+        out = tmp_path / f"out{VIDEO_SUFFIX.upper()}"
+
+        code = main(convert_argv(str(source), str(out)))
+        err = capsys.readouterr().err
+
+        assert code == 2
+        assert "OUTPUT must be a directory" in err
+        assert not out.exists()
+
+    def test_a_missing_output_with_no_suffix_is_accepted(self, tmp_path, capsys):
+        source = make_source(tmp_path, "song.flac")
+
+        code = main(convert_argv(str(source), str(tmp_path / "out"), "--dry-run"))
+
+        assert code == 0
+
+    def test_an_existing_directory_shaped_like_the_target_is_accepted(self, tmp_path, capsys):
+        source = make_source(tmp_path, "song.flac")
+        target_shaped = tmp_path / f"x{VIDEO_SUFFIX}"
+        target_shaped.mkdir()
+
+        code = main(convert_argv(str(source), str(target_shaped), "--dry-run"))
+
+        assert code == 0
+
+    def test_a_directory_input_with_a_file_shaped_output_behaves_as_today(self, tmp_path):
+        make_source(tmp_path / "in", "clip.mkv")
+        target_shaped = tmp_path / f"b{VIDEO_SUFFIX}"
+
+        code = main(convert_argv(str(tmp_path / "in"), str(target_shaped), "--dry-run"))
+
+        assert code == 0
+
+
 class TestExitCodeWiring:
     """Drives a whole run through main() with a stubbed ffmpeg, so the exit-code
     contract in the README is checked end to end rather than per unit."""
