@@ -38,8 +38,8 @@ the directory walk's `exclude` depends on the output root:
 `cli.convert_command` then runs, in this order: the existence check,
 `input_root`, output-root resolution from that root, `select_input` with
 `exclude=output_root`, and `output_for` against the same root. From there the
-input root becomes `INPUT`'s parent *as typed*, `paths.output_for` maps the file to `<output root>/<stem><target
-suffix>`, `--mirror-to` re-roots that parent, and the self-write, collision,
+input root becomes `INPUT`'s parent *as typed*, `paths.output_for` maps the file
+to `<output root>/<stem><target suffix>`, `--mirror-to` re-roots that parent, and the self-write, collision,
 overwrite-hazard and existing-output rules of `docs/design/source-selection.md`
 apply unchanged to a batch of one. The only two departures from "its parent
 directory" are the ones the sparring decided: the suffix set is bypassed, and
@@ -65,7 +65,11 @@ directory" are the ones the sparring decided: the suffix set is bypassed, and
       "input directory", exit 2.
 - [ ] Every directory invocation keeps its exact current behaviour, `OUTPUT`
       still required for a directory unless `--mirror-to` is given.
-- [ ] The interactive prompt offers the file case — see Prior decisions (OPEN).
+- [ ] The interactive prompt accepts a file and adapts to it: no sub-directory
+      question, and an empty output answer means the file's own directory.
+- [ ] With a file `INPUT`, an `OUTPUT` that is an existing non-directory, or does
+      not exist and ends in the target's suffix, is refused as a usage error,
+      exit 2, before anything is written.
 - [ ] `--help`, `README.md`, `docs/vision.md`, `docs/architecture.md` and
       `docs/design/source-selection.md` describe `INPUT` as a file or a directory.
 
@@ -76,8 +80,8 @@ directory" are the ones the sparring decided: the suffix set is bypassed, and
 - `converter/paths.py`: the new pure `input_root` and `select_input` —
   **additive only**; every existing function keeps its signature and behaviour.
 - `converter/cli.py`: the existence check, calling both functions in the order
-  above, output-root resolution from the input root, the `INPUT` / `OUTPUT` help text, and the
-  interactive prompt.
+  above, output-root resolution from the input root, the file-name `OUTPUT`
+  guard, the `INPUT` / `OUTPUT` help text, and the file-aware interactive prompt.
 - Tests in `tests/test_paths.py` for both functions and in `tests/test_cli.py`
   for every outcome above.
 - `README.md`: the usage block, the options table and one example.
@@ -92,7 +96,8 @@ directory" are the ones the sparring decided: the suffix set is bypassed, and
   place of the positional `OUTPUT` — a second CLI break — and Windows does not
   expand globs in the shell (`docs/prior-art.md`, *Single-file input*).
 - **`OUTPUT` as a file name** (`converter --to mp4 a.mkv b.mp4`). `OUTPUT` stays a
-  directory; `--to` stays the only way to name the target.
+  directory; `--to` stays the only way to name the target. The shape is refused
+  for a file `INPUT` (see Prior decisions), not supported.
 - **An omitted `OUTPUT` for a directory `INPUT`.** That would make in-place tree
   conversion the default — a behaviour change nobody asked for, and a different
   question from this phase's.
@@ -150,10 +155,10 @@ none
 | `--dry-run`, the summary line, `--jobs` and the progress bar are unchanged for a file | A batch of one already prints `src -> dst` and `1 file(s) would be converted.` correctly; no wording is wrong, so none changes | 2026-09-28 |
 | The "no convertible files found" hint never fires for a file | A file `INPUT` always yields exactly one pair, because the suffix set is bypassed | 2026-09-28 |
 | The foundation and design carriers are edited in this spec PR, not in an implementation issue | `/loopkit:roadmap` recorded the impact for ratification at this gate; phase 6's spec PR is the precedent for editing `architecture.md` and a design diagram before the code | 2026-09-28 |
-| OPEN — Does the interactive prompt become file-aware (skip the sub-directory question, allow an empty output for a file), or only accept a file under a reworded question? | resolved at the spec-acceptance gate | — |
-| OPEN — Is an `OUTPUT` that *looks like a file name* refused when `INPUT` is a file? | resolved at the spec-acceptance gate | — |
+| The interactive prompt is file-aware: the input question reads "Input file or directory"; for a file it skips "Include sub-directories?", and its output question takes an empty answer as the file's own directory (no `OUTPUT`), so `--mirror-to` is not offered for a file there | Resolved at the spec-acceptance gate, 2026-09-28. Matches the CLI's defaults. The prompt checks `Path(answer).is_file()` once before assembling the argv — the argv it hands to `dispatch` is still what a user could have typed, so the one-code-path rule holds. `--mirror-to` for a file stays reachable from the CLI | 2026-09-28 |
+| With a file `INPUT`, `OUTPUT` is refused (usage error, exit 2) when it is an existing non-directory, or does not exist and its suffix equals the target's (case-insensitive): `error: OUTPUT must be a directory; the output file name comes from INPUT and --to` | Resolved at the spec-acceptance gate, 2026-09-28: catches the ImageMagick reflex recorded as an AVOID in `docs/prior-art.md` instead of silently creating a directory `b.mp4\`. Checked in `cli.py` beside the other argument checks, before selection, because it needs the resolved profile's suffix. Deliberately file-`INPUT` only: a directory `INPUT` keeps its exact current behaviour | 2026-09-28 |
 
-### Why the two OPEN rows are genuinely open
+### The two gate decisions, and what each weighed
 
 - **Prompt.** Today an empty answer to "Output directory" means "mirror onto
   another drive instead", and "Include sub-directories?" defaults to yes. Both
@@ -174,7 +179,7 @@ none
 
 ## Tracking
 
-- Milestone: filled at the acceptance gate
+- Milestone: [single-file-input](https://github.com/bhemsen/converter/milestone/10)
 - Issues: created from this spec once it is merged (one per implementable step)
 
 Each issue references this spec path in its body.
@@ -210,7 +215,13 @@ Each issue references this spec path in its body.
 - [ ] Every existing test passes unchanged.
 - [ ] `README.md`'s usage block, options table and one example show a file
       `INPUT`.
-- [ ] Tests for whichever way each OPEN row is resolved.
+- [ ] Tests pin the file-name `OUTPUT` guard: an existing file as `OUTPUT`, and a
+      missing `out.MP4` for `--to mp4`, are refused with exit 2 and write nothing;
+      a missing `out` (no suffix) and an existing directory named `x.mp4` are
+      accepted; a directory `INPUT` with `OUTPUT` `b.mp4` behaves as today.
+- [ ] Tests pin the prompt: a file answer skips the sub-directory question and an
+      empty output answer produces an argv with no `OUTPUT`, which round-trips
+      through `dispatch`; a directory answer asks exactly what it asks today.
 - [ ] `git diff main -- converter/batch.py converter/jobs.py converter/profiles.py`
       is empty over the phase, and the `converter/paths.py` diff only adds
       `input_root` and `select_input`.
@@ -226,7 +237,9 @@ Each issue references this spec path in its body.
   - [ ] `--to mp4 clip.mp4` reports `skipped`, exit 0; re-running the first
         command reports `0 converted`, exit 0.
   - [ ] A missing path exits 2 with `input does not exist`.
-  - [ ] The interactive prompt, driven once with a file, produces a working run.
+  - [ ] The interactive prompt, driven once with a file and an empty output
+        answer, converts it beside the source.
+  - [ ] `--to mp4 clip.mkv out.mp4` exits 2 and creates nothing.
 
 ## Risks and mitigations
 
@@ -254,3 +267,6 @@ Each issue references this spec path in its body.
   output root to compute the input root it returned, so it is split into
   `input_root` and `select_input`, and the call order is fixed. The `OWN` row now
   names the symlink/junction exception instead of claiming it cannot fire.
+- 2026-09-28: Spec-acceptance gate: both OPEN rows resolved as recommended — a
+  file-aware prompt, and a refusal of a file-name-shaped `OUTPUT` for a file
+  `INPUT`. Human prerequisites: none. Accepted.
