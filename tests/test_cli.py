@@ -1055,6 +1055,34 @@ class TestInteractivePrompt:
         assert dispatch(prompt_for_argv()) == 0
         assert "1 converted" in capsys.readouterr().out
 
+    def test_a_file_answer_skips_the_sub_directory_question(self, monkeypatch, tmp_path):
+        """A file answer takes the CLI's own defaults: no OUTPUT means beside the
+        source, and --mirror-to is not offered (`docs/specs/spec-single-file-input.md`)."""
+        source = make_source(tmp_path / "in", "clip.mkv")
+        index = sorted(PROFILES).index(VIDEO_TARGET) + 1
+        self._answers(monkeypatch, [str(index), str(source), "", "n"])
+
+        assert prompt_for_argv() == ["--to", VIDEO_TARGET, str(source)]
+
+    def test_a_file_answer_with_an_explicit_output_directory(self, monkeypatch, tmp_path):
+        source = make_source(tmp_path / "in", "clip.mkv")
+        index = sorted(PROFILES).index(VIDEO_TARGET) + 1
+        self._answers(monkeypatch, [str(index), str(source), str(tmp_path / "out"), "n"])
+
+        assert prompt_for_argv() == ["--to", VIDEO_TARGET, str(source), str(tmp_path / "out")]
+
+    def test_a_prompted_file_conversion_round_trips_through_the_router(
+        self, monkeypatch, tmp_path, capsys, stub_ffmpeg
+    ):
+        """The file argv the file-aware prompt builds -- OUTPUT omitted -- must
+        still be exactly what dispatch() routes."""
+        source = make_source(tmp_path / "in", "clip.mkv")
+        index = sorted(PROFILES).index(VIDEO_TARGET) + 1
+        self._answers(monkeypatch, [str(index), str(source), "", "n"])
+
+        assert dispatch(prompt_for_argv()) == 0
+        assert "1 converted" in capsys.readouterr().out
+
     def test_a_prompted_mirror_round_trips_through_the_router(self, monkeypatch, tmp_path, capsys):
         """A prompted mirror argv the convert parser cannot parse is exactly what
         routing through dispatch() protects."""
