@@ -13,7 +13,8 @@ Everything else exists today.
 | `converter/cli.py` | Argument parsing, target-format selection, the interactive prompt, usage errors, exit codes |
 | `converter/profiles.py` | One declarative profile per target format: the copy mask, the fallback encoder and the drop reason per stream type, the container flags, the cheap and last-resort attempts the format declares as data, and whether that cheap attempt's mapping is partial by construction |
 | `converter/jobs.py` | The generic conversion engine: turns a profile plus a probed stream list into an ordered ladder of attempts, and into the notes a *successful* partial cheap attempt owes. It owns the *order* of the rungs and how the selective rung is built; the profiles own what each declared rung contains |
-| `converter/batch.py` | Bounded parallel execution, the per-file outcome, progress reporting, the aggregate summary and the process exit code |
+| `converter/batch.py` | Bounded parallel execution, the per-file outcome, the progress bar, the aggregate summary and the process exit code; hands each result to a caller-supplied callback |
+| `converter/report.py` | Rendering results: the human text lines and the `--json` records (JSON Lines), both over `batch.Result` / `batch.Summary` |
 | `converter/paths.py` | Input discovery, output-path construction, tree mirroring, collision detection, Windows path-length diagnosis |
 | `converter/ffmpegtool.py` | Locating ffmpeg and ffprobe, building argv, running without a shell, probing streams |
 | `converter/__main__.py` | The `python -m converter` entry point |
@@ -23,7 +24,8 @@ Everything else exists today.
 The internal import graph is acyclic today and must stay that way:
 `ffmpegtool`, `paths` and `profiles` are leaves, `jobs` depends on `ffmpegtool` +
 `profiles`, `batch` depends on `jobs` + `ffmpegtool` + `paths` + `profiles`,
-`cli` depends on all of them, `__main__` depends only on `cli`.
+`report` depends on `batch`, `cli` depends on all of them, `__main__` depends
+only on `cli`.
 
 - `converter/profiles.py` must be a **leaf**: no internal imports at all. This is
   what makes the constitution's "a target format is data, not code" structurally
@@ -52,6 +54,8 @@ The internal import graph is acyclic today and must stay that way:
    inputs: a directory walk through `paths.find_sources`, or the named file alone
    (`docs/design/source-selection.md`). `paths.find_collisions` refuses up front
    if two inputs would write to the same output, then `batch.run_batch`
+   (which hands every result to a `report` renderer — text lines, or JSON
+   records under `--json`)
    runs the profile's cheapest attempt per file through the engine in `jobs.py`.
    Every profile shipped or currently specced declares its cheap attempt
    **partial by construction** (`partial_mapping=True`: MP4's blind
