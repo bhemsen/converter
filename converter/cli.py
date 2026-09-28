@@ -51,7 +51,10 @@ def _add_convert_arguments(parser: argparse.ArgumentParser) -> None:
     existing invocation only loses its verb.
     """
     parser.add_argument(
-        "input_dir", metavar="INPUT", type=Path, help="directory containing the input files"
+        "input_dir",
+        metavar="INPUT",
+        type=Path,
+        help="a file to convert, or a directory containing the input files",
     )
     parser.add_argument(
         "output_dir",
@@ -59,7 +62,10 @@ def _add_convert_arguments(parser: argparse.ArgumentParser) -> None:
         nargs="?",
         type=Path,
         default=None,
-        help="directory to write the results to; omit when using --mirror-to",
+        help=(
+            "directory to write the results to; optional when INPUT is a file "
+            "(defaults to its own directory), or omit either way when using --mirror-to"
+        ),
     )
     parser.add_argument(
         "--mirror-to",
@@ -180,28 +186,58 @@ def list_formats_command() -> int:
 def _resolve_output_root(args: argparse.Namespace) -> Path:
     """Derive OUTPUT from ``--mirror-to``, or return the OUTPUT the user gave.
 
-    ``--mirror-to`` re-roots the path *as typed*, not ``args.input_dir.resolve()``
-    -- a `subst`/junction/symlinked INPUT would otherwise mirror onto the
-    physical path it resolves to, nesting the whole physical prefix into the
-    output tree instead of the shallow tree the user asked for (issue #72).
-    This is safe: the self-write and overwrite-hazard guards
+    ``--mirror-to`` re-roots ``paths.input_root(args.input_dir)`` -- INPUT's
+    parent *as typed* for a file, INPUT itself for a directory -- never
+    ``.resolve()``: a `subst`/junction/symlinked INPUT would otherwise mirror
+    onto the physical path it resolves to, nesting the whole physical prefix
+    into the output tree instead of the shallow tree the user asked for (issue
+    #72). This is safe: the self-write and overwrite-hazard guards
     (``paths.is_self_write``, ``paths.find_overwrite_hazards``) resolve both
     the source and the derived output path themselves, independently, at
     comparison time -- so a mirrored output that physically lands back on an
     input is still caught no matter how the output root was built. Only
     ``README.md``'s documented shape of the mirrored tree depends on this
     choice, not the safety of the guards.
+
+    A file INPUT may omit OUTPUT altogether: the result then lands beside the
+    source, its own directory (``docs/specs/spec-single-file-input.md``). A
+    directory INPUT keeps the existing requirement.
     """
     if args.output_dir is not None and args.mirror_to is not None:
         raise UsageError("give either OUTPUT or --mirror-to, not both")
     if args.mirror_to is not None:
         try:
-            return paths.mirror_to_drive(args.input_dir, args.mirror_to)
+            return paths.mirror_to_drive(paths.input_root(args.input_dir), args.mirror_to)
         except ValueError as exc:
             raise UsageError(str(exc)) from exc
     if args.output_dir is not None:
         return args.output_dir
+    if args.input_dir.is_file():
+        return paths.input_root(args.input_dir)
     raise UsageError("OUTPUT is required unless --mirror-to is given")
+
+
+def _check_output_shape(output: Path | None, target_suffix: str) -> None:
+    """Refuse an OUTPUT that looks like a file name, for a file INPUT.
+
+    OUTPUT stays a directory; the output file name comes from INPUT and
+    ``--to``, never from OUTPUT itself. An existing non-directory OUTPUT, or a
+    missing one whose suffix already matches the target's (case-insensitive,
+    the ImageMagick reflex recorded as an AVOID in ``docs/prior-art.md``),
+    would otherwise create a directory of that name and write into it --
+    surprising rather than destructive, but worth refusing up front. A missing
+    OUTPUT with no such suffix, or an existing directory whatever its name, is
+    accepted unchanged (``docs/specs/spec-single-file-input.md``).
+    """
+    if output is None:
+        return
+    exists = output.exists()
+    existing_non_directory = exists and not output.is_dir()
+    missing_but_target_shaped = not exists and output.suffix.lower() == target_suffix.lower()
+    if existing_non_directory or missing_but_target_shaped:
+        raise UsageError(
+            "OUTPUT must be a directory; the output file name comes from INPUT and --to"
+        )
 
 
 def _resolve_profile(target: str) -> Profile:
@@ -214,24 +250,27 @@ def _resolve_profile(target: str) -> Profile:
 
 
 def _selected_pairs(
-    args: argparse.Namespace, profile: Profile, output_root: Path
+    args: argparse.Namespace, profile: Profile, input_root: Path, output_root: Path
 ) -> list[tuple[Path, Path]]:
     """Pair every candidate under INPUT with the output path it would produce.
 
-    The output root is handed to discovery unconditionally: it is skipped only
-    when it really is a strict descendant of the input root, which is the one
-    shape where the walk could otherwise rediscover its own output
+    ``paths.select_input`` covers a file INPUT (the file itself, the suffix set
+    bypassed) and a directory INPUT (``find_sources``, unchanged) with one call
+    (``docs/specs/spec-single-file-input.md``). The output root is handed to
+    it unconditionally: it is skipped only when it really is a strict
+    descendant of the input root, which is the one shape where a directory
+    walk could otherwise rediscover its own output
     (``docs/design/source-selection.md``).
     """
     try:
-        sources = paths.find_sources(
+        sources = paths.select_input(
             args.input_dir, SOURCE_SUFFIXES, recursive=args.recursive, exclude=output_root
         )
     except NotADirectoryError as exc:
         # A bad path is a usage error, not a conversion failure.
         raise UsageError(str(exc)) from exc
     return [
-        (src, paths.output_for(src, args.input_dir, output_root, profile.target_suffix))
+        (src, paths.output_for(src, input_root, output_root, profile.target_suffix))
         for src in sources
     ]
 
@@ -341,14 +380,22 @@ def convert_command(args: argparse.Namespace) -> int:
     """Select, refuse or convert -- the whole of ``docs/design/source-selection.md``.
 
     Selection finishes before ffmpeg is ever located, which is what lets
-    ``--dry-run`` and a refusal work on a machine that has no ffmpeg.
+    ``--dry-run`` and a refusal work on a machine that has no ffmpeg. The
+    existence check runs first among the path-handling steps, before
+    ``_resolve_output_root``, so a missing file INPUT is never mistaken for a
+    missing OUTPUT (``docs/specs/spec-single-file-input.md``).
     """
     if args.jobs is not None and args.jobs < 1:
         raise UsageError(f"--jobs must be 1 or more, got {args.jobs}")
+    if not args.input_dir.exists():
+        raise UsageError(f"input does not exist: {args.input_dir}")
     profile = _resolve_profile(args.to)
+    if args.input_dir.is_file() and args.mirror_to is None:
+        _check_output_shape(args.output_dir, profile.target_suffix)
+    input_root = paths.input_root(args.input_dir)
     output_root = _resolve_output_root(args)
 
-    pairs = _selected_pairs(args, profile, output_root)
+    pairs = _selected_pairs(args, profile, input_root, output_root)
     if not pairs:
         print(summarise(()).describe())
         print(_nothing_found_hint(args), file=sys.stderr)
