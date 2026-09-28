@@ -259,3 +259,35 @@ evidenced, not assumed — see the image-conversion concern.
     differentiation is real. A classification, however, *does* exist — in ffmpeg
     itself — and the reason to curate anyway is the AVOID above rather than its
     absence.
+
+## Single-file input (Phase 10)
+
+### Single-file converters already recorded under Phase 2's concern
+
+- Path: `docs/prior-art.md#format-driven-converter-cli-phase-2` (pandoc,
+  ImageMagick, `HandBrakeCLI`), plus the ffmpeg CLI itself (`-i in out`)
+- License: n/a — a method, not a source
+- Verdict: reuse the existing entries; no new research
+- Date: 2026-09-28
+- Notes:
+  - ADOPT: a file is a first-class input. Every reference above takes one file by
+    default and treats a directory as the special case (or, for `HandBrakeCLI`,
+    not at all); this project inverted that, and this phase closes the gap
+    without giving up the directory walk.
+  - ADOPT: keep `--to` as the single way to name the target. pandoc names the
+    output format by flag, independently of any file name, which is the shape
+    this CLI already has.
+  - AVOID: ImageMagick's inference of the format from the output *file name*,
+    recorded as an ADOPT under Phase 2. For this phase it would make `OUTPUT`
+    ambiguous — a not-yet-existing `out.mp4` could be a directory or a file — and
+    create a second, possibly contradicting source for the target next to `--to`.
+    `OUTPUT` therefore stays a directory.
+  - AVOID: several positional files. With `INPUT... OUTPUT` the last positional is
+    ambiguous, and Windows does not expand globs in the shell, so the convenience
+    would be half-delivered on a first-class target.
+  - **Gap, by choice:** the sparring chose research mode `none`. The existence
+    question answers itself — raw ffmpeg converts one file, but without the
+    ladder, the disposition and alpha handling, or the loss notes, which is the
+    USP — so no search was needed to justify the phase. Unchecked: how other
+    batch CLIs word a file-vs-directory INPUT in `--help` and errors.
+  - Foundation impact: vision — yes: the Scope's *In* list gains single-file input next to the recursive batch; constitution — none; architecture — yes: Key flow 1 and `docs/design/source-selection.md` gain the branch where INPUT is a file
