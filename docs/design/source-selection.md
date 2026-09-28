@@ -62,7 +62,7 @@ flowchart TD
   unchanged to a batch of one: the parent, taken as typed, is the input root, so
   `--mirror-to` re-roots it exactly as a directory run over that parent would,
   and `a.mp4 --to mp4` with no `OUTPUT` meets `SELF` and is a counted skip
-  (`docs/specs/spec-single-file-input.md`).
+  (`docs/specs/archive/spec-single-file-input.md`).
 - **A file the walk finds that is not a media file is not a candidate**, not a
   failure. The set of source suffixes is curated data in the profile registry,
   for the same reason the copy mask is (`docs/prior-art.md`): ffmpeg can be

@@ -125,12 +125,12 @@ directory" are the ones the sparring decided: the suffix set is bypassed, and
 
 ## Prior art
 
-- [Single-file input (Phase 10)](../prior-art.md#single-file-input-phase-10) —
+- [Single-file input (Phase 10)](../../prior-art.md#single-file-input-phase-10) —
   the sparring's decisions and their precedents: a file is a first-class input
   everywhere else (pandoc, ImageMagick, `HandBrakeCLI`, ffmpeg itself); `--to`
   stays the single naming of the target; ImageMagick's output-name inference and
   several positional files are the two recorded AVOIDs.
-- [Format-driven converter CLI (Phase 2)](../prior-art.md#format-driven-converter-cli-phase-2)
+- [Format-driven converter CLI (Phase 2)](../../prior-art.md#format-driven-converter-cli-phase-2)
   — the entries the Phase 10 concern reuses by reference.
 
 ## Human prerequisites
@@ -270,3 +270,19 @@ Each issue references this spec path in its body.
 - 2026-09-28: Spec-acceptance gate: both OPEN rows resolved as recommended — a
   file-aware prompt, and a refusal of a file-name-shaped `OUTPUT` for a file
   `INPUT`. Human prerequisites: none. Accepted.
+- 2026-09-28: Milestone QA gate, run against real ffmpeg 9.0 on Windows 11.
+  Verdict: accepted. A file converted beside the source and into `OUTPUT`;
+  `--mirror-to` re-rooted a bare relative name's parent `.` onto the root; a WAV
+  renamed `.dat` converted, while a `.txt` failed with ffmpeg's reason, exit 1;
+  `a.mp4 --to mp4` and a re-run were counted skips, exit 0; a missing path and
+  `OUTPUT` `out.mp4` exited 2 and created nothing; `--dry-run` printed the one
+  pair; and the prompt, given a file and an empty output answer, converted it
+  beside the source. A remux-only file printed the same (empty) notes as a
+  directory run over the same file.
+- 2026-09-28: Close-out, two accepted costs recorded so they are not rediscovered
+  as defects. The prompt's input question reads "Input file or directory" for
+  the mirror menu entry too, where only a directory is valid — the question is
+  asked before the menu branch knows which it serves, and a file there still
+  meets mirror's own "does not exist" usage error. And `convert_command` works
+  out `input_root` and the file-vs-directory check more than once per run: both
+  are one `os.stat`, so a shared intermediate would buy nothing measurable.

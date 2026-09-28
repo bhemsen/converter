@@ -92,7 +92,7 @@ def input_root(path: str | os.PathLike[str]) -> Path:
     """Return the directory a file `INPUT` behaves as, per the spec's model.
 
     A file's parent -- ``.`` for a bare relative name -- as typed and never
-    resolved (``docs/specs/spec-single-file-input.md``, *Prior decisions*), so
+    resolved (``docs/specs/archive/spec-single-file-input.md``, *Prior decisions*), so
     a `subst`/junction input still mirrors onto the shallow tree the user
     sees. A directory, or anything else including a missing path, is returned
     unchanged; ``select_input`` is what raises for those.
