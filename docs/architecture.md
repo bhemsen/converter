@@ -54,9 +54,9 @@ only on `cli`.
    inputs: a directory walk through `paths.find_sources`, or the named file alone
    (`docs/design/source-selection.md`). `paths.find_collisions` refuses up front
    if two inputs would write to the same output, then `batch.run_batch`
-   (which hands every result to a `report` renderer — text lines, or JSON
-   records under `--json`)
    runs the profile's cheapest attempt per file through the engine in `jobs.py`.
+   Each result goes to the `on_result` callback `cli` passed in — a `report`
+   renderer that writes text lines, or JSON records under `--json`.
    Every profile shipped or currently specced declares its cheap attempt
    **partial by construction** (`partial_mapping=True`: MP4's blind
    `?`-selectors reach no attachment, WAV's single index reaches no second
@@ -133,6 +133,7 @@ only on `cli`.
   test. Nothing else. If the change needs a diff in `cli.py`, `batch.py` or
   `paths.py`, the profile model is wrong and that is the bug to fix.
 - **A new CLI flag or prompt question** → `cli.py`.
+- **A new output format or record field** → `report.py`.
 - **New path semantics** (discovery rules, naming, mirroring) → `paths.py`.
 - **A new detail of how ffmpeg is invoked** (a base flag, a probe field, executable
   resolution) → `ffmpegtool.py`.
