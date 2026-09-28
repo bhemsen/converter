@@ -50,14 +50,15 @@ One JSON object per line, terminated by a single `\n` **on every platform**,
 written with `json.dumps(..., ensure_ascii=True)` so every line is pure ASCII —
 see Prior decisions for why. The bytes go to `sys.stdout.buffer`, not through the
 text layer, because on Windows the text layer turns `\n` into `\r\n` (measured,
-Python 3.13, piped stdout). The discriminator field is named in the OPEN row below; this
-section writes it as `type` as a placeholder.
+Python 3.13, piped stdout). Every record carries `type` (the discriminator) and
+`schema` (the integer schema version, `1` for this phase) as its first two keys.
 
 **`file`** — one per file the run reports on:
 
 | Key | Type | Meaning |
 |---|---|---|
 | `type` | `"file"` | discriminator |
+| `schema` | integer | schema version, `1` |
 | `source` | string | the source path, absolute (`Path.absolute()`, not resolved) |
 | `output` | string | the output path it maps to, absolute, whether or not it was written |
 | `outcome` | `"converted"` \| `"skipped"` \| `"failed"` \| `"unsupported"` | `batch.Outcome`'s value |
@@ -66,7 +67,7 @@ section writes it as `type` as a placeholder.
 | `error` | string \| null | the failure reason — ffmpeg's joined stderr, or the exception text for a staging or unexpected failure; `null` unless `failed` |
 
 **`planned`** — `--dry-run` only, one per task that would convert: `type`,
-`source`, `output`. Pre-batch skips still appear as `file` records with
+`schema`, `source`, `output`. Pre-batch skips still appear as `file` records with
 `outcome: "skipped"`. A planned task whose output already exists is still
 `planned`: the existing-output check runs inside the batch, which a dry run never
 starts — exactly as the text mode lists it today.
@@ -76,6 +77,7 @@ starts — exactly as the text mode lists it today.
 | Key | Type | Meaning |
 |---|---|---|
 | `type` | `"summary"` | discriminator |
+| `schema` | integer | schema version, `1` |
 | `converted`, `skipped`, `failed`, `unsupported`, `total` | integer | `batch.Summary`'s counts |
 | `planned` | integer | `--dry-run`: the number of `planned` records; `0` otherwise. Computed by the renderer, **not** a `batch.Summary` field — adding it there would change `describe()` and the text output |
 | `exit_code` | integer | the code the process is about to exit with |
@@ -94,7 +96,8 @@ written stand, and a consumer must discard a trailing line that is not
 
 The schema is **open**: a consumer must ignore keys it does not know, so a later
 phase (phase 14's sidecars) can add a key without breaking it. Removing or
-renaming a key, or changing a value's meaning, is a breaking change.
+renaming a key, or changing a value's meaning, is a breaking change and raises
+`schema`; adding a key or a record type does not.
 
 ## Exit codes — the contract `README.md` states
 
@@ -184,12 +187,12 @@ none
 | The renderers live in a new `converter/report.py`, and `run_batch` takes an optional `on_result` callback | Two output formats over the same `Result` belong in one module rather than in `cli.py` (already ~600 lines) or `batch.py` (whose job is running, not formatting). The text renderer calls the `tqdm.write` **classmethod**, which keeps the bar's cursor handling without needing the bar instance and works with a disabled bar. Existing `tests/test_batch.py` tests that assert `_report`'s lines through `run_batch` move to `tests/test_report.py` with the same expectations | 2026-09-28 |
 | The format-literal `ast` check extends to `converter/report.py` | Not required by the vision's no-diff list, but a renderer is exactly where a format name could creep in; the parametrised test covers it for free | 2026-09-28 |
 | The foundation carriers are edited in this spec PR | Recorded by `/loopkit:roadmap` for ratification at this gate; phases 6 and 10 are the precedent | 2026-09-28 |
-| OPEN — The discriminator's name: `type`, restic's `message_type`, or cargo's `reason`? | resolved at the spec-acceptance gate | — |
-| OPEN — Does the schema carry a version in-band — on every record, on the summary only, or not at all? | resolved at the spec-acceptance gate | — |
+| The discriminator is named `type` | Resolved at the spec-acceptance gate, 2026-09-28: short and self-explanatory; restic's `message_type` and cargo's `reason` were the alternatives, and "reason" reads wrong for a file result | 2026-09-28 |
+| Every record carries `"schema": 1` | Resolved at the spec-acceptance gate, 2026-09-28: a consumer can validate any single line, even one read out of a partial stream (exit 130 has no summary to carry a version). restic, cargo and docker version nothing in-band — the prior-art concern flagged that as a gap to decide, not a precedent; ~12 bytes a line is the price. Additive changes keep `1`; a breaking one raises it | 2026-09-28 |
 
 ## Tracking
 
-- Milestone: filled at the acceptance gate
+- Milestone: [json-output](https://github.com/bhemsen/converter/milestone/11)
 - Issues: created from this spec once it is merged (one per implementable step)
 
 Each issue references this spec path in its body.
@@ -221,7 +224,8 @@ Each issue references this spec path in its body.
       `on_result` exactly once, including staging failures, and prints nothing
       per file when `on_result` is `None`.
 - [ ] The `ast` format-literal test covers `converter/report.py`.
-- [ ] Tests for whichever way each OPEN row is resolved.
+- [ ] Tests pin `type` and `schema` (`1`) as the first two keys of every record
+      type, in that order.
 - [ ] `git diff main -- converter/jobs.py converter/profiles.py converter/paths.py
       converter/ffmpegtool.py` is empty over the phase.
 - [ ] **QA smoke test with real ffmpeg** (paths from `docs/workflow.md`):
@@ -256,3 +260,5 @@ Each issue references this spec path in its body.
   pre-batch skip records wait until tools resolve so exit 2 leaves stdout empty;
   dry-run and empty-run summaries, the incomplete-stream rule, the `error` field's
   scope, `--list-formats`/`mirror` behaviour and the `ast` check are now stated.
+- 2026-09-28: Spec-acceptance gate: the discriminator is `type`, and every record
+  carries `"schema": 1`. Human prerequisites: none. Accepted.
