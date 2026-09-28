@@ -514,20 +514,32 @@ def _prompt_mirror_argv(input_root: str) -> list[str] | None:
 
 
 def _prompt_convert_argv(target: str, input_root: str) -> list[str] | None:
-    """Ask for the rest of a conversion invocation."""
-    argv = ["--to", target, input_root]
-    output_dir = _ask("Output directory (empty to mirror onto another drive instead)")
-    if output_dir:
-        argv.append(output_dir)
-    else:
-        mirror_to = _ask("Output drive or directory")
-        if not mirror_to:
-            print("An output directory or drive is required.", file=sys.stderr)
-            return None
-        argv += ["--mirror-to", mirror_to]
+    """Ask for the rest of a conversion invocation.
 
-    if _ask_yes_no("Include sub-directories?", default=True):
-        argv.append("--recursive")
+    A file `input_root` matches the CLI's own defaults: OUTPUT is optional (an
+    empty answer lands beside the source), `--mirror-to` is not offered, and
+    "Include sub-directories?" is not asked -- a file has none
+    (``docs/specs/spec-single-file-input.md``). A directory answer keeps every
+    prompt and default exactly as before.
+    """
+    argv = ["--to", target, input_root]
+    if Path(input_root).is_file():
+        output_dir = _ask("Output directory (empty for the file's own directory)")
+        if output_dir:
+            argv.append(output_dir)
+    else:
+        output_dir = _ask("Output directory (empty to mirror onto another drive instead)")
+        if output_dir:
+            argv.append(output_dir)
+        else:
+            mirror_to = _ask("Output drive or directory")
+            if not mirror_to:
+                print("An output directory or drive is required.", file=sys.stderr)
+                return None
+            argv += ["--mirror-to", mirror_to]
+        if _ask_yes_no("Include sub-directories?", default=True):
+            argv.append("--recursive")
+
     if _ask_yes_no("Overwrite existing output files?"):
         argv.append("--overwrite")
     return argv
@@ -549,9 +561,9 @@ def prompt_for_argv() -> list[str] | None:
         print(f"Unknown selection: {choice!r}", file=sys.stderr)
         return None
 
-    input_root = _ask("Input directory")
+    input_root = _ask("Input file or directory")
     if not input_root:
-        print("An input directory is required.", file=sys.stderr)
+        print("An input file or directory is required.", file=sys.stderr)
         return None
 
     if selection == MIRROR_COMMAND:
