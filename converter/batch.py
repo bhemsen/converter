@@ -15,8 +15,9 @@ import enum
 import os
 import sys
 import threading
+import time
 from collections.abc import Callable, Iterable, Sequence
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,8 +30,8 @@ from converter import ffmpegtool
 # shadow the module name inside this file.
 from converter import jobs as engine
 from converter.ffmpegtool import ProbeError, Stream, Tools
-from converter.paths import ensure_directory
-from converter.profiles import Profile
+from converter.paths import ensure_directory, partial_for
+from converter.profiles import Attempt, Profile
 
 
 def default_jobs() -> int:
@@ -68,30 +69,47 @@ class Result:
     error: str = ""
 
 
-def _discard_partial_output(dst: Path, *, existed: bool) -> None:
-    """Delete a truncated output so the next run does not mistake it for done."""
-    if existed:
+def _delete_partial(partial: Path) -> None:
+    """Best-effort delete: a locked file on Windows is not worth failing over."""
+    with suppress(OSError):
+        partial.unlink(missing_ok=True)
+
+
+def _raise_if_terminated(partial: Path) -> None:
+    """Stop a killed attempt before it climbs, verifies or renames.
+
+    Checked after every :func:`ffmpegtool.run` call and again right before the
+    rename: a process killed mid-attempt still returns a (failing)
+    ``CommandResult`` rather than raising, so a worker's own ffmpeg exiting is
+    not itself proof the run should continue once :func:`ffmpegtool.terminate_all`
+    has closed the registry. Each partial has exactly one owner at any moment,
+    so deleting it here cannot race the main thread's own clean-up after the
+    bounded wait (``docs/specs/spec-abort-safe-writes.md``).
+    """
+    if not ffmpegtool.terminated():
         return
-    with suppress(OSError):  # best effort: a locked file is not worth failing over
-        dst.unlink(missing_ok=True)
+    _delete_partial(partial)
+    raise ffmpegtool.Terminated
 
 
 def _confirm_against_output(
     profile: Profile,
-    task: Task,
     tools: Tools,
     streams: Sequence[Stream],
     predicted: tuple[str, ...],
+    output_path: Path,
 ) -> tuple[str, ...]:
     """Weigh a predicted loss against the file that was actually written.
 
     The second probe of ``docs/design/degradation-ladder.md``, and the only one
     ever aimed at an output. It is spent solely on a run that is *about to claim
     a loss*, so a conversion whose mapping gives nothing up still costs a single
-    probe.
+    probe. *output_path* is the partial: the rename into place only happens
+    after this probe, so the file at the final path has not been written yet
+    (``docs/specs/spec-abort-safe-writes.md``).
     """
     try:
-        produced = ffmpegtool.probe_streams(tools, task.dst)
+        produced = ffmpegtool.probe_streams(tools, output_path)
     except (ProbeError, OSError) as exc:
         # Over-reporting is the safe side of "never report success for a
         # conversion that silently dropped something" (``docs/constitution.md``):
@@ -101,13 +119,16 @@ def _confirm_against_output(
     return engine.confirm_drops(profile, streams, produced)
 
 
-def _verify_cheap_attempt(profile: Profile, task: Task, tools: Tools) -> tuple[str, ...]:
+def _verify_cheap_attempt(
+    profile: Profile, task: Task, tools: Tools, output_path: Path
+) -> tuple[str, ...]:
     """Name whatever a structurally partial cheap attempt left behind.
 
     The one place ffprobe runs after an attempt has *succeeded*. A profile
     whose cheap attempt maps the source exhaustively needs no verification and
     never gets here, so the common case keeps its probe-free happy path
-    (``docs/design/degradation-ladder.md``).
+    (``docs/design/degradation-ladder.md``). *output_path* is the partial file,
+    not ``task.dst``: the rename has not happened yet at this point.
 
     The within-stream transparency verdict (``engine.transparency_notes``,
     issue #105) is computed separately from ``predicted`` and returned on
@@ -134,55 +155,158 @@ def _verify_cheap_attempt(profile: Profile, task: Task, tools: Tools) -> tuple[s
         return within
     # Confirmed structural drops lead, the within-stream note follows -- the
     # same order `jobs.retries` already uses for its own selective rung.
-    return (*_confirm_against_output(profile, task, tools, streams, predicted), *within)
+    return (*_confirm_against_output(profile, tools, streams, predicted, output_path), *within)
+
+
+#: Windows-only backoff for a rename that lost a race with a reader (a scanner
+#: or an indexer briefly holding the target open) -- about 3 s in all
+#: (``docs/specs/spec-abort-safe-writes.md``'s Prior decisions).
+_RENAME_BACKOFFS: tuple[float, ...] = (0.1, 0.2, 0.4, 0.8, 1.6)
+
+
+def _is_windows() -> bool:
+    """Whether this process runs on Windows -- a seam tests can flip without
+    touching the real ``sys.platform``."""
+    return sys.platform == "win32"
+
+
+def _rename_with_retry(partial: Path, dst: Path) -> str | None:
+    """Move *partial* into *dst*, retrying a Windows lock with backoff.
+
+    Only Windows retries: a scanner or indexer briefly holding the target is
+    routine there, and failing a finished conversion over it would be the
+    worse outcome. POSIX's rename is atomic and gets exactly one attempt.
+    Returns ``None`` on success, or an explanatory string once every attempt
+    is exhausted -- the caller reports that as a failure and deletes the
+    partial, leaving whatever was at *dst* before untouched.
+    """
+    delays = _RENAME_BACKOFFS if _is_windows() else ()
+    last_exc: PermissionError | None = None
+    for delay in (0.0, *delays):
+        if delay:
+            time.sleep(delay)
+        try:
+            partial.replace(dst)
+            return None
+        except PermissionError as exc:
+            last_exc = exc
+    return f"could not replace the existing output; it appears locked: {last_exc}"
+
+
+def _finish_conversion(
+    profile: Profile,
+    task: Task,
+    tools: Tools,
+    partial: Path,
+    attempt: Attempt,
+    *,
+    probed: bool,
+) -> Result:
+    """Verify a successful rung (if it needs it), then rename it into place."""
+    # `probed` still being false means this was the cheap attempt: every later
+    # rung was built from the stream list itself and already carries accurate
+    # notes, so only this one needs verifying.
+    extra = () if probed else _verify_cheap_attempt(profile, task, tools, partial)
+    _raise_if_terminated(partial)
+    error = _rename_with_retry(partial, task.dst)
+    if error is not None:
+        _delete_partial(partial)
+        return Result(task, Outcome.FAILED, error=error)
+    return Result(task, Outcome.CONVERTED, attempt.label, (*attempt.notes, *extra))
+
+
+def _climb_ladder(
+    profile: Profile, task: Task, tools: Tools, errors: list[str], pending: list[Attempt]
+) -> Result | None:
+    """After a rung fails, probe once to find the next rung.
+
+    Only now is an ffprobe round-trip worth paying for: the cheap stream-copy
+    failed, so we need to know which streams are to blame. Returns a
+    ready-made ``Result`` when the source turns out to hold nothing this
+    profile could ever have produced, mutates *pending* with the next rung(s)
+    otherwise, and returns ``None`` in both continuing cases.
+    """
+    try:
+        streams = ffmpegtool.probe_streams(tools, task.src)
+    except ProbeError as exc:
+        errors.append(f"[probe] {exc}")
+        return None
+    # The engine's own signal, read once: a source with no stream of any type
+    # the profile has a rule for can never climb the rest of the ladder, so
+    # spending further ffmpeg attempts on it would only reconfirm a foregone
+    # conclusion.
+    unsupported = engine.describe_unsupported(profile, streams)
+    if unsupported is not None:
+        return Result(task, Outcome.UNSUPPORTED, notes=unsupported)
+    pending.extend(engine.retries(profile, streams))
+    return None
+
+
+def _climb_the_ladder(profile: Profile, task: Task, tools: Tools, partial: Path) -> Result:
+    """Run every rung until one succeeds or the ladder is exhausted.
+
+    Split out of :func:`_attempt_conversion` so that function can wrap this
+    one in a single ``try``/``except`` and guarantee the partial is gone on
+    *any* exit that is not one of the explicit ``Result``-returning paths
+    below -- a termination raised mid-probe included.
+    """
+    pending: list[Attempt] = [engine.first_attempt(profile)]
+    errors: list[str] = []
+    probed = False
+
+    while pending:
+        attempt = pending.pop(0)
+        argv = ffmpegtool.build_argv(
+            tools.ffmpeg, task.src, attempt.options, partial, output_format=profile.muxer
+        )
+        result = ffmpegtool.run(argv)
+        _raise_if_terminated(partial)
+        if result.ok:
+            return _finish_conversion(profile, task, tools, partial, attempt, probed=probed)
+
+        errors.append(f"[{attempt.label}] {result.stderr or f'exit code {result.returncode}'}")
+        if not probed:
+            probed = True
+            outcome = _climb_ladder(profile, task, tools, errors, pending)
+            # `_climb_ladder`'s own probe can be the thing that gets killed --
+            # it surfaces as an ordinary `ProbeError`, appended to `errors`,
+            # not as `Terminated`, so nothing short of checking here would
+            # ever notice and this attempt would silently become FAILED.
+            _raise_if_terminated(partial)
+            if outcome is not None:
+                _delete_partial(partial)
+                return outcome
+
+    _delete_partial(partial)
+    return Result(task, Outcome.FAILED, error=" | ".join(errors))
 
 
 def _attempt_conversion(profile: Profile, task: Task, tools: Tools, *, overwrite: bool) -> Result:
-    existed = task.dst.exists()
-    if existed and not overwrite:
+    partial = partial_for(task.dst)
+    # A stale partial from an earlier, killed run -- swept whether this task
+    # ends up converting or being skipped (``docs/specs/spec-abort-safe-writes.md``).
+    _delete_partial(partial)
+
+    if task.dst.exists() and not overwrite:
         return Result(
             task,
             Outcome.SKIPPED,
             notes=("output already exists; pass --overwrite to replace it",),
         )
 
-    pending = [engine.first_attempt(profile)]
-    errors: list[str] = []
-    probed = False
-
-    while pending:
-        attempt = pending.pop(0)
-        argv = ffmpegtool.build_argv(tools.ffmpeg, task.src, attempt.options, task.dst)
-        result = ffmpegtool.run(argv)
-        if result.ok:
-            # `probed` still being false means this was the cheap attempt: every
-            # later rung was built from the stream list itself and already
-            # carries accurate notes, so only this one needs verifying.
-            extra = () if probed else _verify_cheap_attempt(profile, task, tools)
-            return Result(task, Outcome.CONVERTED, attempt.label, (*attempt.notes, *extra))
-
-        errors.append(f"[{attempt.label}] {result.stderr or f'exit code {result.returncode}'}")
-        if not probed:
-            # Only now is an ffprobe round-trip worth paying for: the cheap
-            # stream-copy failed, so we need to know which streams are to blame.
-            probed = True
-            try:
-                streams = ffmpegtool.probe_streams(tools, task.src)
-            except ProbeError as exc:
-                errors.append(f"[probe] {exc}")
-            else:
-                # The engine's own signal, read once: a source with no stream
-                # of any type the profile has a rule for can never climb the
-                # rest of the ladder, so spending further ffmpeg attempts on it
-                # would only reconfirm a foregone conclusion.
-                unsupported = engine.describe_unsupported(profile, streams)
-                if unsupported is not None:
-                    _discard_partial_output(task.dst, existed=existed)
-                    return Result(task, Outcome.UNSUPPORTED, notes=unsupported)
-                pending.extend(engine.retries(profile, streams))
-
-    _discard_partial_output(task.dst, existed=existed)
-    return Result(task, Outcome.FAILED, error=" | ".join(errors))
+    try:
+        return _climb_the_ladder(profile, task, tools, partial)
+    except BaseException:
+        # A belt-and-braces net around the explicit clean-up calls above and
+        # inside `_finish_conversion`/`_raise_if_terminated`: `Terminated` can
+        # also be raised directly by `ffmpegtool.run` itself (a *new* spawn
+        # attempted after the shutdown flag is already set), which unwinds
+        # straight out of this call stack without passing through any of
+        # them. Whatever the cause, `docs/constitution.md` is unconditional --
+        # "a partially written output file is removed when its conversion
+        # fails" -- so this is not narrowed to `Terminated`/`KeyboardInterrupt`.
+        _delete_partial(partial)
+        raise
 
 
 def convert_one(profile: Profile, task: Task, tools: Tools, *, overwrite: bool) -> Result:
@@ -211,6 +335,13 @@ def _interruptible(
     """
 
     def work(task: Task) -> Result:
+        if ffmpegtool.terminated():
+            # A shutdown is already in progress -- SIGTERM, or Ctrl+C noticed
+            # by another worker first. Raise the real reason rather than
+            # relabelling it KeyboardInterrupt, so cli.py still maps a SIGTERM
+            # run to 143 even when it is this check, not the one inside
+            # `_attempt_conversion`, that catches it.
+            raise ffmpegtool.Terminated
         if interrupted.is_set():
             # Raise rather than fabricate a Result: this file was never touched,
             # and SKIPPED already means "the output was already there", which is
@@ -252,6 +383,81 @@ def _stage_output_directories(tasks: Sequence[Task]) -> tuple[list[Task], list[R
     return runnable, failures
 
 
+def _drain(future_tasks: dict[Future[Result], Task], results: list[Result], bar: tqdm) -> None:
+    """Report each future's Result as it lands, polling rather than blocking.
+
+    ``concurrent.futures.wait`` in a loop instead of ``as_completed``: whether a
+    blocking wait in the main thread is interruptible by Ctrl+C on Windows is
+    unverified, so returning every half second makes signal delivery
+    independent of that (``docs/specs/spec-abort-safe-writes.md``). A
+    ``KeyboardInterrupt`` or :class:`ffmpegtool.Terminated` out of
+    ``future.result()`` propagates to the caller, which owns the clean-up.
+    """
+    pending = set(future_tasks)
+    while pending:
+        done, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+        for future in done:
+            result = future.result()
+            # Removed before reporting: an interrupt landing between the two
+            # would otherwise leave the future both reported here and still
+            # present for `_handle_interrupt` to report a second time.
+            del future_tasks[future]
+            results.append(result)
+            _report(result, bar)
+            bar.update(1)
+
+
+#: How long the main thread waits for an in-flight conversion to notice a
+#: termination before giving up on it as stuck (``docs/specs/spec-abort-safe-writes.md``
+#: says "bounded ~10 s"). A module-level seam so a test can shrink it rather
+#: than genuinely block for ten seconds to reach the stuck-future branch.
+_SHUTDOWN_WAIT_TIMEOUT = 10.0
+
+
+def _handle_interrupt(
+    future_tasks: dict[Future[Result], Task], results: list[Result], bar: tqdm
+) -> None:
+    """Stop every ffmpeg, drop what never started, and account for the rest.
+
+    Cancelling an already-running future does nothing -- a thread pool cannot
+    pull a thread out of a blocking call -- so ``terminate_all`` is what
+    actually stops those; their own ``run()`` then returns promptly and the
+    worker's post-run check (``_raise_if_terminated``) raises before it can
+    verify or rename anything. Only a future still not done after the bounded
+    wait is treated as stuck: its partial is removed directly, since its
+    worker may never reach its own clean-up. A future that had *already*
+    completed -- successfully or not -- before this function was even called
+    (the main thread's own poll can be the thing that raised, not a future)
+    is reported exactly like one that completes during the bounded wait: its
+    result is not conditional on when it finished, only on whether it has one.
+    """
+    ffmpegtool.terminate_all()
+    for future in future_tasks:
+        future.cancel()
+    pending = {future for future in future_tasks if not future.done()}
+    done, timed_out = wait(pending, timeout=_SHUTDOWN_WAIT_TIMEOUT)
+    for future in (*(set(future_tasks) - pending), *done):
+        result = _safe_result(future)
+        if result is not None:
+            results.append(result)
+            _report(result, bar)
+            bar.update(1)
+    for future in timed_out:
+        _delete_partial(partial_for(future_tasks[future].dst))
+
+
+def _safe_result(future: Future[Result]) -> Result | None:
+    """``future.result()``, or ``None`` for a cancelled/killed/terminated worker.
+
+    Narrowed to this one call so a genuine bug in the reporting that follows
+    -- appending to *results*, writing to the progress bar -- is never
+    silently eaten alongside it.
+    """
+    with suppress(BaseException):
+        return future.result()
+    return None
+
+
 def run_batch(
     profile: Profile,
     tasks: Sequence[Task],
@@ -283,20 +489,13 @@ def run_batch(
                 results.append(result)
                 _report(result, bar)
                 bar.update(1)
-            futures = [pool.submit(work, task) for task in runnable_tasks]
+            future_tasks = {pool.submit(work, task): task for task in runnable_tasks}
             try:
-                # as_completed, so the bar advances when a file is actually done
-                # rather than in submission order.
-                for future in as_completed(futures):
-                    result = future.result()
-                    results.append(result)
-                    _report(result, bar)
-                    bar.update(1)
-            except KeyboardInterrupt:
-                # Drop everything that has not started. Conversions already in
-                # flight still finish the file they are on, because they are
-                # blocked in an ffmpeg subprocess we cannot interrupt from here.
-                pool.shutdown(wait=False, cancel_futures=True)
+                _drain(future_tasks, results, bar)
+            except (KeyboardInterrupt, ffmpegtool.Terminated):
+                # Conversions already in flight are stopped by terminate_all
+                # rather than left to finish the file they are on.
+                _handle_interrupt(future_tasks, results, bar)
                 raise
     finally:
         pool.shutdown(wait=False)

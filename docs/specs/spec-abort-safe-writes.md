@@ -285,3 +285,22 @@ Each issue references this spec path in its body.
   none of the three tests it feeds inspects the field. No production file
   (`converter/ffmpegtool.py`, `converter/batch.py`, `converter/cli.py`,
   `converter/paths.py`) was touched.
+- 2026-09-29 (issue #146, acceptance review round 1): "any path-length
+  diagnosis for an output is made on the partial path" needed no new code.
+  `paths.ensure_directory` is the only length diagnosis in the tree, and it
+  runs on `task.dst.parent` in `batch._stage_output_directories` -- identical
+  to `partial_for(task.dst).parent`, since `.partial` is appended to the
+  file name, never the directory, so the requirement already held before
+  this issue touched anything. The two places a *file*-level length failure
+  can surface -- ffmpeg's own stderr (the argv it receives names the
+  partial, never `task.dst`) and a failed rename (`Path.replace`'s own
+  `OSError` names the partial as its source) -- both already read the
+  partial for the same reason, without a dedicated diagnosis wrapper. The
+  same review found two related gaps in `batch.py`, fixed in the same
+  round: `_climb_ladder`'s own probe can be killed and silently surfaces as
+  an ordinary `ProbeError` rather than `Terminated`, so a check was added
+  right after it returns; and `Terminated` raised directly by a *new*
+  `ffmpegtool.run` spawn attempted after the shutdown flag is already set
+  bypasses every explicit check, so `_attempt_conversion` now wraps its
+  whole attempt in `except BaseException: delete the partial; raise` as a
+  second line of defence.
