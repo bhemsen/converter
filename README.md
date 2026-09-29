@@ -157,8 +157,45 @@ converter --to mp3 D:\Rips\song.flac
 ```
 
 Existing outputs are **skipped** by default, so re-running after an interruption
-only does the remaining work. Exit status is `0` when nothing failed, `1` when at
-least one file failed, and `2` for a usage error or a missing ffmpeg.
+only does the remaining work.
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | nothing failed |
+| `1` | at least one file failed |
+| `2` | a usage error or a missing ffmpeg |
+| `130` | interrupted (Ctrl+C / SIGINT) |
+| `143` | terminated (`SIGTERM`, POSIX only) |
+
+> **Every output is written safely.** A conversion writes to `<output>.partial`
+> and is renamed into place only after ffmpeg has succeeded and, where the loss
+> report needs it, the partial has been probed for what it kept — this is loss
+> accounting, not a corruption check (ffmpeg is not asked to verify the file it
+> just wrote). A failed or interrupted conversion leaves no `.partial` file
+> behind. The `.partial` name is reserved for the run using it — running two
+> converters over the same output tree at once is unsupported, since one run's
+> clean-up would delete the other's file mid-write. A `.partial` left over from
+> an earlier run that got killed is removed the next time a non-`--dry-run` run
+> targets that same output, whether the file then converts or is skipped as
+> already there.
+> `--overwrite` does not touch the existing output until the replacement is
+> complete, so a failed `--overwrite` (a bad source, an interruption) leaves the
+> old file exactly as it was.
+
+> **What a kill leaves behind.** Ctrl+C, and on POSIX `SIGTERM`, stop every
+> ffmpeg process the run has started and delete every `.partial` file still
+> being written, then exit `130` or `143` respectively; a conversion already
+> renamed into place by the time the kill lands is unaffected either way. On
+> Windows, a parent that can only reach for `TerminateProcess` — Node's
+> `child.kill()`, for example — gives the converter no chance to react to it at
+> all; instead every ffmpeg/ffprobe child is bound, at startup, to the same
+> Windows Job Object as the converter itself (a failure to bind only prints a
+> warning and the run proceeds unprotected), so killing the converter normally
+> kills them with it, and the next run removes whatever `.partial` file was
+> left. A POSIX `SIGKILL` is the one case nothing in the process can react to:
+> ffmpeg keeps running until it finishes unless the whole process group is
+> killed with it, and either way the next run removes the `.partial` file it
+> finds.
 
 ## How a conversion works
 
