@@ -21,6 +21,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from shutil import which
+from typing import Any
 
 #: Flags that every invocation receives.
 #:
@@ -157,10 +158,12 @@ def build_argv(
     ]
 
 
-#: Guards both `_shutdown` and `_live_processes` below. Held only across a
-#: dict read/write, never across a process's `communicate()` -- terminate_all
-#: releases it before waiting on a process, so a slow ffmpeg exit never blocks
-#: another worker from registering or checking the flag.
+#: Guards `_shutdown` and `_live_processes` below, and is held across `run`'s
+#: `Popen` call too -- spawning is quick, and holding it there is what makes
+#: spawn-and-register atomic with `terminate_all`'s flag-flip-and-snapshot.
+#: Never held across a process's `communicate()`/`wait()`: `terminate_all`
+#: releases it before waiting on a process, so a slow ffmpeg exit never
+#: blocks another worker from registering or checking the flag.
 _lock = threading.Lock()
 
 #: Live `Popen` objects, keyed by `id()` so two processes can never collide.
@@ -229,7 +232,12 @@ def run(argv: Sequence[str], *, timeout: float | None = None) -> CommandResult:
 
     On a timeout this mirrors what ``subprocess.run`` itself does: kill the
     process, drain its pipes so it is properly reaped rather than left a
-    zombie, then re-raise ``TimeoutExpired`` to the caller.
+    zombie, then re-raise ``TimeoutExpired`` to the caller. The same happens
+    for *any* exception out of ``communicate()`` -- not just a timeout --
+    because a ``KeyboardInterrupt`` or a :class:`Terminated` raised by a
+    signal handler can land here on the calling thread just as easily, and
+    letting the process outlive that exception would orphan it outside the
+    registry (it is deregistered in the ``finally`` below either way).
     """
     argv = list(argv)
     with _lock:
@@ -246,7 +254,7 @@ def run(argv: Sequence[str], *, timeout: float | None = None) -> CommandResult:
         _live_processes[id(process)] = process
     try:
         stdout, stderr = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
+    except BaseException:
         process.kill()
         process.communicate()
         raise
@@ -450,10 +458,17 @@ class _ExtendedLimitInformation(ctypes.Structure):
     ]
 
 
-def _kernel32() -> object:
+def _kernel32() -> Any:
     """The ctypes handle to ``kernel32.dll``. A seam tests replace with a stub
-    so the real Win32 API is never touched by the test suite."""
-    return ctypes.windll.kernel32  # type: ignore[attr-defined]
+    so the real Win32 API is never touched by the test suite.
+
+    A private ``WinDLL`` instance, not the shared ``ctypes.windll.kernel32``
+    singleton: the ``restype``/``argtypes`` this module sets on individual
+    function pointers below would otherwise mutate state visible to every
+    other user of that singleton in the process. ``use_last_error=True``
+    lets a failure below report Windows' own error code.
+    """
+    return ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
 
 
 def _is_windows() -> bool:
@@ -462,17 +477,29 @@ def _is_windows() -> bool:
     return sys.platform == "win32"
 
 
-def _create_job_object(kernel32: object) -> int:
+def _win_error_suffix() -> str:
+    """Windows' own last-error code, if reachable, else an empty string.
+
+    ``ctypes.get_last_error`` is meaningful only on Windows; guarding it
+    keeps this callable from a stubbed failure test on Linux CI, where the
+    attribute may not exist at all, without changing what it reports on the
+    real target platform.
+    """
+    getter = getattr(ctypes, "get_last_error", None)
+    return f" (error {getter()})" if getter is not None else ""
+
+
+def _create_job_object(kernel32: Any) -> int:
     """Create an unnamed Job Object and return its handle, or raise OSError."""
     kernel32.CreateJobObjectW.restype = ctypes.c_void_p
     kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
     job = kernel32.CreateJobObjectW(None, None)
     if not job:
-        raise OSError("CreateJobObjectW failed")
+        raise OSError(f"CreateJobObjectW failed{_win_error_suffix()}")
     return job
 
 
-def _set_kill_on_close(kernel32: object, job: int) -> None:
+def _set_kill_on_close(kernel32: Any, job: int) -> None:
     """Flag *job* so every member process dies when its handle is closed."""
     info = _ExtendedLimitInformation()
     info.basic_limit_information.limit_flags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
@@ -487,17 +514,17 @@ def _set_kill_on_close(kernel32: object, job: int) -> None:
         job, _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, ctypes.byref(info), ctypes.sizeof(info)
     )
     if not ok:
-        raise OSError("SetInformationJobObject failed")
+        raise OSError(f"SetInformationJobObject failed{_win_error_suffix()}")
 
 
-def _assign_current_process(kernel32: object, job: int) -> None:
+def _assign_current_process(kernel32: Any, job: int) -> None:
     """Put the current process into *job*."""
     kernel32.GetCurrentProcess.restype = ctypes.c_void_p
     kernel32.AssignProcessToJobObject.restype = ctypes.c_int
     kernel32.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
     process = kernel32.GetCurrentProcess()
     if not kernel32.AssignProcessToJobObject(job, process):
-        raise OSError("AssignProcessToJobObject failed")
+        raise OSError(f"AssignProcessToJobObject failed{_win_error_suffix()}")
 
 
 def _create_kill_on_close_job() -> int:
@@ -522,9 +549,11 @@ _job_handle: int | None = None
 def bind_to_kill_on_close_job() -> None:
     """Assign this process to a Job Object that terminates it with ffmpeg.
 
-    Windows-only; a no-op everywhere else. Called once, at the start of the
-    convert command, before anything is spawned -- every ffmpeg/ffprobe
-    child then inherits job membership automatically. A failure to create or
+    Windows-only; a no-op everywhere else. Meant to be called once, at the
+    start of the convert command, before anything is spawned -- every
+    ffmpeg/ffprobe child then inherits job membership automatically. Not
+    called from anywhere yet: wiring it into ``cli.main`` is a separate,
+    later change. A failure to create or
     assign the job removes only the orphan protection, never a conversion,
     so it is reported once on stderr and swallowed rather than raised: the
     broad ``except Exception`` is deliberate here, this is a best-effort

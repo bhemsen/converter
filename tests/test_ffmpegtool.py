@@ -363,7 +363,13 @@ class TestRunIsShellFree:
         assert result.returncode == 0
 
     def test_timeout_kills_the_process_reaps_it_and_reraises(self, monkeypatch):
+        spawned = []
+
         class TimingOutPopen(FakePopen):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                spawned.append(self)
+
             def communicate(self, timeout=None):
                 if not self.killed:
                     raise subprocess.TimeoutExpired(cmd=self.argv, timeout=timeout)
@@ -373,6 +379,34 @@ class TestRunIsShellFree:
 
         with pytest.raises(subprocess.TimeoutExpired):
             ffmpegtool.run(["ffmpeg", "-version"], timeout=1)
+
+        assert spawned[0].killed
+        assert len(ffmpegtool._live_processes) == 0
+
+    def test_any_exception_from_communicate_kills_reaps_and_reraises(self, monkeypatch):
+        """Not just `TimeoutExpired`: a `KeyboardInterrupt` or the future
+        SIGTERM handler's `Terminated` can land on the calling thread inside
+        `communicate()` just as easily, and must not leave the child running
+        unregistered and unkilled (issue #145 review)."""
+        spawned = []
+
+        class InterruptedPopen(FakePopen):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                spawned.append(self)
+
+            def communicate(self, timeout=None):
+                if not self.killed:
+                    raise KeyboardInterrupt
+                return ("", "")
+
+        monkeypatch.setattr(subprocess, "Popen", InterruptedPopen)
+
+        with pytest.raises(KeyboardInterrupt):
+            ffmpegtool.run(["ffmpeg", "-version"])
+
+        assert spawned[0].killed
+        assert len(ffmpegtool._live_processes) == 0
 
 
 class TestRegistry:
@@ -439,34 +473,51 @@ class TestTerminateAll:
 
         assert stuck.killed
 
-    def test_a_process_registered_while_terminate_all_waits_for_the_lock_is_still_killed(self):
-        """Drives the race with real threads rather than asserting the
-        mechanism from the outside: `run` holds `ffmpegtool._lock` across its
-        whole spawn-and-register step, so `terminate_all` cannot take its
-        registry snapshot until that step has either registered the process
-        or given up on it -- there is no window where a process is running
-        but invisible to a `terminate_all` that started after it."""
-        fake = FakePopen([], stdin=None)
-        lock_acquired = threading.Event()
-        proceed = threading.Event()
+    def test_a_process_registered_while_terminate_all_waits_for_the_lock_is_still_killed(
+        self, monkeypatch
+    ):
+        """Exercises the real `run()` path, not just `_lock` in isolation:
+        `run()` holds `ffmpegtool._lock` for its whole spawn-and-register
+        step, `Popen` call included, so `terminate_all` -- which needs the
+        same lock to take its registry snapshot -- cannot take that snapshot
+        until `run()` has either registered the process or bailed out on the
+        shutdown flag. There is no window where a process is running but
+        invisible to a `terminate_all` that started while the spawn was
+        still in flight (issue #145 review)."""
+        entered_popen = threading.Event()
+        release_popen = threading.Event()
+        release_communicate = threading.Event()
+        spawned = []
 
-        def spawn_holding_lock():
-            with ffmpegtool._lock:
-                lock_acquired.set()
-                proceed.wait(timeout=2)
-                ffmpegtool._live_processes[id(fake)] = fake
+        class SlowPopen(FakePopen):
+            def __init__(self, *args, **kwargs):
+                entered_popen.set()
+                assert release_popen.wait(timeout=2)
+                super().__init__(*args, **kwargs)
+                spawned.append(self)
 
-        spawner = threading.Thread(target=spawn_holding_lock)
-        spawner.start()
-        assert lock_acquired.wait(timeout=2)
+            def communicate(self, timeout=None):
+                # Kept "running" (still registered) until the test says
+                # otherwise, so terminate_all's snapshot is forced to catch
+                # it rather than racing run()'s own, unrelated completion.
+                assert release_communicate.wait(timeout=2)
+                return super().communicate(timeout=timeout)
+
+        monkeypatch.setattr(subprocess, "Popen", SlowPopen)
+
+        runner = threading.Thread(target=ffmpegtool.run, args=(["ffmpeg"],))
+        runner.start()
+        assert entered_popen.wait(timeout=2)  # run() is inside Popen(), holding _lock
 
         terminator = threading.Thread(target=ffmpegtool.terminate_all, kwargs={"timeout": 1})
         terminator.start()
-        proceed.set()
-        spawner.join(timeout=2)
-        terminator.join(timeout=2)
+        release_popen.set()  # let the spawn, and the registration, complete
+        terminator.join(timeout=2)  # terminate_all has taken its snapshot by now
 
-        assert fake.killed
+        assert spawned and spawned[0].killed
+
+        release_communicate.set()
+        runner.join(timeout=2)
 
 
 class TestTerminated:
