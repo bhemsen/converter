@@ -553,12 +553,12 @@ def bind_to_kill_on_close_job() -> None:
     start of the convert command, before anything is spawned -- every
     ffmpeg/ffprobe child then inherits job membership automatically. Not
     called from anywhere yet: wiring it into ``cli.main`` is a separate,
-    later change. A failure to create or
-    assign the job removes only the orphan protection, never a conversion,
-    so it is reported once on stderr and swallowed rather than raised: the
-    broad ``except Exception`` is deliberate here, this is a best-effort
-    safety net whose precise failure mode (a missing DLL entry point, a
-    permission error, a stubbed test double) does not matter to the caller.
+    later change. A failure to create or assign the job removes only the
+    orphan protection, never a conversion, so it is reported once on stderr
+    and swallowed rather than raised: the broad ``except Exception`` is
+    deliberate here, this is a best-effort safety net whose precise failure
+    mode (a missing DLL entry point, a permission error, a stubbed test
+    double) does not matter to the caller.
     """
     global _job_handle
     if not _is_windows():
