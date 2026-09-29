@@ -1396,6 +1396,56 @@ class TestWorkerNoticesTermination:
         assert not task.dst.exists()
         assert not partial_for(task.dst).exists()
 
+    def test_a_killed_ladder_probe_does_not_report_a_failed_result(
+        self, tmp_path, fake_ffmpeg, monkeypatch
+    ):
+        """Review round 1 finding: `_climb_ladder`'s own probe can be the
+        thing that gets killed. A killed ffprobe surfaces as an ordinary
+        `ProbeError` -- the underlying `run()` call returns a *failing*
+        `CommandResult` rather than raising `Terminated` -- so nothing short
+        of an explicit check right after `_climb_ladder` returns would ever
+        notice; without it the ladder simply runs out and reports FAILED."""
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        fake_ffmpeg.exit_codes = [1]  # the cheap attempt fails for a real reason
+
+        def probe(_tools, _src):
+            ffmpegtool.terminate_all()
+            raise ProbeError("ffprobe was killed")
+
+        monkeypatch.setattr(batch.ffmpegtool, "probe_streams", probe)
+
+        with pytest.raises(ffmpegtool.Terminated):
+            convert_one(MP4, task, TOOLS, overwrite=False)
+
+        assert not task.dst.exists()
+        assert not partial_for(task.dst).exists()
+
+    def test_terminated_raised_directly_by_a_probe_still_deletes_the_partial(
+        self, tmp_path, fake_ffmpeg, monkeypatch
+    ):
+        """Review round 1 finding: once the shutdown flag is already set (by
+        some other task's `terminate_all`), a *new* spawn attempt inside
+        `ffmpegtool.run` raises `Terminated` directly, unwinding straight out
+        of this call stack without passing through any of the explicit
+        `_raise_if_terminated` checks. Only the belt-and-braces
+        `except BaseException` around the whole attempt in
+        `_attempt_conversion` still cleans up the partial here."""
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        fake_ffmpeg.exit_codes = [1]
+
+        def probe(_tools, _src):
+            raise ffmpegtool.Terminated
+
+        monkeypatch.setattr(batch.ffmpegtool, "probe_streams", probe)
+
+        with pytest.raises(ffmpegtool.Terminated):
+            convert_one(MP4, task, TOOLS, overwrite=False)
+
+        assert not task.dst.exists()
+        assert not partial_for(task.dst).exists()
+
     def test_a_worker_started_after_terminate_all_raises_without_spawning(
         self, tmp_path, fake_ffmpeg
     ):
@@ -1562,6 +1612,14 @@ class TestRunBatchTermination:
         raise. `terminate_all` then unblocks the one worker genuinely in
         flight, whose own post-run check deletes its partial; the two other,
         still-queued tasks are cancelled before they ever touch anything.
+
+        Regression guard (review round 1): the earlier version of this test
+        released the blocked worker *before* the real `terminate_all` had
+        flipped the shutdown flag, so it passed even with the flag-check bug
+        it was meant to catch -- the worker just took the ordinary FAILED
+        path instead. This version orders the two correctly and asserts both
+        that `terminate_all` really ran and that the in-flight file produced
+        no `Result` at all, not even a FAILED one.
         """
         tasks = [make_task(tmp_path, f"clip{i}") for i in range(3)]
         for task in tasks:
@@ -1578,28 +1636,41 @@ class TestRunBatchTermination:
         monkeypatch.setattr(batch.ffmpegtool, "run", run)
 
         real_wait = batch.wait
-        calls = {"n": 0}
+        wait_calls = {"n": 0}
 
         def fake_wait(*args, **kwargs):
-            calls["n"] += 1
-            if calls["n"] == 1:
+            wait_calls["n"] += 1
+            if wait_calls["n"] == 1:
                 raise KeyboardInterrupt
             return real_wait(*args, **kwargs)
 
         monkeypatch.setattr(batch, "wait", fake_wait)
 
         real_terminate_all = ffmpegtool.terminate_all
+        terminate_all_calls = {"n": 0}
 
         def terminate_all(*args, **kwargs):
-            release.set()  # "kill" the blocked worker so its run() returns
-            return real_terminate_all(*args, **kwargs)
+            terminate_all_calls["n"] += 1
+            real_terminate_all(*args, **kwargs)  # flips the real flag first
+            release.set()  # only now does the blocked worker's run() return
 
         monkeypatch.setattr(batch.ffmpegtool, "terminate_all", terminate_all)
+
+        real_report = batch._report
+        reported: list[Result] = []
+
+        def spy_report(result, bar):
+            reported.append(result)
+            real_report(result, bar)
+
+        monkeypatch.setattr(batch, "_report", spy_report)
 
         with pytest.raises(KeyboardInterrupt):
             run_batch(MP4, tasks, TOOLS, jobs=1, progress=False)
 
         assert started.is_set()
+        assert terminate_all_calls["n"] == 1
+        assert reported == []  # not even a FAILED Result for the killed file
         for task in tasks:
             assert not partial_for(task.dst).exists()
             assert not task.dst.exists()

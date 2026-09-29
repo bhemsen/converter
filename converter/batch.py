@@ -242,19 +242,14 @@ def _climb_ladder(
     return None
 
 
-def _attempt_conversion(profile: Profile, task: Task, tools: Tools, *, overwrite: bool) -> Result:
-    partial = partial_for(task.dst)
-    # A stale partial from an earlier, killed run -- swept whether this task
-    # ends up converting or being skipped (``docs/specs/spec-abort-safe-writes.md``).
-    _delete_partial(partial)
+def _climb_the_ladder(profile: Profile, task: Task, tools: Tools, partial: Path) -> Result:
+    """Run every rung until one succeeds or the ladder is exhausted.
 
-    if task.dst.exists() and not overwrite:
-        return Result(
-            task,
-            Outcome.SKIPPED,
-            notes=("output already exists; pass --overwrite to replace it",),
-        )
-
+    Split out of :func:`_attempt_conversion` so that function can wrap this
+    one in a single ``try``/``except`` and guarantee the partial is gone on
+    *any* exit that is not one of the explicit ``Result``-returning paths
+    below -- a termination raised mid-probe included.
+    """
     pending: list[Attempt] = [engine.first_attempt(profile)]
     errors: list[str] = []
     probed = False
@@ -273,12 +268,45 @@ def _attempt_conversion(profile: Profile, task: Task, tools: Tools, *, overwrite
         if not probed:
             probed = True
             outcome = _climb_ladder(profile, task, tools, errors, pending)
+            # `_climb_ladder`'s own probe can be the thing that gets killed --
+            # it surfaces as an ordinary `ProbeError`, appended to `errors`,
+            # not as `Terminated`, so nothing short of checking here would
+            # ever notice and this attempt would silently become FAILED.
+            _raise_if_terminated(partial)
             if outcome is not None:
                 _delete_partial(partial)
                 return outcome
 
     _delete_partial(partial)
     return Result(task, Outcome.FAILED, error=" | ".join(errors))
+
+
+def _attempt_conversion(profile: Profile, task: Task, tools: Tools, *, overwrite: bool) -> Result:
+    partial = partial_for(task.dst)
+    # A stale partial from an earlier, killed run -- swept whether this task
+    # ends up converting or being skipped (``docs/specs/spec-abort-safe-writes.md``).
+    _delete_partial(partial)
+
+    if task.dst.exists() and not overwrite:
+        return Result(
+            task,
+            Outcome.SKIPPED,
+            notes=("output already exists; pass --overwrite to replace it",),
+        )
+
+    try:
+        return _climb_the_ladder(profile, task, tools, partial)
+    except BaseException:
+        # A belt-and-braces net around the explicit clean-up calls above and
+        # inside `_finish_conversion`/`_raise_if_terminated`: `Terminated` can
+        # also be raised directly by `ffmpegtool.run` itself (a *new* spawn
+        # attempted after the shutdown flag is already set), which unwinds
+        # straight out of this call stack without passing through any of
+        # them. Whatever the cause, `docs/constitution.md` is unconditional --
+        # "a partially written output file is removed when its conversion
+        # fails" -- so this is not narrowed to `Terminated`/`KeyboardInterrupt`.
+        _delete_partial(partial)
+        raise
 
 
 def convert_one(profile: Profile, task: Task, tools: Tools, *, overwrite: bool) -> Result:
@@ -370,10 +398,13 @@ def _drain(future_tasks: dict[Future[Result], Task], results: list[Result], bar:
         done, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
         for future in done:
             result = future.result()
+            # Removed before reporting: an interrupt landing between the two
+            # would otherwise leave the future both reported here and still
+            # present for `_handle_interrupt` to report a second time.
+            del future_tasks[future]
             results.append(result)
             _report(result, bar)
             bar.update(1)
-            del future_tasks[future]
 
 
 #: How long the main thread waits for an in-flight conversion to notice a
@@ -406,13 +437,25 @@ def _handle_interrupt(
     pending = {future for future in future_tasks if not future.done()}
     done, timed_out = wait(pending, timeout=_SHUTDOWN_WAIT_TIMEOUT)
     for future in (*(set(future_tasks) - pending), *done):
-        with suppress(BaseException):  # cancelled/killed/terminated yields no Result
-            result = future.result()
+        result = _safe_result(future)
+        if result is not None:
             results.append(result)
             _report(result, bar)
             bar.update(1)
     for future in timed_out:
         _delete_partial(partial_for(future_tasks[future].dst))
+
+
+def _safe_result(future: Future[Result]) -> Result | None:
+    """``future.result()``, or ``None`` for a cancelled/killed/terminated worker.
+
+    Narrowed to this one call so a genuine bug in the reporting that follows
+    -- appending to *results*, writing to the progress bar -- is never
+    silently eaten alongside it.
+    """
+    with suppress(BaseException):
+        return future.result()
+    return None
 
 
 def run_batch(
