@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from converter import batch, cli
+from converter import batch, cli, report
 from converter.cli import build_mirror_parser, build_parser, dispatch, main, prompt_for_argv
 from converter.ffmpegtool import CommandResult, Stream, Tools
 from converter.profiles import MP4, PROFILES, WAV
@@ -1353,7 +1353,7 @@ class TestFormatNamesStayOutOfTheCli:
     the check has to look at code, not at text.
     """
 
-    @pytest.mark.parametrize("module", [cli, batch], ids=lambda m: m.__name__)
+    @pytest.mark.parametrize("module", [cli, batch, report], ids=lambda m: m.__name__)
     def test_no_string_literal_names_a_registry_format(self, module):
         source = Path(module.__file__).read_text(encoding="utf-8")
 
