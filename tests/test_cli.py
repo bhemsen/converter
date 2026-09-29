@@ -12,6 +12,9 @@ these tests keep working as later phases add targets -- the same property the
 import ast
 import os
 import re
+import signal
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -56,6 +59,20 @@ def self_mirroring_root(path: Path) -> str:
     resolved-vs-as-given difference observable without a second real drive.
     """
     return os.path.splitdrive(str(path))[0] or os.sep
+
+
+@pytest.fixture(autouse=True)
+def _stub_job_object_binding(monkeypatch):
+    """Replace the real Windows Job Object binding with a no-op everywhere.
+
+    ``convert_command`` now calls ``ffmpegtool.bind_to_kill_on_close_job()``
+    unconditionally, and this suite runs on Windows: without this, every test
+    that drives a conversion through ``main()``/``dispatch()`` would put the
+    pytest process itself into a kill-on-close Job Object. Autouse, so the
+    handful of tests that care how the binding is called (or not called) are
+    the only ones that override it again with their own spy.
+    """
+    monkeypatch.setattr(cli.ffmpegtool, "bind_to_kill_on_close_job", lambda: None)
 
 
 @pytest.fixture
@@ -897,6 +914,174 @@ class TestExitCodeWiring:
         assert code == 0
         assert "2 converted" in capsys.readouterr().out
         assert (tmp_path / "out" / f"tone{AUDIO_SUFFIX}").exists()
+
+
+class TestSignalHandling:
+    """SIGTERM (issue #147): raises ``ffmpegtool.Terminated``, maps to exit
+    143, and never leaves the handler installed once ``main()`` returns.
+    SIGINT/Ctrl+C is deliberately left on Python's default path, so it still
+    surfaces as ``KeyboardInterrupt`` and exits 130, unchanged from before
+    this issue.
+    """
+
+    def _wire(self, monkeypatch, run) -> None:
+        monkeypatch.setattr(cli.ffmpegtool, "resolve_tools", lambda *_a: FAKE_TOOLS)
+        monkeypatch.setattr(cli.ffmpegtool, "version", lambda _tools: "ffmpeg test build")
+        monkeypatch.setattr(batch.ffmpegtool, "run", run)
+        monkeypatch.setattr(batch.ffmpegtool, "probe_streams", lambda *_a: [])
+
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="SIGTERM is not delivered to a Python handler on Windows"
+    )
+    def test_sigterm_mid_batch_exits_143_and_leaves_no_partial(self, tmp_path, monkeypatch):
+        """The signal fires from inside the worker thread's ffmpeg stub, which
+        then *waits for the shutdown flag itself* rather than sleeping a fixed
+        duration -- a fixed sleep would race the main thread's own poll loop
+        (``batch._drain``'s ``wait(timeout=0.5)``): on a slow or loaded runner
+        the worker could wake and rename before the main thread has even
+        processed the pending signal, which is exactly the flakiness
+        ``docs/specs/spec-abort-safe-writes.md``'s risk table calls out
+        ("Signal handling differs between platforms and flakes in CI").
+        Waiting on ``ffmpegtool.terminated()`` instead makes the ordering a
+        guarantee: the worker's stub only returns *after*
+        ``ffmpegtool.terminate_all`` has already run, so its own post-run
+        check (``batch._raise_if_terminated``) always deletes the partial
+        instead of renaming it -- no timing assumption left to get unlucky.
+        """
+        make_source(tmp_path / "in", "clip.mkv")
+        out_dir = tmp_path / "out"
+
+        def run(argv, **_kwargs):
+            os.kill(os.getpid(), signal.SIGTERM)
+            deadline = time.monotonic() + 5.0
+            while not batch.ffmpegtool.terminated() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            Path(argv[-1]).write_bytes(b"converted")
+            return CommandResult(tuple(argv), 0, "", "")
+
+        self._wire(monkeypatch, run)
+
+        code = main(convert_argv(str(tmp_path / "in"), str(out_dir), "-q"))
+
+        assert code == 143
+        assert list(out_dir.rglob("*.partial")) == []
+        assert not (out_dir / f"clip{VIDEO_SUFFIX}").exists()
+
+    def test_terminated_raised_by_the_batch_exits_143(self, tmp_path, monkeypatch, capsys):
+        """Decoupled from real signal delivery: whatever raises
+        ``ffmpegtool.Terminated`` out of ``run_batch`` -- a SIGTERM handler or
+        anything else -- must map to 143, not just the SIGTERM-specific path
+        above.
+        """
+        make_source(tmp_path / "in", "clip.mkv")
+        monkeypatch.setattr(cli.ffmpegtool, "resolve_tools", lambda *_a: FAKE_TOOLS)
+        monkeypatch.setattr(cli.ffmpegtool, "version", lambda _tools: "ffmpeg test build")
+
+        def raise_terminated(*_a, **_k):
+            raise cli.ffmpegtool.Terminated
+
+        monkeypatch.setattr(cli, "run_batch", raise_terminated)
+
+        code = main(convert_argv(str(tmp_path / "in"), str(tmp_path / "out"), "-q"))
+
+        assert code == 143
+        assert "erminated" in capsys.readouterr().err
+
+    def test_keyboard_interrupt_during_conversion_still_exits_130(self, tmp_path, monkeypatch):
+        make_source(tmp_path / "in", "clip.mkv")
+
+        def run(argv, **_kwargs):
+            raise KeyboardInterrupt
+
+        self._wire(monkeypatch, run)
+
+        code = main(convert_argv(str(tmp_path / "in"), str(tmp_path / "out"), "-q"))
+
+        assert code == 130
+
+    def test_sigterm_handler_is_installed_while_converting(self, tmp_path, monkeypatch):
+        """Pins installation itself, on every platform -- the SIGTERM test
+        above is POSIX-only, and neither restoration test below would fail if
+        the handler were never installed in the first place.
+        """
+        make_source(tmp_path / "in", "clip.mkv")
+        installed_during_run = []
+
+        def run(argv, **_kwargs):
+            installed_during_run.append(signal.getsignal(signal.SIGTERM) is cli._raise_terminated)
+            Path(argv[-1]).write_bytes(b"converted")
+            return CommandResult(tuple(argv), 0, "", "")
+
+        self._wire(monkeypatch, run)
+
+        main(convert_argv(str(tmp_path / "in"), str(tmp_path / "out"), "-q"))
+
+        assert installed_during_run == [True]
+
+    def test_sigterm_handler_is_restored_after_main_returns(self, tmp_path, monkeypatch):
+        make_source(tmp_path / "in", "clip.mkv")
+        self._wire(monkeypatch, lambda argv, **_k: CommandResult(tuple(argv), 0, "", ""))
+        previous = signal.getsignal(signal.SIGTERM)
+
+        main(convert_argv(str(tmp_path / "in"), str(tmp_path / "out"), "-q"))
+
+        assert signal.getsignal(signal.SIGTERM) is previous
+
+    def test_the_handler_is_also_restored_when_the_batch_raises(self, tmp_path, monkeypatch):
+        make_source(tmp_path / "in", "clip.mkv")
+        monkeypatch.setattr(cli.ffmpegtool, "resolve_tools", lambda *_a: FAKE_TOOLS)
+        monkeypatch.setattr(cli.ffmpegtool, "version", lambda _tools: "ffmpeg test build")
+
+        def raise_terminated(*_a, **_k):
+            raise cli.ffmpegtool.Terminated
+
+        monkeypatch.setattr(cli, "run_batch", raise_terminated)
+        previous = signal.getsignal(signal.SIGTERM)
+
+        main(convert_argv(str(tmp_path / "in"), str(tmp_path / "out"), "-q"))
+
+        assert signal.getsignal(signal.SIGTERM) is previous
+
+
+class TestJobObjectBinding:
+    """The Windows Job Object binding is called exactly once, at the start of
+    the convert command, and never for the commands that convert nothing.
+    """
+
+    def test_bound_once_for_a_conversion(self, tmp_path, monkeypatch):
+        make_source(tmp_path / "in", "clip.mkv")
+        calls = []
+        monkeypatch.setattr(cli.ffmpegtool, "bind_to_kill_on_close_job", lambda: calls.append(1))
+        monkeypatch.setattr(cli.ffmpegtool, "resolve_tools", lambda *_a: FAKE_TOOLS)
+        monkeypatch.setattr(cli.ffmpegtool, "version", lambda _tools: "ffmpeg test build")
+
+        def run(argv, **_kwargs):
+            Path(argv[-1]).write_bytes(b"converted")
+            return CommandResult(tuple(argv), 0, "", "")
+
+        monkeypatch.setattr(batch.ffmpegtool, "run", run)
+        monkeypatch.setattr(batch.ffmpegtool, "probe_streams", lambda *_a: [])
+
+        main(convert_argv(str(tmp_path / "in"), str(tmp_path / "out"), "-q"))
+
+        assert calls == [1]
+
+    def test_not_bound_for_list_formats(self, monkeypatch, capsys):
+        calls = []
+        monkeypatch.setattr(cli.ffmpegtool, "bind_to_kill_on_close_job", lambda: calls.append(1))
+
+        main(["--list-formats"])
+
+        assert calls == []
+
+    def test_not_bound_for_mirror(self, tmp_path, monkeypatch, capsys):
+        (tmp_path / "a").mkdir()
+        calls = []
+        monkeypatch.setattr(cli.ffmpegtool, "bind_to_kill_on_close_job", lambda: calls.append(1))
+
+        main([cli.MIRROR_COMMAND, str(tmp_path / "a"), str(tmp_path / "mirror")])
+
+        assert calls == []
 
 
 class TestMirrorCommand:
