@@ -1740,3 +1740,57 @@ class TestRunBatchTermination:
         for task in tasks:
             assert not partial_for(task.dst).exists()
             assert not task.dst.exists()
+
+    @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, ffmpegtool.Terminated])
+    def test_interrupt_during_submission_still_terminates(self, tmp_path, monkeypatch, interrupt):
+        """Issue #159: a signal that lands while tasks are still being
+        submitted -- here, raised by the second `submit()` -- must take the
+        same path as one raised during the drain. Before the fix the
+        submission sat outside the handler's `try`, so `terminate_all` never
+        ran and the first, already-running worker's ffmpeg was left alone.
+        """
+        tasks = [make_task(tmp_path, f"clip{i}") for i in range(3)]
+        for task in tasks:
+            task.dst.parent.mkdir(parents=True, exist_ok=True)
+        release = threading.Event()
+        started = threading.Event()
+
+        def run(argv, **_kwargs):
+            Path(argv[-1]).write_bytes(b"partial")
+            started.set()
+            release.wait(timeout=5)
+            return CommandResult(tuple(argv), 1, "", "killed")
+
+        monkeypatch.setattr(batch.ffmpegtool, "run", run)
+
+        class InterruptingPool(ThreadPoolExecutor):
+            calls = 0
+
+            def submit(self, *args, **kwargs):
+                InterruptingPool.calls += 1
+                if InterruptingPool.calls == 2:
+                    started.wait(timeout=5)  # the first task is inside ffmpeg
+                    raise interrupt
+                return super().submit(*args, **kwargs)
+
+        monkeypatch.setattr(batch, "ThreadPoolExecutor", InterruptingPool)
+
+        real_terminate_all = ffmpegtool.terminate_all
+        terminate_all_calls = {"n": 0}
+
+        def terminate_all(*args, **kwargs):
+            terminate_all_calls["n"] += 1
+            real_terminate_all(*args, **kwargs)
+            release.set()
+
+        monkeypatch.setattr(batch.ffmpegtool, "terminate_all", terminate_all)
+        reported: list[Result] = []
+
+        with pytest.raises(interrupt):
+            run_batch(MP4, tasks, TOOLS, jobs=1, progress=False, on_result=reported.append)
+
+        assert terminate_all_calls["n"] == 1
+        assert reported == []
+        for task in tasks:
+            assert not partial_for(task.dst).exists()
+            assert not task.dst.exists()
