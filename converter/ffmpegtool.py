@@ -135,6 +135,7 @@ def build_argv(
     src: str | os.PathLike[str],
     options: Sequence[str],
     dst: str | os.PathLike[str],
+    output_format: str | None = None,
 ) -> list[str]:
     """Assemble a full ffmpeg command line.
 
@@ -146,6 +147,14 @@ def build_argv(
     Note that no ``--`` separator is used: ffmpeg treats ``-i`` as a group
     separator and would swallow ``--`` as the input filename.  ``cli_path``
     handles dash-leading names instead.
+
+    *output_format*, when given, is emitted as ``-f <output_format>`` directly
+    before the output path. Writing to a ``.partial`` name defeats ffmpeg's own
+    suffix-based muxer choice, so the caller passes the profile's declared
+    ``muxer`` here to force the same choice ffmpeg would have made writing
+    straight to the final path (``docs/specs/spec-abort-safe-writes.md``).
+    Omitted (``None``) by default, so every existing call site -- and every
+    argv pin in ``tests/test_argv.py`` -- is unaffected.
     """
     return [
         ffmpeg,
@@ -154,6 +163,7 @@ def build_argv(
         "-i",
         cli_path(src),
         *options,
+        *(("-f", output_format) if output_format is not None else ()),
         cli_path(dst),
     ]
 

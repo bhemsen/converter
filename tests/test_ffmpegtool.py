@@ -12,9 +12,77 @@ from types import SimpleNamespace
 import pytest
 
 from converter import ffmpegtool
-from converter.ffmpegtool import CommandResult, FfmpegMissingError, ProbeError, Stream, Tools
+from converter.ffmpegtool import (
+    CommandResult,
+    FfmpegMissingError,
+    ProbeError,
+    Stream,
+    Tools,
+    build_argv,
+)
 
 TOOLS = Tools(ffmpeg="ffmpeg", ffprobe="ffprobe")
+
+
+class TestBuildArgvOutputFormat:
+    """``output_format`` (issue #144): the ``-f <muxer>`` a ``.partial`` write
+    needs, since it defeats ffmpeg's own suffix-based muxer choice."""
+
+    def test_nothing_is_emitted_when_omitted(self):
+        argv = build_argv("ffmpeg", "in.mkv", ("-c", "copy"), "out.mp4")
+
+        assert "-f" not in argv
+
+    def test_nothing_is_emitted_when_none(self):
+        argv = build_argv("ffmpeg", "in.mkv", ("-c", "copy"), "out.mp4", output_format=None)
+
+        assert "-f" not in argv
+
+    def test_f_and_the_muxer_sit_directly_before_the_output_path(self):
+        argv = build_argv(
+            "ffmpeg", "in.mkv", ("-c", "copy"), "out.mp4.partial", output_format="mp4"
+        )
+
+        assert argv[-3:] == ["-f", "mp4", "out.mp4.partial"]
+
+    def test_the_muxer_follows_the_recipe_options_not_replaces_them(self):
+        argv = build_argv(
+            "ffmpeg", "in.mkv", ("-c", "copy", "-map", "0"), "out.mkv.partial", "matroska"
+        )
+
+        assert argv == [
+            "ffmpeg",
+            *ffmpegtool.BASE_FLAGS,
+            "-y",
+            "-i",
+            "in.mkv",
+            "-c",
+            "copy",
+            "-map",
+            "0",
+            "-f",
+            "matroska",
+            "out.mkv.partial",
+        ]
+
+    def test_existing_argv_pins_are_unaffected(self):
+        """The exact call every existing recipe test already makes -- no
+        `output_format` argument at all -- must keep building the same argv."""
+        argv = build_argv("ffmpeg", "in.mkv", ("-c", "copy"), "out.mp4")
+
+        assert argv == [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            "in.mkv",
+            "-c",
+            "copy",
+            "out.mp4",
+        ]
 
 
 class FakePopen:
