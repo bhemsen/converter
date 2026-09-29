@@ -1,6 +1,6 @@
 """Tests for the text and JSON renderers over ``batch.Result`` / ``batch.Summary``.
 
-Per record type, these pin the exact key set and order (``docs/specs/spec-json-output.md``,
+Per record type, these pin the exact key set and order (``docs/specs/archive/spec-json-output.md``,
 *The record contract*), the null rules for ``attempt``/``error``, that ``notes``
 is always an array, that paths are absolute via ``Path.absolute()`` and not
 ``Path.resolve()``, that a non-ASCII or lone-surrogate name still produces a
@@ -240,7 +240,7 @@ class TestSummaryRecord:
 
     def test_total_is_planned_plus_skipped_for_a_dry_run(self):
         """A dry run never touches the batch, so `summary.total` alone would
-        leave `planned` out entirely -- `docs/specs/spec-json-output.md` fixes
+        leave `planned` out entirely -- `docs/specs/archive/spec-json-output.md` fixes
         `total` at `planned + skipped` for this case instead.
         """
         summary = Summary(skipped=2)
@@ -324,7 +324,7 @@ class TestWriteJson:
 
     def test_lone_surrogate_name_is_escaped_and_round_trips(self):
         # A POSIX file name that is not valid UTF-8 reaches Python as a lone
-        # surrogate (docs/specs/spec-json-output.md, Prior decisions).
+        # surrogate (docs/specs/archive/spec-json-output.md, Prior decisions).
         surrogate_name = "clip-\udcff.mkv"
         record = report.planned_record(Task(Path(surrogate_name), Path("out.mp4")))
         stream = io.BytesIO()

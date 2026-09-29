@@ -157,7 +157,7 @@ Phase 12 decides the code for SIGTERM; this phase documents only what exists.
 
 ## Prior art
 
-- [Machine-readable CLI output (Phase 11)](../prior-art.md#machine-readable-cli-output-phase-11)
+- [Machine-readable CLI output (Phase 11)](../../prior-art.md#machine-readable-cli-output-phase-11)
   — restic (`message_type`) and cargo (`reason`) emit one object per line on
   stdout with a discriminator and a final summary object; docker documents an
   open schema; none versions its per-line schema in-band.
@@ -262,3 +262,16 @@ Each issue references this spec path in its body.
   scope, `--list-formats`/`mirror` behaviour and the `ast` check are now stated.
 - 2026-09-28: Spec-acceptance gate: the discriminator is `type`, and every record
   carries `"schema": 1`. Human prerequisites: none. Accepted.
+- 2026-09-29: `report.summary_record` computes a dry run's `total` as
+  `planned + skipped` rather than taking `Summary.total`, which never counts the
+  planned tasks a dry run does not start (found while implementing #140; the rule
+  above was already stated, the code only had to follow it).
+- 2026-09-29: Milestone QA gate, run against real ffmpeg 9.0 on Windows 11.
+  Verdict: accepted. Through Node's `child_process.spawn` with an argv array and
+  no shell — the videothek shape — a mixed tree (a remux, an MPEG-4 Part 2
+  source, an audio file, a broken `.mkv`, a file named `Übung.mkv`) produced five
+  `file` records then the `summary`, exit 1, every line parsed by `JSON.parse`,
+  `Übung.mkv` round-tripping intact; a re-run reported four `skipped` and one
+  `failed`, exit 1; a usage error left stdout empty, exit 2. The raw stream held
+  0 CR bytes, one LF per record and no byte above 0x7F (`Ü` as `\u00dc`). Ctrl+C
+  under `--json` was checked by the human.

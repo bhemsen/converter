@@ -143,7 +143,7 @@ def partial_for(dst: str | os.PathLike[str]) -> Path:
     the suffix, so the final rename is a plain truncation of the name rather
     than a second suffix computation, and so ``.partial`` collects in no
     source-suffix set a directory walk could ever match
-    (``docs/specs/spec-abort-safe-writes.md``'s *Prior decisions*). Pure: no
+    (``docs/specs/archive/spec-abort-safe-writes.md``'s *Prior decisions*). Pure: no
     filesystem access, so it is as cheap to call speculatively as it is to
     call once and hold onto the result.
     """

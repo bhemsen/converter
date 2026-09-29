@@ -1891,7 +1891,7 @@ class TestRegistryStructuralInvariants:
         )
 
 
-#: The measured muxer table from `docs/specs/spec-abort-safe-writes.md` --
+#: The measured muxer table from `docs/specs/archive/spec-abort-safe-writes.md` --
 #: the muxer ffmpeg itself selects from each target suffix, read from
 #: `Output #0, <muxer>` against ffmpeg 9.0. Spelled out as a literal here,
 #: not derived from `PROFILES`, so this test can only ever compare the
@@ -1918,7 +1918,7 @@ MEASURED_MUXERS = {
 
 
 class TestMuxerField:
-    """`Profile.muxer` (issue #143, `docs/specs/spec-abort-safe-writes.md`):
+    """`Profile.muxer` (issue #143, `docs/specs/archive/spec-abort-safe-writes.md`):
     required so a write to a `.partial` name can still name the format
     ffmpeg would have chosen from the suffix -- see the field's own
     docstring in `converter/profiles.py`.

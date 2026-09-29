@@ -134,7 +134,7 @@ reaches `on_result`.
 
 ## Prior art
 
-- [Abort-safe writes and child-process termination (Phase 12)](../prior-art.md#abort-safe-writes-and-child-process-termination-phase-12)
+- [Abort-safe writes and child-process termination (Phase 12)](../../prior-art.md#abort-safe-writes-and-child-process-termination-phase-12)
   — Job Objects with `KILL_ON_JOB_CLOSE` via `ctypes`; Node's `kill()` is an
   uncatchable `TerminateProcess` on Windows; POSIX signal handlers run in the main
   thread only and must not shut down the executor (cpython#121649); 128+n exit
@@ -304,3 +304,17 @@ Each issue references this spec path in its body.
   bypasses every explicit check, so `_attempt_conversion` now wraps its
   whole attempt in `except BaseException: delete the partial; raise` as a
   second line of defence.
+- 2026-09-29: Milestone QA gate, run against real ffmpeg 9.0 on Windows 11.
+  Verdict: accepted. All 17 targets converted with no `.partial` left, and each
+  output matched `v3.1.0`'s in `format_name`, streams and codecs; the h264/aac MKV
+  to MP4 remux was byte-identical. `--overwrite` over a good output with a broken
+  source left the old file's MD5 unchanged, exit 1. Killed from Node with
+  `child.kill()` mid-VP9-encode, no ffmpeg survived and only `long.webm.partial`
+  remained; the same kill against `v3.1.0` left ffmpeg running and a
+  finished-looking but truncated `long.webm` — the defect this phase closes. The
+  next run removed the stale partial and converted, exit 0. POSIX SIGTERM is
+  covered by the CI test on the Linux runners; Ctrl+C was checked by the human.
+- 2026-09-29: Close-out. One gap left open by design review and filed rather
+  than fixed here: an interrupt that lands while `run_batch` is still submitting
+  tasks skips `terminate_all` (issue #159, `track:adhoc`) — a window of
+  microseconds per task, accepted at the gate as non-blocking.
