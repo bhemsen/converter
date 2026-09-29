@@ -1,12 +1,16 @@
 """Tests for batch behaviour: the failures the old scripts swallowed."""
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+from tqdm import tqdm
 
-from converter import batch, jobs
+from converter import batch, ffmpegtool, jobs
 from converter.batch import Outcome, Result, Task, convert_one, run_batch, summarise
 from converter.ffmpegtool import CommandResult, ProbeError, Stream, Tools
+from converter.paths import partial_for
 from converter.profiles import (
     AVIF,
     BMP,
@@ -140,10 +144,12 @@ def spy_on_probe(
 
     Source and output are told apart by *path*, the same way the `fake_ffmpeg`
     fixture does it, so a test cannot pass on the strength of the order the two
-    probes happen to run in. Pass `task` to answer differently for the output;
-    passing `output_streams` without it is refused rather than silently ignored,
-    so a test cannot look like it exercises the output probe while in fact
-    answering the source list twice.
+    probes happen to run in. The output probe targets the *partial* file, not
+    `task.dst` -- the rename into place only happens after it
+    (`docs/specs/spec-abort-safe-writes.md`). Pass `task` to answer differently
+    for the output; passing `output_streams` without it is refused rather than
+    silently ignored, so a test cannot look like it exercises the output probe
+    while in fact answering the source list twice.
     """
     if output_streams is not None and task is None:
         raise TypeError("output_streams needs task, to tell the output path apart")
@@ -151,7 +157,7 @@ def spy_on_probe(
 
     def probe(_tools, src):
         seen.append(src)
-        if task is not None and Path(src) == task.dst:
+        if task is not None and Path(src) == partial_for(task.dst):
             return list(output_streams or [])
         return list(streams)
 
@@ -169,6 +175,11 @@ class TestConvertOne:
         assert result.outcome is Outcome.CONVERTED
         assert result.attempt == "remux"
         assert len(fake_ffmpeg.calls) == 1
+        # Every attempt writes the partial, never the final path directly
+        # (docs/specs/spec-abort-safe-writes.md): the rename is what makes it
+        # appear, and nothing is left beside it once that has happened.
+        assert task.dst.exists()
+        assert not partial_for(task.dst).exists()
 
     def test_existing_output_is_skipped_by_default(self, tmp_path, fake_ffmpeg):
         task = make_task(tmp_path)
@@ -285,6 +296,7 @@ class TestConvertOne:
 
         assert result.outcome is Outcome.FAILED
         assert not task.dst.exists()
+        assert not partial_for(task.dst).exists()
 
     def test_pre_existing_output_survives_a_failed_overwrite(self, tmp_path, fake_ffmpeg):
         task = make_task(tmp_path)
@@ -296,6 +308,7 @@ class TestConvertOne:
         convert_one(MP4, task, TOOLS, overwrite=True)
 
         assert task.dst.read_bytes() == b"good older file"
+        assert not partial_for(task.dst).exists()
 
     def test_probe_failure_is_recorded_not_raised(self, tmp_path, fake_ffmpeg):
         task = make_task(tmp_path)
@@ -350,7 +363,7 @@ class TestPartialCheapAttemptVerification:
         assert len(fake_ffmpeg.calls) == 1
         # One probe per file, plus the one the claim itself pays for: the source
         # says what was there, the output says what survived. Never one per rung.
-        assert probes == [task.src, task.dst]
+        assert probes == [task.src, partial_for(task.dst)]
         assert result.notes == ("attachment stream 1 (ttf) dropped: not supported by MP4",)
 
     def test_a_dropped_surplus_audio_stream_is_named_on_a_successful_pcm_run(
@@ -424,7 +437,7 @@ class TestPartialCheapAttemptVerification:
         task.dst.parent.mkdir(parents=True)
 
         def probe(_tools, src):
-            if Path(src) == task.dst:
+            if Path(src) == partial_for(task.dst):
                 raise failure
             return [Stream(0, "video", "h264"), Stream(1, "attachment", "ttf")]
 
@@ -640,7 +653,7 @@ class TestTransparencyNote:
         result = convert_one(JPG, task, TOOLS, overwrite=False)
 
         assert result.outcome is Outcome.CONVERTED
-        assert probes == [task.src, task.dst]
+        assert probes == [task.src, partial_for(task.dst)]
         # The cheap attempt's own static note ("the image was re-encoded")
         # leads, exactly as it always does; the confirmed drop note leads the
         # two dynamic notes, matching the order `jobs.retries` already uses.
@@ -1260,3 +1273,333 @@ class TestDefaultJobs:
     def test_is_bounded(self):
         """One process per input file oversubscribed the machine badly."""
         assert 1 <= batch.default_jobs() <= 4
+
+
+class TestArgvCarriesTheMuxer:
+    """`build_argv`'s `output_format` (#144) is what lets a `.partial` name
+    still pick the muxer the bare suffix would have chosen."""
+
+    def test_every_rung_writes_the_partial_with_the_profiles_muxer(self, tmp_path, fake_ffmpeg):
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        fake_ffmpeg.exit_codes = [1, 0]
+        fake_ffmpeg.streams = [Stream(0, "video", "h264"), Stream(1, "audio", "pcm_s16le")]
+
+        convert_one(MP4, task, TOOLS, overwrite=False)
+
+        assert len(fake_ffmpeg.calls) == 2
+        for call in fake_ffmpeg.calls:
+            assert call[-3:] == ["-f", MP4.muxer, str(partial_for(task.dst))]
+
+
+class TestStalePartialSweep:
+    """A `.partial` an earlier, killed run left behind: swept at the start of
+    every batch task, whether it ends up converting or being skipped
+    (``docs/specs/spec-abort-safe-writes.md``)."""
+
+    def test_a_stale_partial_beside_a_missing_output_is_removed_and_the_file_converts(
+        self, tmp_path, fake_ffmpeg
+    ):
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        partial_for(task.dst).write_bytes(b"leftover from a killed run")
+
+        result = convert_one(MP4, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert task.dst.read_bytes() == b"partial"  # the fresh write, not the leftover
+        assert not partial_for(task.dst).exists()
+
+    def test_a_stale_partial_beside_an_existing_output_is_removed_and_the_file_is_skipped(
+        self, tmp_path, fake_ffmpeg
+    ):
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        task.dst.write_bytes(b"already there")
+        partial_for(task.dst).write_bytes(b"leftover from a killed run")
+
+        result = convert_one(MP4, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.SKIPPED
+        assert fake_ffmpeg.calls == []
+        assert not partial_for(task.dst).exists()
+
+    def test_an_undeletable_stale_partial_is_ignored(self, tmp_path, fake_ffmpeg, monkeypatch):
+        """A locked leftover on Windows must not fail the attempt outright --
+        ffmpeg's own failure to open the (still occupied) path is what reports
+        it, per the spec's Prior decisions."""
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        partial_for(task.dst).write_bytes(b"leftover from a killed run")
+
+        def locked_unlink(self, missing_ok=False):
+            raise PermissionError("still open")
+
+        monkeypatch.setattr(Path, "unlink", locked_unlink)
+
+        result = convert_one(MP4, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+
+
+class TestWorkerNoticesTermination:
+    """The post-`run()` check (`_raise_if_terminated`): a worker's own ffmpeg
+    exiting is not proof the run should continue once `terminate_all` has
+    closed the registry (``docs/specs/spec-abort-safe-writes.md``, Prior
+    decisions, "Workers after a kill")."""
+
+    def test_a_run_that_returns_after_terminate_all_yields_no_result(
+        self, tmp_path, fake_ffmpeg, monkeypatch
+    ):
+        """`convert_one`'s `except Exception` must not swallow this: `Terminated`
+        is a `BaseException`, so it has to reach the caller, not become a
+        FAILED `Result`."""
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        real_run = fake_ffmpeg.run
+
+        def run(argv, **kwargs):
+            # ffmpeg "succeeded" just as terminate_all flips the flag -- the
+            # worker must notice on its own, not trust the exit status.
+            result = real_run(argv, **kwargs)
+            ffmpegtool.terminate_all()
+            return result
+
+        monkeypatch.setattr(batch.ffmpegtool, "run", run)
+        probes = spy_on_probe(monkeypatch, [Stream(0, "video", "h264")])
+
+        with pytest.raises(ffmpegtool.Terminated):
+            convert_one(MP4, task, TOOLS, overwrite=False)
+
+        assert probes == []  # neither verified nor climbed the ladder
+        assert len(fake_ffmpeg.calls) == 1  # no retry rung was started
+        assert not task.dst.exists()
+        assert not partial_for(task.dst).exists()
+
+    def test_a_killed_success_side_probe_does_not_rename_the_partial(
+        self, tmp_path, fake_ffmpeg, monkeypatch
+    ):
+        """The second check, right before the rename: a termination noticed
+        only during the verification probe must still stop it."""
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+
+        def probe(_tools, _src):
+            ffmpegtool.terminate_all()
+            return [Stream(0, "video", "h264"), Stream(1, "attachment", "ttf")]
+
+        monkeypatch.setattr(batch.ffmpegtool, "probe_streams", probe)
+
+        with pytest.raises(ffmpegtool.Terminated):
+            convert_one(MP4, task, TOOLS, overwrite=False)
+
+        assert not task.dst.exists()
+        assert not partial_for(task.dst).exists()
+
+    def test_a_worker_started_after_terminate_all_raises_without_spawning(
+        self, tmp_path, fake_ffmpeg
+    ):
+        """`_interruptible`'s own pre-check: a task that has not started yet
+        must not spawn ffmpeg at all once a termination is already in
+        progress -- the SIGTERM case, distinct from the Ctrl+C `interrupted`
+        flag this wrapper already carried."""
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        ffmpegtool.terminate_all()
+        work = batch._interruptible(MP4, TOOLS, overwrite=False, interrupted=threading.Event())
+
+        with pytest.raises(ffmpegtool.Terminated):
+            work(task)
+
+        assert fake_ffmpeg.calls == []
+
+
+class TestRenameRetry:
+    """The Windows-only rename retry on `PermissionError` (spec's Prior
+    decisions): 5 retries, backoff 0.1/0.2/0.4/0.8/1.6 s. `batch._is_windows`
+    is the seam that lets a test pick the platform behaviour without touching
+    `sys.platform`."""
+
+    def _streams_the_cheap_attempt_fully_maps(self) -> list[Stream]:
+        """MP4's own copy mask, so `_verify_cheap_attempt` needs no second
+        probe and the rename is the only thing left to exercise."""
+        return [Stream(0, "video", "h264"), Stream(1, "audio", "aac")]
+
+    def test_windows_retries_and_succeeds_on_the_third_try(
+        self, tmp_path, fake_ffmpeg, monkeypatch
+    ):
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        fake_ffmpeg.streams = self._streams_the_cheap_attempt_fully_maps()
+        monkeypatch.setattr(batch, "_is_windows", lambda: True)
+        sleeps: list[float] = []
+        monkeypatch.setattr(batch.time, "sleep", sleeps.append)
+        real_replace = Path.replace
+        attempts = {"n": 0}
+
+        def flaky_replace(self, target):
+            attempts["n"] += 1
+            if attempts["n"] < 3:
+                raise PermissionError("locked")
+            return real_replace(self, target)
+
+        monkeypatch.setattr(Path, "replace", flaky_replace)
+
+        result = convert_one(MP4, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert attempts["n"] == 3
+        assert sleeps == [0.1, 0.2]
+        assert task.dst.exists()
+        assert not partial_for(task.dst).exists()
+
+    def test_windows_gives_up_after_five_retries_leaving_the_old_output_intact(
+        self, tmp_path, fake_ffmpeg, monkeypatch
+    ):
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        task.dst.write_bytes(b"good older file")
+        fake_ffmpeg.streams = self._streams_the_cheap_attempt_fully_maps()
+        monkeypatch.setattr(batch, "_is_windows", lambda: True)
+        sleeps: list[float] = []
+        monkeypatch.setattr(batch.time, "sleep", sleeps.append)
+
+        def always_locked(_self, _target):
+            raise PermissionError("locked")
+
+        monkeypatch.setattr(Path, "replace", always_locked)
+
+        result = convert_one(MP4, task, TOOLS, overwrite=True)
+
+        assert result.outcome is Outcome.FAILED
+        assert "locked" in result.error
+        assert sleeps == [0.1, 0.2, 0.4, 0.8, 1.6]
+        assert task.dst.read_bytes() == b"good older file"
+        assert not partial_for(task.dst).exists()
+
+    def test_posix_does_not_retry(self, tmp_path, fake_ffmpeg, monkeypatch):
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        fake_ffmpeg.streams = self._streams_the_cheap_attempt_fully_maps()
+        monkeypatch.setattr(batch, "_is_windows", lambda: False)
+        sleeps: list[float] = []
+        monkeypatch.setattr(batch.time, "sleep", sleeps.append)
+        attempts = {"n": 0}
+
+        def always_locked(_self, _target):
+            attempts["n"] += 1
+            raise PermissionError("locked")
+
+        monkeypatch.setattr(Path, "replace", always_locked)
+
+        result = convert_one(MP4, task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.FAILED
+        assert attempts["n"] == 1
+        assert sleeps == []
+
+
+class TestHandleInterrupt:
+    """Unit-level coverage of `_handle_interrupt`'s three branches, driven
+    directly against real futures rather than through a full `run_batch`
+    race, so each stays fast and deterministic."""
+
+    def _bar(self) -> tqdm:
+        return tqdm(total=1, disable=True)
+
+    def test_a_future_that_completes_during_the_bounded_wait_is_still_reported(self, tmp_path):
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        expected = Result(task, Outcome.CONVERTED, "remux")
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(lambda: expected)
+            results: list[Result] = []
+
+            batch._handle_interrupt({future: task}, results, self._bar())
+
+        assert results == [expected]
+
+    def test_a_future_that_raises_terminated_yields_no_result(self, tmp_path):
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+
+        def raise_terminated():
+            raise ffmpegtool.Terminated
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(raise_terminated)
+            results: list[Result] = []
+
+            batch._handle_interrupt({future: task}, results, self._bar())
+
+        assert results == []
+
+    def test_a_future_still_running_past_the_bounded_wait_has_its_partial_removed(
+        self, tmp_path, monkeypatch
+    ):
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        partial_for(task.dst).write_bytes(b"still being written")
+        monkeypatch.setattr(batch, "_SHUTDOWN_WAIT_TIMEOUT", 0.05)
+        release = threading.Event()
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(lambda: release.wait(timeout=2))
+            results: list[Result] = []
+
+            batch._handle_interrupt({future: task}, results, self._bar())
+
+            assert not partial_for(task.dst).exists()
+            assert results == []
+            release.set()  # let the worker finish before the pool tears down
+
+
+class TestRunBatchTermination:
+    def test_interrupt_calls_terminate_all_and_leaves_no_partial(self, tmp_path, monkeypatch):
+        """The realistic ordering: Ctrl+C surfaces first as a `KeyboardInterrupt`
+        out of the main thread's own poll (`_drain`'s `wait`), not out of a
+        worker's future -- simulated by making exactly that first `wait` call
+        raise. `terminate_all` then unblocks the one worker genuinely in
+        flight, whose own post-run check deletes its partial; the two other,
+        still-queued tasks are cancelled before they ever touch anything.
+        """
+        tasks = [make_task(tmp_path, f"clip{i}") for i in range(3)]
+        for task in tasks:
+            task.dst.parent.mkdir(parents=True, exist_ok=True)
+        release = threading.Event()
+        started = threading.Event()
+
+        def run(argv, **_kwargs):
+            Path(argv[-1]).write_bytes(b"partial")
+            started.set()
+            release.wait(timeout=5)
+            return CommandResult(tuple(argv), 1, "", "killed")
+
+        monkeypatch.setattr(batch.ffmpegtool, "run", run)
+
+        real_wait = batch.wait
+        calls = {"n": 0}
+
+        def fake_wait(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise KeyboardInterrupt
+            return real_wait(*args, **kwargs)
+
+        monkeypatch.setattr(batch, "wait", fake_wait)
+
+        real_terminate_all = ffmpegtool.terminate_all
+
+        def terminate_all(*args, **kwargs):
+            release.set()  # "kill" the blocked worker so its run() returns
+            return real_terminate_all(*args, **kwargs)
+
+        monkeypatch.setattr(batch.ffmpegtool, "terminate_all", terminate_all)
+
+        with pytest.raises(KeyboardInterrupt):
+            run_batch(MP4, tasks, TOOLS, jobs=1, progress=False)
+
+        assert started.is_set()
+        for task in tasks:
+            assert not partial_for(task.dst).exists()
+            assert not task.dst.exists()
