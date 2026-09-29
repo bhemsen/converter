@@ -10,6 +10,7 @@ these tests keep working as later phases add targets -- the same property the
 """
 
 import ast
+import json
 import os
 import re
 import signal
@@ -116,6 +117,10 @@ class TestConvertParser:
         assert args.recursive is True
         assert args.jobs == 8
         assert args.quiet is True
+
+    def test_json_defaults_to_false_and_the_flag_sets_it(self):
+        assert parse(convert_argv("in", "out")).json is False
+        assert parse(convert_argv("in", "out", "--json")).json is True
 
     def test_jobs_is_not_capped_by_cpu_count(self):
         """`--jobs` reaches `run_batch` unmodified (see `converter/batch.py`);
@@ -1279,6 +1284,265 @@ class TestInteractivePrompt:
 
         assert dispatch(prompt_for_argv()) == 0
         assert "->" in capsys.readouterr().out
+
+
+def _json_lines(raw: bytes) -> list[dict]:
+    """Decode every JSON Lines record in *raw*, checking the framing.
+
+    ``docs/specs/spec-json-output.md`` requires bytes terminated by a single
+    ``\\n`` -- never ``\\r\\n`` -- with nothing after the final record.
+    """
+    assert b"\r\n" not in raw
+    if not raw:
+        return []
+    assert raw.endswith(b"\n")
+    lines = raw.split(b"\n")
+    assert lines[-1] == b""
+    return [json.loads(line) for line in lines[:-1]]
+
+
+class TestJsonOutput:
+    """The record contract, stream framing and exit-2-leaves-stdout-empty rule
+    of ``docs/specs/spec-json-output.md``, driven end to end through ``main()``
+    with the subprocess boundary stubbed.
+
+    ``capfdbinary`` rather than ``capsys``/``stdout_buffer``-style monkeypatching:
+    ``report.write_json`` writes straight to ``sys.stdout.buffer``, and pytest's
+    capture manager re-installs its own ``sys.stdout`` object right before every
+    test's call phase, which silently undoes a fixture-time monkeypatch of
+    ``sys.stdout`` (measured). ``capfdbinary`` captures at the file-descriptor
+    level instead, so it sees exactly the bytes the process actually wrote,
+    with both ``.out`` and ``.err`` as raw bytes -- it cannot be combined with
+    ``capsys``/``capfd`` in the same test, so stderr text here is decoded from
+    ``.err`` rather than read through ``capsys``.
+    """
+
+    def _wire(self, monkeypatch, run, probe) -> None:
+        monkeypatch.setattr(cli.ffmpegtool, "resolve_tools", lambda *_a: FAKE_TOOLS)
+        monkeypatch.setattr(cli.ffmpegtool, "version", lambda _tools: "ffmpeg test build")
+        monkeypatch.setattr(batch.ffmpegtool, "run", run)
+        monkeypatch.setattr(batch.ffmpegtool, "probe_streams", probe)
+
+    def test_mixed_batch_yields_one_file_record_each_and_a_matching_summary(
+        self, tmp_path, monkeypatch, capfdbinary
+    ):
+        """converted, a batch-level skip (existing output), a failure, an
+        unsupported source, and a pre-batch self-write -- every outcome the
+        acceptance checklist names -- each produce exactly one ``file``
+        record, and the run ends in one ``summary`` whose counts and
+        ``exit_code`` match the process exit code.
+
+        In-place (INPUT == OUTPUT) is what makes the self-write possible at
+        all, and the same pre-placed ``exists{AUDIO_SUFFIX}`` file that gives
+        ``exists.opus`` an already-existing output is, for exactly the same
+        in-place reason, itself a self-write -- one pre-placed file cleanly
+        covering both listed skip kinds instead of needing two.
+        """
+        in_dir = tmp_path / "in"
+        make_source(in_dir, "ok.opus")
+        make_source(in_dir, "bad.mkv")
+        make_source(in_dir, "silent.mkv")
+        make_source(in_dir, "exists.opus")
+        (in_dir / f"exists{AUDIO_SUFFIX}").write_bytes(b"already done")
+
+        def run(argv, **_kwargs):
+            src = argv[argv.index("-i") + 1]
+            if "ok" in Path(src).name:
+                Path(argv[-1]).write_bytes(b"converted")
+                return CommandResult(tuple(argv), 0, "", "")
+            return CommandResult(tuple(argv), 1, "", "boom")
+
+        def probe(_tools, path):
+            if "silent" in Path(path).name:
+                return [Stream(0, "video", "h264")]
+            return [Stream(0, "audio", "pcm_s16le")]
+
+        self._wire(monkeypatch, run, probe)
+
+        code = main(["--to", AUDIO_TARGET, str(in_dir), str(in_dir), "--json"])
+        records = _json_lines(capfdbinary.readouterr().out)
+
+        file_records = [r for r in records if r["type"] == "file"]
+        summaries = [r for r in records if r["type"] == "summary"]
+        assert len(file_records) == 5
+        assert [r["type"] for r in records[:-1]] == ["file"] * 5
+        assert records[-1]["type"] == "summary"
+        assert sorted(r["outcome"] for r in file_records) == sorted(
+            ["converted", "failed", "skipped", "skipped", "unsupported"]
+        )
+
+        assert len(summaries) == 1
+        summary = summaries[0]
+        assert summary["converted"] == 1
+        assert summary["skipped"] == 2
+        assert summary["failed"] == 1
+        assert summary["unsupported"] == 1
+        assert summary["total"] == 5
+        assert summary["planned"] == 0
+        assert summary["dry_run"] is False
+        assert summary["exit_code"] == code == 1
+
+    def test_a_simple_run_writes_only_valid_json_lines_to_stdout(
+        self, tmp_path, capfdbinary, stub_ffmpeg
+    ):
+        make_source(tmp_path / "in", "clip.mkv")
+
+        code = main(convert_argv(str(tmp_path / "in"), str(tmp_path / "out"), "--json"))
+        records = _json_lines(capfdbinary.readouterr().out)
+
+        assert code == 0
+        assert [r["type"] for r in records] == ["file", "summary"]
+        assert records[0]["outcome"] == "converted"
+
+    def test_using_ffmpeg_is_on_stderr_under_json(self, tmp_path, capfdbinary, stub_ffmpeg):
+        make_source(tmp_path / "in", "clip.mkv")
+
+        main(convert_argv(str(tmp_path / "in"), str(tmp_path / "out"), "--json"))
+        captured = capfdbinary.readouterr()
+
+        assert b"Using ffmpeg test build" in captured.err
+        assert b"Using" not in captured.out
+
+    def test_using_ffmpeg_is_suppressed_by_quiet_under_json(
+        self, tmp_path, capfdbinary, stub_ffmpeg
+    ):
+        make_source(tmp_path / "in", "clip.mkv")
+
+        main(convert_argv(str(tmp_path / "in"), str(tmp_path / "out"), "--json", "-q"))
+
+        assert b"Using" not in capfdbinary.readouterr().err
+
+    def test_dry_run_json_emits_planned_records_and_a_matching_summary(
+        self, tmp_path, monkeypatch, capfdbinary
+    ):
+        def explode(*_a, **_k):
+            raise AssertionError("--dry-run must not resolve tools")
+
+        monkeypatch.setattr(cli.ffmpegtool, "resolve_tools", explode)
+        make_source(tmp_path / "in", f"a{VIDEO_SUFFIX}")  # self-write pre-batch skip
+        make_source(tmp_path / "in", "clip.mkv")  # a planned task
+
+        code = main(convert_argv(str(tmp_path / "in"), str(tmp_path / "in"), "--json", "--dry-run"))
+        records = _json_lines(capfdbinary.readouterr().out)
+
+        assert code == 0
+        planned = [r for r in records if r["type"] == "planned"]
+        skips = [r for r in records if r["type"] == "file"]
+        summary = records[-1]
+
+        assert len(planned) == 1
+        assert planned[0]["source"].endswith("clip.mkv")
+        assert len(skips) == 1
+        assert skips[0]["outcome"] == "skipped"
+        assert summary["type"] == "summary"
+        assert summary["planned"] == 1
+        assert summary["skipped"] == 1
+        assert summary["total"] == 2
+        assert summary["converted"] == 0
+        assert summary["failed"] == 0
+        assert summary["unsupported"] == 0
+        assert summary["dry_run"] is True
+        assert summary["exit_code"] == 0
+
+    def test_usage_error_under_json_leaves_stdout_empty(self, tmp_path, capfdbinary):
+        code = main(convert_argv(str(tmp_path / "nope"), str(tmp_path / "out"), "--json"))
+        captured = capfdbinary.readouterr()
+
+        assert code == 2
+        assert captured.out == b""
+        assert b"does not exist" in captured.err
+
+    def test_collision_refusal_under_json_leaves_stdout_empty(self, tmp_path, capfdbinary):
+        make_source(tmp_path / "in", "a.mkv")
+        make_source(tmp_path / "in", "a.opus")
+
+        code = main(convert_argv(str(tmp_path / "in"), str(tmp_path / "out"), "--json"))
+        captured = capfdbinary.readouterr()
+
+        assert code == 2
+        assert captured.out == b""
+        assert b"same output" in captured.err
+
+    def test_self_write_plus_missing_ffmpeg_under_json_leaves_stdout_empty(
+        self, tmp_path, monkeypatch, capfdbinary
+    ):
+        """The self-write's ``file`` record must stay held back: it is never
+        flushed unless tool resolution actually succeeds, so a run that would
+        otherwise print it and then fail to find ffmpeg still leaves stdout
+        untouched -- exit 2 tells the whole story on its own.
+        """
+        make_source(tmp_path / "in", f"a{VIDEO_SUFFIX}")  # self-write
+        make_source(tmp_path / "in", "clip.mkv")  # a real task needing ffmpeg
+        monkeypatch.setattr(cli.ffmpegtool, "which", lambda _name: None)
+
+        code = main(convert_argv(str(tmp_path / "in"), str(tmp_path / "in"), "--json"))
+        captured = capfdbinary.readouterr()
+
+        assert code == 2
+        assert captured.out == b""
+        assert b"ffmpeg was not found" in captured.err
+
+    def test_no_candidates_under_json_writes_a_zero_summary(self, tmp_path, capfdbinary):
+        (tmp_path / "in").mkdir()
+        (tmp_path / "in" / "notes.txt").write_text("hi")
+
+        code = main(convert_argv(str(tmp_path / "in"), str(tmp_path / "out"), "--json"))
+        captured = capfdbinary.readouterr()
+        records = _json_lines(captured.out)
+
+        assert code == 0
+        assert len(records) == 1
+        summary = records[0]
+        assert summary["type"] == "summary"
+        assert summary["converted"] == 0
+        assert summary["skipped"] == 0
+        assert summary["failed"] == 0
+        assert summary["unsupported"] == 0
+        assert summary["total"] == 0
+        assert summary["planned"] == 0
+        assert summary["exit_code"] == 0
+        assert b"no convertible files found" in captured.err
+
+    def test_a_single_file_input_works_under_json(self, tmp_path, capfdbinary, stub_ffmpeg):
+        source = make_source(tmp_path, "song.flac")
+
+        code = main(convert_argv(str(source), "--json"))
+        records = _json_lines(capfdbinary.readouterr().out)
+
+        assert code == 0
+        assert [r["type"] for r in records] == ["file", "summary"]
+        assert records[0]["source"] == str(source.absolute())
+
+    def test_no_summary_is_written_on_a_keyboard_interrupt(
+        self, tmp_path, monkeypatch, capfdbinary
+    ):
+        make_source(tmp_path / "in", "clip.mkv")
+
+        def run(argv, **_kwargs):
+            raise KeyboardInterrupt
+
+        self._wire(monkeypatch, run, lambda *_a: [])
+
+        code = main(convert_argv(str(tmp_path / "in"), str(tmp_path / "out"), "--json"))
+        records = _json_lines(capfdbinary.readouterr().out)
+
+        assert code == 130
+        assert all(record["type"] != "summary" for record in records)
+
+    def test_list_formats_is_unaffected_by_json(self, capfdbinary):
+        code = main(["--to", VIDEO_TARGET, "in", cli.LIST_FORMATS_FLAG, "--json"])
+        out = capfdbinary.readouterr().out
+
+        assert code == 0
+        assert b"Target formats:" in out
+
+    def test_mirror_json_is_still_a_usage_error(self, tmp_path):
+        (tmp_path / "a").mkdir()
+
+        with pytest.raises(SystemExit) as exit_info:
+            dispatch([cli.MIRROR_COMMAND, str(tmp_path / "a"), str(tmp_path / "mirror"), "--json"])
+
+        assert exit_info.value.code == 2
 
 
 class TestMainDispatch:
