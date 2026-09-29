@@ -231,6 +231,26 @@ class TestSummaryRecord:
         assert record["exit_code"] == 0
         assert record["dry_run"] is True
 
+    def test_total_is_summary_total_when_not_a_dry_run(self):
+        """The general rule: `total` is `batch.Summary`'s own aggregate."""
+        summary = Summary(converted=1, skipped=2, failed=3, unsupported=4)
+        record = report.summary_record(summary, planned=5, exit_code=1, dry_run=False)
+
+        assert record["total"] == summary.total == 10
+
+    def test_total_is_planned_plus_skipped_for_a_dry_run(self):
+        """A dry run never touches the batch, so `summary.total` alone would
+        leave `planned` out entirely -- `docs/specs/spec-json-output.md` fixes
+        `total` at `planned + skipped` for this case instead.
+        """
+        summary = Summary(skipped=2)
+        record = report.summary_record(summary, planned=7, exit_code=0, dry_run=True)
+
+        assert record["total"] == 9
+        assert record["converted"] == 0
+        assert record["failed"] == 0
+        assert record["unsupported"] == 0
+
 
 class TestEveryRecordTypeLeadsWithTypeThenSchema:
     def test_first_two_keys(self, tmp_path):

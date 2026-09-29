@@ -22,7 +22,7 @@ rather than a diff here (``docs/constitution.md``).  A test walks this file with
 import argparse
 import signal
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from types import FrameType
 
@@ -98,6 +98,11 @@ def _add_convert_arguments(parser: argparse.ArgumentParser) -> None:
         "--dry-run", action="store_true", help="list what would be converted and stop"
     )
     parser.add_argument("-q", "--quiet", action="store_true", help="hide the progress bar")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit JSON Lines on stdout instead of prose (implies no progress bar)",
+    )
     parser.add_argument("--ffmpeg", default=None, help="path to the ffmpeg executable")
     parser.add_argument("--ffprobe", default=None, help="path to the ffprobe executable")
 
@@ -357,25 +362,75 @@ def _announce_skips(skipped: Sequence[Result]) -> None:
             print(f"note    {result.task.src.name}: {note}")
 
 
-def _run_tasks(profile: Profile, tasks: Sequence[Task], args: argparse.Namespace) -> list[Result]:
+def _emit_json(record: dict[str, object]) -> None:
+    """Write one JSON Lines record to stdout, bypassing the text layer.
+
+    The single choke point every JSON record passes through, so stdout under
+    ``--json`` carries records only -- never prose
+    (``docs/specs/spec-json-output.md``).
+    """
+    report.write_json(record, sys.stdout.buffer, text_stream=sys.stdout)
+
+
+def _report_using_ffmpeg(tools: ffmpegtool.Tools, args: argparse.Namespace) -> None:
+    """Print the ffmpeg banner unless quiet -- stdout normally, stderr under ``--json``.
+
+    Moved off stdout under ``--json`` so that stream stays pure JSON Lines;
+    still suppressed by ``-q`` either way (``docs/specs/spec-json-output.md``).
+    """
+    if args.quiet:
+        return
+    print(f"Using {ffmpegtool.version(tools)}", file=sys.stderr if args.json else sys.stdout)
+
+
+def _flush_skips_json(skipped: Sequence[Result]) -> Callable[[], None]:
+    """Bind *skipped* into a zero-argument callback that emits it as ``file`` records.
+
+    Passed to :func:`_run_tasks` as ``before_start``, so the records wait
+    until tools have resolved -- an exit-2 tool failure must still leave
+    stdout empty (``docs/specs/spec-json-output.md``).
+    """
+
+    def flush() -> None:
+        for result in skipped:
+            _emit_json(report.file_record(result))
+
+    return flush
+
+
+def _run_tasks(
+    profile: Profile,
+    tasks: Sequence[Task],
+    args: argparse.Namespace,
+    *,
+    on_result: Callable[[Result], None] | None,
+    before_start: Callable[[], None] | None = None,
+) -> list[Result]:
     """Locate the tools and convert.
 
     Short-circuited when there is nothing to convert, so a run that consists
     only of skips still works on a machine with no ffmpeg installed.
+    *before_start* runs once tools have resolved, or immediately when there
+    are no tasks -- the one path that never resolves them at all -- which is
+    the seam ``--json`` uses to hold its pre-batch skip records back until
+    stdout is safe to write to (``docs/specs/spec-json-output.md``).
     """
     if not tasks:
+        if before_start is not None:
+            before_start()
         return []
     tools = ffmpegtool.resolve_tools(args.ffmpeg, args.ffprobe)
-    if not args.quiet:
-        print(f"Using {ffmpegtool.version(tools)}")
+    if before_start is not None:
+        before_start()
+    _report_using_ffmpeg(tools, args)
     return run_batch(
         profile,
         tasks,
         tools,
         jobs=args.jobs,
         overwrite=args.overwrite,
-        progress=not args.quiet,
-        on_result=report.render_text,
+        progress=not args.quiet and not args.json,
+        on_result=on_result,
     )
 
 
@@ -416,6 +471,76 @@ def convert_command(args: argparse.Namespace) -> int:
         signal.signal(signal.SIGTERM, previous_handler)
 
 
+def _report_no_candidates(args: argparse.Namespace) -> int:
+    """Handle a run with no candidates: a zero summary, the hint stays on stderr."""
+    summary = summarise(())
+    if args.json:
+        record = report.summary_record(summary, planned=0, exit_code=0, dry_run=args.dry_run)
+        _emit_json(record)
+    else:
+        print(summary.describe())
+    print(_nothing_found_hint(args), file=sys.stderr)
+    return 0
+
+
+def _dry_run_text(skipped: Sequence[Result], tasks: Sequence[Task]) -> int:
+    """List what would be converted, exactly as today."""
+    _announce_skips(skipped)
+    for task in tasks:
+        print(f"{task.src} -> {task.dst}")
+    print(f"{len(tasks)} file(s) would be converted.")
+    return 0
+
+
+def _dry_run_json(skipped: Sequence[Result], tasks: Sequence[Task]) -> int:
+    """List what would be converted as ``planned`` records, plus a summary.
+
+    Tools are never resolved for a dry run, so the pre-batch skip records need
+    no deferral here -- they are written straight away, as ``file`` records
+    (``docs/specs/spec-json-output.md``).
+    """
+    for result in skipped:
+        _emit_json(report.file_record(result))
+    for task in tasks:
+        _emit_json(report.planned_record(task))
+    summary = summarise(skipped)
+    _emit_json(report.summary_record(summary, planned=len(tasks), exit_code=0, dry_run=True))
+    return 0
+
+
+def _run_and_report_text(
+    profile: Profile, skipped: Sequence[Result], tasks: Sequence[Task], args: argparse.Namespace
+) -> int:
+    """Convert, printing every note/failure and a closing summary sentence."""
+    _announce_skips(skipped)
+    converted = _run_tasks(profile, tasks, args, on_result=report.render_text)
+    summary = summarise([*skipped, *converted])
+    print(summary.describe())
+    return summary.exit_code
+
+
+def _run_and_report_json(
+    profile: Profile, skipped: Sequence[Result], tasks: Sequence[Task], args: argparse.Namespace
+) -> int:
+    """Convert, emitting one ``file`` record per file and a closing ``summary``.
+
+    No summary is emitted on an interrupt or an aborting error: those unwind
+    out of ``_run_tasks`` as an exception, so the lines below never run
+    (``docs/specs/spec-json-output.md``).
+    """
+    converted = _run_tasks(
+        profile,
+        tasks,
+        args,
+        on_result=lambda result: _emit_json(report.file_record(result)),
+        before_start=_flush_skips_json(skipped),
+    )
+    summary = summarise([*skipped, *converted])
+    record = report.summary_record(summary, planned=0, exit_code=summary.exit_code, dry_run=False)
+    _emit_json(record)
+    return summary.exit_code
+
+
 def _convert(args: argparse.Namespace) -> int:
     """Select, refuse or convert -- the whole of ``docs/design/source-selection.md``.
 
@@ -437,25 +562,18 @@ def _convert(args: argparse.Namespace) -> int:
 
     pairs = _selected_pairs(args, profile, input_root, output_root)
     if not pairs:
-        print(summarise(()).describe())
-        print(_nothing_found_hint(args), file=sys.stderr)
-        return 0
+        return _report_no_candidates(args)
 
     skipped, tasks = _partition_self_writes(pairs)
     refusal = _refuse_destructive(pairs, tasks, overwrite=args.overwrite)
     if refusal is not None:
         return refusal
 
-    _announce_skips(skipped)
     if args.dry_run:
-        for task in tasks:
-            print(f"{task.src} -> {task.dst}")
-        print(f"{len(tasks)} file(s) would be converted.")
-        return 0
-
-    summary = summarise([*skipped, *_run_tasks(profile, tasks, args)])
-    print(summary.describe())
-    return summary.exit_code
+        return _dry_run_json(skipped, tasks) if args.json else _dry_run_text(skipped, tasks)
+    if args.json:
+        return _run_and_report_json(profile, skipped, tasks, args)
+    return _run_and_report_text(profile, skipped, tasks, args)
 
 
 def mirror_command(args: argparse.Namespace) -> int:

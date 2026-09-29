@@ -88,8 +88,14 @@ def summary_record(
 
     ``planned`` is computed by the caller from the ``planned`` records it
     emitted, not read off *summary* -- ``batch.Summary`` gaining a ``planned``
-    field would change ``describe()`` and the text-mode output.
+    field would change ``describe()`` and the text-mode output. ``total``
+    follows the same split: a dry run never touches the batch, so *summary*
+    only ever carries its pre-batch skips and ``summary.total`` alone would
+    leave `planned` out -- the record contract fixes ``total`` at
+    ``planned + skipped`` for a dry run, and at ``summary.total`` otherwise
+    (``docs/specs/spec-json-output.md``).
     """
+    total = planned + summary.skipped if dry_run else summary.total
     return {
         "type": "summary",
         "schema": SCHEMA,
@@ -97,7 +103,7 @@ def summary_record(
         "skipped": summary.skipped,
         "failed": summary.failed,
         "unsupported": summary.unsupported,
-        "total": summary.total,
+        "total": total,
         "planned": planned,
         "exit_code": exit_code,
         "dry_run": dry_run,
