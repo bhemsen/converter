@@ -934,26 +934,28 @@ class TestSignalHandling:
         sys.platform == "win32", reason="SIGTERM is not delivered to a Python handler on Windows"
     )
     def test_sigterm_mid_batch_exits_143_and_leaves_no_partial(self, tmp_path, monkeypatch):
-        """The signal fires from inside the worker thread's ffmpeg stub, while
-        the main thread sits in the batch's 0.5s poll loop (``batch._drain``).
-        The worker then sleeps well past that 0.5s window before "finishing"
-        its conversion, so the test does not depend on a signal actually
-        interrupting a blocked syscall early (platform- and libc-specific):
-        it only relies on the documented, deterministic behaviour that the
-        poll loop returns to Python at least every 0.5s either way, where the
-        pending SIGTERM is then processed
-        (``docs/specs/spec-abort-safe-writes.md``: "a short poll makes the
-        signal's delivery independent of" blocking-wait interruptibility).
-        By the time the worker wakes up and returns, ``terminate_all`` has
-        already run, so its own post-run check deletes the partial instead of
-        renaming it.
+        """The signal fires from inside the worker thread's ffmpeg stub, which
+        then *waits for the shutdown flag itself* rather than sleeping a fixed
+        duration -- a fixed sleep would race the main thread's own poll loop
+        (``batch._drain``'s ``wait(timeout=0.5)``): on a slow or loaded runner
+        the worker could wake and rename before the main thread has even
+        processed the pending signal, which is exactly the flakiness
+        ``docs/specs/spec-abort-safe-writes.md``'s risk table calls out
+        ("Signal handling differs between platforms and flakes in CI").
+        Waiting on ``ffmpegtool.terminated()`` instead makes the ordering a
+        guarantee: the worker's stub only returns *after*
+        ``ffmpegtool.terminate_all`` has already run, so its own post-run
+        check (``batch._raise_if_terminated``) always deletes the partial
+        instead of renaming it -- no timing assumption left to get unlucky.
         """
         make_source(tmp_path / "in", "clip.mkv")
         out_dir = tmp_path / "out"
 
         def run(argv, **_kwargs):
             os.kill(os.getpid(), signal.SIGTERM)
-            time.sleep(0.75)
+            deadline = time.monotonic() + 5.0
+            while not batch.ffmpegtool.terminated() and time.monotonic() < deadline:
+                time.sleep(0.01)
             Path(argv[-1]).write_bytes(b"converted")
             return CommandResult(tuple(argv), 0, "", "")
 
@@ -997,6 +999,25 @@ class TestSignalHandling:
 
         assert code == 130
 
+    def test_sigterm_handler_is_installed_while_converting(self, tmp_path, monkeypatch):
+        """Pins installation itself, on every platform -- the SIGTERM test
+        above is POSIX-only, and neither restoration test below would fail if
+        the handler were never installed in the first place.
+        """
+        make_source(tmp_path / "in", "clip.mkv")
+        installed_during_run = []
+
+        def run(argv, **_kwargs):
+            installed_during_run.append(signal.getsignal(signal.SIGTERM) is cli._raise_terminated)
+            Path(argv[-1]).write_bytes(b"converted")
+            return CommandResult(tuple(argv), 0, "", "")
+
+        self._wire(monkeypatch, run)
+
+        main(convert_argv(str(tmp_path / "in"), str(tmp_path / "out"), "-q"))
+
+        assert installed_during_run == [True]
+
     def test_sigterm_handler_is_restored_after_main_returns(self, tmp_path, monkeypatch):
         make_source(tmp_path / "in", "clip.mkv")
         self._wire(monkeypatch, lambda argv, **_k: CommandResult(tuple(argv), 0, "", ""))
@@ -1010,9 +1031,11 @@ class TestSignalHandling:
         make_source(tmp_path / "in", "clip.mkv")
         monkeypatch.setattr(cli.ffmpegtool, "resolve_tools", lambda *_a: FAKE_TOOLS)
         monkeypatch.setattr(cli.ffmpegtool, "version", lambda _tools: "ffmpeg test build")
-        monkeypatch.setattr(
-            cli, "run_batch", lambda *_a, **_k: (_ for _ in ()).throw(cli.ffmpegtool.Terminated())
-        )
+
+        def raise_terminated(*_a, **_k):
+            raise cli.ffmpegtool.Terminated
+
+        monkeypatch.setattr(cli, "run_batch", raise_terminated)
         previous = signal.getsignal(signal.SIGTERM)
 
         main(convert_argv(str(tmp_path / "in"), str(tmp_path / "out"), "-q"))
