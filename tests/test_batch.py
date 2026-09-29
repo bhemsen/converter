@@ -146,7 +146,7 @@ def spy_on_probe(
     fixture does it, so a test cannot pass on the strength of the order the two
     probes happen to run in. The output probe targets the *partial* file, not
     `task.dst` -- the rename into place only happens after it
-    (`docs/specs/spec-abort-safe-writes.md`). Pass `task` to answer differently
+    (`docs/specs/archive/spec-abort-safe-writes.md`). Pass `task` to answer differently
     for the output; passing `output_streams` without it is refused rather than
     silently ignored, so a test cannot look like it exercises the output probe
     while in fact answering the source list twice.
@@ -176,7 +176,7 @@ class TestConvertOne:
         assert result.attempt == "remux"
         assert len(fake_ffmpeg.calls) == 1
         # Every attempt writes the partial, never the final path directly
-        # (docs/specs/spec-abort-safe-writes.md): the rename is what makes it
+        # (docs/specs/archive/spec-abort-safe-writes.md): the rename is what makes it
         # appear, and nothing is left beside it once that has happened.
         assert task.dst.exists()
         assert not partial_for(task.dst).exists()
@@ -1354,7 +1354,7 @@ class TestArgvCarriesTheMuxer:
 class TestStalePartialSweep:
     """A `.partial` an earlier, killed run left behind: swept at the start of
     every batch task, whether it ends up converting or being skipped
-    (``docs/specs/spec-abort-safe-writes.md``)."""
+    (``docs/specs/archive/spec-abort-safe-writes.md``)."""
 
     def test_a_stale_partial_beside_a_missing_output_is_removed_and_the_file_converts(
         self, tmp_path, fake_ffmpeg
@@ -1404,7 +1404,7 @@ class TestStalePartialSweep:
 class TestWorkerNoticesTermination:
     """The post-`run()` check (`_raise_if_terminated`): a worker's own ffmpeg
     exiting is not proof the run should continue once `terminate_all` has
-    closed the registry (``docs/specs/spec-abort-safe-writes.md``, Prior
+    closed the registry (``docs/specs/archive/spec-abort-safe-writes.md``, Prior
     decisions, "Workers after a kill")."""
 
     def test_a_run_that_returns_after_terminate_all_yields_no_result(

@@ -945,7 +945,7 @@ class TestSignalHandling:
         (``batch._drain``'s ``wait(timeout=0.5)``): on a slow or loaded runner
         the worker could wake and rename before the main thread has even
         processed the pending signal, which is exactly the flakiness
-        ``docs/specs/spec-abort-safe-writes.md``'s risk table calls out
+        ``docs/specs/archive/spec-abort-safe-writes.md``'s risk table calls out
         ("Signal handling differs between platforms and flakes in CI").
         Waiting on ``ffmpegtool.terminated()`` instead makes the ordering a
         guarantee: the worker's stub only returns *after*
@@ -1289,7 +1289,7 @@ class TestInteractivePrompt:
 def _json_lines(raw: bytes) -> list[dict]:
     """Decode every JSON Lines record in *raw*, checking the framing.
 
-    ``docs/specs/spec-json-output.md`` requires bytes terminated by a single
+    ``docs/specs/archive/spec-json-output.md`` requires bytes terminated by a single
     ``\\n`` -- never ``\\r\\n`` -- with nothing after the final record.
     """
     assert b"\r\n" not in raw
@@ -1303,7 +1303,7 @@ def _json_lines(raw: bytes) -> list[dict]:
 
 class TestJsonOutput:
     """The record contract, stream framing and exit-2-leaves-stdout-empty rule
-    of ``docs/specs/spec-json-output.md``, driven end to end through ``main()``
+    of ``docs/specs/archive/spec-json-output.md``, driven end to end through ``main()``
     with the subprocess boundary stubbed.
 
     ``capfdbinary`` rather than ``capsys``/``stdout_buffer``-style monkeypatching:
@@ -1365,7 +1365,7 @@ class TestJsonOutput:
 
         # No per-file prose anywhere under --json -- not even on stderr for the
         # one file that failed, whose text-mode ``FAILED`` line would otherwise
-        # land there (docs/specs/spec-json-output.md).
+        # land there (docs/specs/archive/spec-json-output.md).
         assert b"FAILED" not in captured.err
         assert b"note" not in captured.err
 
@@ -1515,7 +1515,7 @@ class TestJsonOutput:
         ``--dry-run`` check, so its summary must still read ``args.dry_run``
         rather than a hardcoded ``False`` -- otherwise
         ``--json --dry-run`` over an empty tree would lie about its own
-        ``dry_run`` field (``docs/specs/spec-json-output.md``).
+        ``dry_run`` field (``docs/specs/archive/spec-json-output.md``).
         """
         (tmp_path / "in").mkdir()
         (tmp_path / "in" / "notes.txt").write_text("hi")
@@ -1539,7 +1539,7 @@ class TestJsonOutput:
         before ever resolving tools -- the ``before_start`` callback's *other*
         branch, ``if not tasks: before_start()``, is what still gets the
         pre-batch skip record onto stdout in that case
-        (``docs/specs/spec-json-output.md``).
+        (``docs/specs/archive/spec-json-output.md``).
         """
 
         def explode(*_a, **_k):
@@ -1591,7 +1591,7 @@ class TestJsonOutput:
         applies just the same to any exception that unwinds out of it. The
         self-write's ``file`` record, already flushed before ``run_batch`` is
         even called, is exactly the kind of record the spec says must stand
-        (``docs/specs/spec-json-output.md``).
+        (``docs/specs/archive/spec-json-output.md``).
         """
         make_source(tmp_path / "in", f"a{VIDEO_SUFFIX}")  # self-write, flushed early
         make_source(tmp_path / "in", "clip.mkv")  # forces tool resolution

@@ -152,7 +152,7 @@ def build_argv(
     before the output path. Writing to a ``.partial`` name defeats ffmpeg's own
     suffix-based muxer choice, so the caller passes the profile's declared
     ``muxer`` here to force the same choice ffmpeg would have made writing
-    straight to the final path (``docs/specs/spec-abort-safe-writes.md``).
+    straight to the final path (``docs/specs/archive/spec-abort-safe-writes.md``).
     Omitted (``None``) by default, so every existing call site -- and every
     argv pin in ``tests/test_argv.py`` -- is unaffected.
     """
@@ -414,7 +414,7 @@ def probe_streams(tools: Tools, src: str | os.PathLike[str]) -> list[Stream]:
 # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE closes that gap without it: when Windows
 # tears the converter down it also closes the job handle, and that alone
 # kills every process still in the job, including any ffmpeg/ffprobe child
-# (docs/specs/spec-abort-safe-writes.md).
+# (docs/specs/archive/spec-abort-safe-writes.md).
 
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
@@ -561,9 +561,9 @@ def bind_to_kill_on_close_job() -> None:
 
     Windows-only; a no-op everywhere else. Meant to be called once, at the
     start of the convert command, before anything is spawned -- every
-    ffmpeg/ffprobe child then inherits job membership automatically. Not
-    called from anywhere yet: wiring it into ``cli.main`` is a separate,
-    later change. A failure to create or assign the job removes only the
+    ffmpeg/ffprobe child then inherits job membership automatically;
+    ``cli.convert_command`` does exactly that. A failure to create or assign
+    the job removes only the
     orphan protection, never a conversion, so it is reported once on stderr
     and swallowed rather than raised: the broad ``except Exception`` is
     deliberate here, this is a best-effort safety net whose precise failure

@@ -21,8 +21,8 @@
 | 8 | within-stream-loss-notes | [spec-within-stream-loss-notes.md](specs/archive/spec-within-stream-loss-notes.md) | [#8](https://github.com/bhemsen/converter/milestone/8) |
 | 9 | webm-alpha | [spec-webm-alpha.md](specs/archive/spec-webm-alpha.md) | [#9](https://github.com/bhemsen/converter/milestone/9) |
 | 10 | single-file-input | [spec-single-file-input.md](specs/archive/spec-single-file-input.md) | [#10](https://github.com/bhemsen/converter/milestone/10) |
-| 11 | json-output | [spec-json-output.md](specs/spec-json-output.md) | [#11](https://github.com/bhemsen/converter/milestone/11) |
-| 12 | abort-safe-writes | [spec-abort-safe-writes.md](specs/spec-abort-safe-writes.md) | [#12](https://github.com/bhemsen/converter/milestone/12) |
+| 11 | json-output | [spec-json-output.md](specs/archive/spec-json-output.md) | [#11](https://github.com/bhemsen/converter/milestone/11) |
+| 12 | abort-safe-writes | [spec-abort-safe-writes.md](specs/archive/spec-abort-safe-writes.md) | [#12](https://github.com/bhemsen/converter/milestone/12) |
 | 13 | web-target | — | — |
 | 14 | subtitle-sidecars | — | — |
 

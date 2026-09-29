@@ -84,7 +84,7 @@ def _raise_if_terminated(partial: Path) -> None:
     not itself proof the run should continue once :func:`ffmpegtool.terminate_all`
     has closed the registry. Each partial has exactly one owner at any moment,
     so deleting it here cannot race the main thread's own clean-up after the
-    bounded wait (``docs/specs/spec-abort-safe-writes.md``).
+    bounded wait (``docs/specs/archive/spec-abort-safe-writes.md``).
     """
     if not ffmpegtool.terminated():
         return
@@ -106,7 +106,7 @@ def _confirm_against_output(
     a loss*, so a conversion whose mapping gives nothing up still costs a single
     probe. *output_path* is the partial: the rename into place only happens
     after this probe, so the file at the final path has not been written yet
-    (``docs/specs/spec-abort-safe-writes.md``).
+    (``docs/specs/archive/spec-abort-safe-writes.md``).
     """
     try:
         produced = ffmpegtool.probe_streams(tools, output_path)
@@ -160,7 +160,7 @@ def _verify_cheap_attempt(
 
 #: Windows-only backoff for a rename that lost a race with a reader (a scanner
 #: or an indexer briefly holding the target open) -- about 3 s in all
-#: (``docs/specs/spec-abort-safe-writes.md``'s Prior decisions).
+#: (``docs/specs/archive/spec-abort-safe-writes.md``'s Prior decisions).
 _RENAME_BACKOFFS: tuple[float, ...] = (0.1, 0.2, 0.4, 0.8, 1.6)
 
 
@@ -284,7 +284,7 @@ def _climb_the_ladder(profile: Profile, task: Task, tools: Tools, partial: Path)
 def _attempt_conversion(profile: Profile, task: Task, tools: Tools, *, overwrite: bool) -> Result:
     partial = partial_for(task.dst)
     # A stale partial from an earlier, killed run -- swept whether this task
-    # ends up converting or being skipped (``docs/specs/spec-abort-safe-writes.md``).
+    # ends up converting or being skipped (``docs/specs/archive/spec-abort-safe-writes.md``).
     _delete_partial(partial)
 
     if task.dst.exists() and not overwrite:
@@ -395,7 +395,7 @@ def _record(
     ``as_completed``-style loop, a staging failure reported before the pool
     even starts, and one drained during the bounded interrupt wait -- so
     *on_result* is called exactly once per result, from the main thread
-    (``docs/specs/spec-json-output.md``). ``None`` means no per-file output,
+    (``docs/specs/archive/spec-json-output.md``). ``None`` means no per-file output,
     matching the progress bar's own ``disable`` flag.
     """
     results.append(result)
@@ -415,7 +415,7 @@ def _drain(
     ``concurrent.futures.wait`` in a loop instead of ``as_completed``: whether a
     blocking wait in the main thread is interruptible by Ctrl+C on Windows is
     unverified, so returning every half second makes signal delivery
-    independent of that (``docs/specs/spec-abort-safe-writes.md``). A
+    independent of that (``docs/specs/archive/spec-abort-safe-writes.md``). A
     ``KeyboardInterrupt`` or :class:`ffmpegtool.Terminated` out of
     ``future.result()`` propagates to the caller, which owns the clean-up.
     """
@@ -432,7 +432,7 @@ def _drain(
 
 
 #: How long the main thread waits for an in-flight conversion to notice a
-#: termination before giving up on it as stuck (``docs/specs/spec-abort-safe-writes.md``
+#: termination before giving up on it as stuck (``docs/specs/archive/spec-abort-safe-writes.md``
 #: says "bounded ~10 s"). A module-level seam so a test can shrink it rather
 #: than genuinely block for ten seconds to reach the stuck-future branch.
 _SHUTDOWN_WAIT_TIMEOUT = 10.0
@@ -500,7 +500,7 @@ def run_batch(
     drained during a bounded interrupt wait; ``None`` prints nothing per file.
     This is the only seam into per-file output -- ``batch`` never imports
     ``converter.report``, so ``cli`` is the one that decides which renderer,
-    if any, sees each result (``docs/specs/spec-json-output.md``).
+    if any, sees each result (``docs/specs/archive/spec-json-output.md``).
     """
     tasks = list(tasks)
     workers = max(1, jobs or default_jobs())

@@ -114,7 +114,7 @@ class Profile:
     ``--list-formats`` and the interactive prompt print next to ``name``.
 
     ``muxer`` is the ffmpeg muxer this profile's ``target_suffix`` selects by
-    itself, measured against ffmpeg 9.0 (``docs/specs/spec-abort-safe-writes.md``'s
+    itself, measured against ffmpeg 9.0 (``docs/specs/archive/spec-abort-safe-writes.md``'s
     muxer table). Writing straight to the final path lets ffmpeg pick the muxer
     from that suffix; writing to a ``.partial`` name defeats that inference, so
     ``build_argv``'s ``output_format`` keyword passes this value through ``-f``

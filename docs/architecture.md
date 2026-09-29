@@ -143,7 +143,7 @@ only on `cli`.
    still in flight. The run exits 130 or 143 without a summary. A Windows
    `TerminateProcess` cannot be caught: the Job Object kills ffmpeg with the
    converter, and the next run's sweep removes the partial
-   (`docs/specs/spec-abort-safe-writes.md`).
+   (`docs/specs/archive/spec-abort-safe-writes.md`).
 
 ## Where new code goes
 

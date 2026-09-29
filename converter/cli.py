@@ -367,7 +367,7 @@ def _emit_json(record: dict[str, object]) -> None:
 
     The single choke point every JSON record passes through, so stdout under
     ``--json`` carries records only -- never prose
-    (``docs/specs/spec-json-output.md``).
+    (``docs/specs/archive/spec-json-output.md``).
     """
     report.write_json(record, sys.stdout.buffer, text_stream=sys.stdout)
 
@@ -376,7 +376,7 @@ def _report_using_ffmpeg(tools: ffmpegtool.Tools, args: argparse.Namespace) -> N
     """Print the ffmpeg banner unless quiet -- stdout normally, stderr under ``--json``.
 
     Moved off stdout under ``--json`` so that stream stays pure JSON Lines;
-    still suppressed by ``-q`` either way (``docs/specs/spec-json-output.md``).
+    still suppressed by ``-q`` either way (``docs/specs/archive/spec-json-output.md``).
     """
     if args.quiet:
         return
@@ -388,7 +388,7 @@ def _flush_skips_json(skipped: Sequence[Result]) -> Callable[[], None]:
 
     Passed to :func:`_run_tasks` as ``before_start``, so the records wait
     until tools have resolved -- an exit-2 tool failure must still leave
-    stdout empty (``docs/specs/spec-json-output.md``).
+    stdout empty (``docs/specs/archive/spec-json-output.md``).
     """
 
     def flush() -> None:
@@ -413,7 +413,7 @@ def _run_tasks(
     *before_start* runs once tools have resolved, or immediately when there
     are no tasks -- the one path that never resolves them at all -- which is
     the seam ``--json`` uses to hold its pre-batch skip records back until
-    stdout is safe to write to (``docs/specs/spec-json-output.md``).
+    stdout is safe to write to (``docs/specs/archive/spec-json-output.md``).
     """
     if not tasks:
         if before_start is not None:
@@ -445,7 +445,7 @@ def _raise_terminated(_signum: int, _frame: FrameType | None) -> None:
     cpython#121649 warns against. Raising is what breaks a blocked syscall
     out of PEP 475's automatic retry-on-EINTR, so this is the whole handler:
     ``ffmpegtool.terminate_all`` and the batch's own clean-up run from the
-    exception's unwind, never from here (``docs/specs/spec-abort-safe-writes.md``).
+    exception's unwind, never from here (``docs/specs/archive/spec-abort-safe-writes.md``).
     """
     raise ffmpegtool.Terminated
 
@@ -461,7 +461,7 @@ def convert_command(args: argparse.Namespace) -> int:
     ``KeyboardInterrupt``. The previous SIGTERM handler is restored on every
     way out, including when ``_convert`` raises, so the repeated in-process
     ``main()`` calls the test suite makes never stack a second handler on top
-    of this one (``docs/specs/spec-abort-safe-writes.md``).
+    of this one (``docs/specs/archive/spec-abort-safe-writes.md``).
     """
     ffmpegtool.bind_to_kill_on_close_job()
     previous_handler = signal.signal(signal.SIGTERM, _raise_terminated)
@@ -497,7 +497,7 @@ def _dry_run_json(skipped: Sequence[Result], tasks: Sequence[Task]) -> int:
 
     Tools are never resolved for a dry run, so the pre-batch skip records need
     no deferral here -- they are written straight away, as ``file`` records
-    (``docs/specs/spec-json-output.md``).
+    (``docs/specs/archive/spec-json-output.md``).
     """
     for result in skipped:
         _emit_json(report.file_record(result))
@@ -526,7 +526,7 @@ def _run_and_report_json(
 
     No summary is emitted on an interrupt or an aborting error: those unwind
     out of ``_run_tasks`` as an exception, so the lines below never run
-    (``docs/specs/spec-json-output.md``).
+    (``docs/specs/archive/spec-json-output.md``).
     """
     converted = _run_tasks(
         profile,

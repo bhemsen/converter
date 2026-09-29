@@ -236,7 +236,7 @@ class TestPartialFor:
         assert partial_for("clip.mp4") == Path("clip.mp4.partial")
 
     def test_does_not_touch_the_filesystem(self, tmp_path, monkeypatch):
-        """Pure by contract (docs/specs/spec-abort-safe-writes.md): no
+        """Pure by contract (docs/specs/archive/spec-abort-safe-writes.md): no
         Path.exists/stat/mkdir call is allowed to sneak in."""
 
         def fail(*_args, **_kwargs):

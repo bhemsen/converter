@@ -5,7 +5,7 @@ Two renderers, pure over ``Result`` / ``Summary`` plus an output stream:
 * The **text** renderer reproduces today's prose lines (``note``/``FAILED``)
   through the ``tqdm.write`` classmethod, so the bar's cursor handling keeps
   working without this module needing the bar instance itself.
-* The **JSON** renderer builds the record dicts of ``docs/specs/spec-json-output.md``'s
+* The **JSON** renderer builds the record dicts of ``docs/specs/archive/spec-json-output.md``'s
   *record contract* and writes them as JSON Lines.
 
 Kept out of ``batch.py`` (whose job is running conversions, not formatting
@@ -23,14 +23,14 @@ from tqdm import tqdm
 
 from converter.batch import Outcome, Result, Summary, Task
 
-#: The record contract's schema version (docs/specs/spec-json-output.md). Additive
+#: The record contract's schema version (docs/specs/archive/spec-json-output.md). Additive
 #: changes -- a new key or record type -- keep this; removing, renaming a key,
 #: or changing a value's meaning would raise it.
 SCHEMA = 1
 
 
 def render_text(result: Result) -> None:
-    """Print one result exactly as ``batch._report`` does today.
+    """Print one result as the human-readable text lines of a normal run.
 
     A ``FAILED`` result goes to stderr and stops there -- its notes, if any,
     are not printed. Every other outcome prints its notes, in order, to
@@ -93,7 +93,7 @@ def summary_record(
     only ever carries its pre-batch skips and ``summary.total`` alone would
     leave `planned` out -- the record contract fixes ``total`` at
     ``planned + skipped`` for a dry run, and at ``summary.total`` otherwise
-    (``docs/specs/spec-json-output.md``).
+    (``docs/specs/archive/spec-json-output.md``).
     """
     total = planned + summary.skipped if dry_run else summary.total
     return {
