@@ -1,12 +1,11 @@
 """Tests for the ffmpeg command lines we build, without running ffmpeg."""
 
-import subprocess
 from dataclasses import replace
 from typing import ClassVar
 
 import pytest
 
-from converter import ffmpegtool, jobs
+from converter import jobs
 from converter.ffmpegtool import Stream, build_argv, cli_path
 from converter.profiles import (
     AVIF,
@@ -92,25 +91,6 @@ class TestBuildArgv:
         after_i = argv[argv.index("-i") + 1]
         assert not after_i.startswith("-")
         assert not argv[-1].startswith("-")
-
-
-class TestRunIsShellFree:
-    def test_argv_list_no_shell_and_stdin_closed(self, monkeypatch):
-        captured = {}
-
-        def fake_run(argv, **kwargs):
-            captured["argv"] = argv
-            captured["kwargs"] = kwargs
-            return subprocess.CompletedProcess(argv, 0, "", "")
-
-        monkeypatch.setattr(subprocess, "run", fake_run)
-
-        ffmpegtool.run(["ffmpeg", "-version"])
-
-        assert isinstance(captured["argv"], list)
-        assert captured["kwargs"].get("shell") is None
-        assert captured["kwargs"]["stdin"] is subprocess.DEVNULL
-        assert captured["kwargs"]["check"] is False
 
 
 class TestWavJob:

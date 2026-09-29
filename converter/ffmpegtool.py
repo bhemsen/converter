@@ -10,9 +10,13 @@ module does, in fewer lines and without the dependency.
 No shell is ever involved: every invocation is an argv list.
 """
 
+import contextlib
+import ctypes
 import json
 import os
 import subprocess
+import sys
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,6 +45,16 @@ class FfmpegMissingError(RuntimeError):
 
 class ProbeError(RuntimeError):
     """``ffprobe`` could not describe an input file."""
+
+
+class Terminated(BaseException):
+    """Raised by :func:`run` once :func:`terminate_all` has closed the registry.
+
+    Subclasses ``BaseException``, not ``Exception``: a worker's ``except
+    Exception`` handler for an ordinary ffmpeg failure must never swallow a
+    termination in flight, the same way ``KeyboardInterrupt`` is not an
+    ``Exception`` either.
+    """
 
 
 @dataclass(frozen=True)
@@ -143,23 +157,107 @@ def build_argv(
     ]
 
 
+#: Guards both `_shutdown` and `_live_processes` below. Held only across a
+#: dict read/write, never across a process's `communicate()` -- terminate_all
+#: releases it before waiting on a process, so a slow ffmpeg exit never blocks
+#: another worker from registering or checking the flag.
+_lock = threading.Lock()
+
+#: Live `Popen` objects, keyed by `id()` so two processes can never collide.
+_live_processes: dict[int, subprocess.Popen[str]] = {}
+
+#: One-way for the life of the process: production code only ever sets this,
+#: never clears it. Tests reset it through the autouse fixture in
+#: tests/conftest.py, via `_reset_termination_state_for_tests` below.
+_shutdown = False
+
+
+def terminated() -> bool:
+    """Whether :func:`terminate_all` has been called in this process."""
+    return _shutdown
+
+
+def terminate_all(timeout: float = 10.0) -> None:
+    """Close the registry to new spawns, then kill and reap every live process.
+
+    Setting the flag and snapshotting the registry happens under `_lock`, the
+    same lock `run` holds while it spawns and registers -- so a process whose
+    `Popen` call is still in flight when this runs is either not registered
+    yet (and `run` will see the flag and refuse to let it loose) or already
+    registered (and is in the snapshot here). Either way nothing spawned
+    around a call to this function escapes it. The actual kill/reap happens
+    outside the lock, since a slow process exit must not block `run` from
+    registering or checking the flag for an unrelated file.
+    """
+    global _shutdown
+    with _lock:
+        _shutdown = True
+        processes = list(_live_processes.values())
+    for process in processes:
+        process.kill()
+    for process in processes:
+        # A process that ignores its kill signal (stuck in uninterruptible
+        # I/O) must not stall the whole shutdown -- give up on it after
+        # *timeout* and move on to reaping the rest.
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=timeout)
+
+
+def _reset_termination_state_for_tests() -> None:
+    """Clear the shutdown flag and registry between tests.
+
+    Production code never calls this -- the flag is one-way. Exists because
+    `tests/test_cli.py` calls `cli.main` repeatedly inside one pytest process,
+    so without a reset the first SIGTERM/Ctrl+C test would leave every later
+    test unable to spawn anything.
+    """
+    global _shutdown
+    with _lock:
+        _shutdown = False
+        _live_processes.clear()
+
+
 def run(argv: Sequence[str], *, timeout: float | None = None) -> CommandResult:
-    """Run *argv* with no shell and no inherited stdin."""
+    """Run *argv* with no shell and no inherited stdin.
+
+    The spawn and the registration into the live-process registry happen
+    under the same lock as :func:`terminate_all`'s flag flip, so a shutdown
+    racing a spawn can never observe a process that is running but not yet
+    registered (see that function's docstring). Once the shutdown flag is
+    set, a call here raises :class:`Terminated` before touching the process
+    table at all.
+
+    On a timeout this mirrors what ``subprocess.run`` itself does: kill the
+    process, drain its pipes so it is properly reaped rather than left a
+    zombie, then re-raise ``TimeoutExpired`` to the caller.
+    """
     argv = list(argv)
-    completed = subprocess.run(  # noqa: S603 - argv list, shell=False, no interpolation
-        argv,
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        errors="replace",
-        timeout=timeout,
-        check=False,
-    )
+    with _lock:
+        if _shutdown:
+            raise Terminated
+        process = subprocess.Popen(  # noqa: S603 - argv list, shell=False, no interpolation
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            errors="replace",
+        )
+        _live_processes[id(process)] = process
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate()
+        raise
+    finally:
+        with _lock:
+            _live_processes.pop(id(process), None)
     return CommandResult(
         argv=tuple(argv),
-        returncode=completed.returncode,
-        stdout=completed.stdout or "",
-        stderr=(completed.stderr or "").strip(),
+        returncode=process.returncode,
+        stdout=stdout or "",
+        stderr=(stderr or "").strip(),
     )
 
 
@@ -287,3 +385,156 @@ def probe_streams(tools: Tools, src: str | os.PathLike[str]) -> list[Stream]:
 
     parsed = (_parse_stream(raw) for raw in payload.get("streams", []))
     return [stream for stream in parsed if stream is not None]
+
+
+# --- Windows Job Object: kill ffmpeg when the converter itself is killed ---
+#
+# A caller that can only reach for TerminateProcess -- Node's child.kill() on
+# Windows maps every signal name to exactly that -- gives the converter no
+# chance to run its SIGTERM handler, so ffmpeg would be orphaned and keep
+# running. Binding *this* process to a Job Object with
+# JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE closes that gap without it: when Windows
+# tears the converter down it also closes the job handle, and that alone
+# kills every process still in the job, including any ffmpeg/ffprobe child
+# (docs/specs/spec-abort-safe-writes.md).
+
+_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+
+
+class _IoCounters(ctypes.Structure):
+    """Win32 ``IO_COUNTERS`` -- unused fields the extended limit struct needs
+    for its layout to match the real one; only their sizes/order matter."""
+
+    _fields_ = [
+        (name, ctypes.c_uint64)
+        for name in (
+            "read_ops",
+            "write_ops",
+            "other_ops",
+            "read_bytes",
+            "write_bytes",
+            "other_bytes",
+        )
+    ]
+
+
+class _BasicLimitInformation(ctypes.Structure):
+    """Win32 ``JOBOBJECT_BASIC_LIMIT_INFORMATION``."""
+
+    _fields_ = [
+        ("per_process_user_time_limit", ctypes.c_int64),
+        ("per_job_user_time_limit", ctypes.c_int64),
+        ("limit_flags", ctypes.c_ulong),
+        ("minimum_working_set_size", ctypes.c_size_t),
+        ("maximum_working_set_size", ctypes.c_size_t),
+        ("active_process_limit", ctypes.c_ulong),
+        ("affinity", ctypes.c_size_t),
+        ("priority_class", ctypes.c_ulong),
+        ("scheduling_class", ctypes.c_ulong),
+    ]
+
+
+class _ExtendedLimitInformation(ctypes.Structure):
+    """Win32 ``JOBOBJECT_EXTENDED_LIMIT_INFORMATION``. Only
+    ``basic_limit_information.limit_flags`` is ever set; the rest is zeroed
+    by ctypes and ignored by Windows because that flag is the only one on."""
+
+    _fields_ = [
+        ("basic_limit_information", _BasicLimitInformation),
+        ("io_info", _IoCounters),
+        ("process_memory_limit", ctypes.c_size_t),
+        ("job_memory_limit", ctypes.c_size_t),
+        ("peak_process_memory_used", ctypes.c_size_t),
+        ("peak_job_memory_used", ctypes.c_size_t),
+    ]
+
+
+def _kernel32() -> object:
+    """The ctypes handle to ``kernel32.dll``. A seam tests replace with a stub
+    so the real Win32 API is never touched by the test suite."""
+    return ctypes.windll.kernel32  # type: ignore[attr-defined]
+
+
+def _is_windows() -> bool:
+    """Whether this process runs on Windows. A seam tests can flip without
+    touching the real ``sys.platform``."""
+    return sys.platform == "win32"
+
+
+def _create_job_object(kernel32: object) -> int:
+    """Create an unnamed Job Object and return its handle, or raise OSError."""
+    kernel32.CreateJobObjectW.restype = ctypes.c_void_p
+    kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+    job = kernel32.CreateJobObjectW(None, None)
+    if not job:
+        raise OSError("CreateJobObjectW failed")
+    return job
+
+
+def _set_kill_on_close(kernel32: object, job: int) -> None:
+    """Flag *job* so every member process dies when its handle is closed."""
+    info = _ExtendedLimitInformation()
+    info.basic_limit_information.limit_flags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    kernel32.SetInformationJobObject.restype = ctypes.c_int
+    kernel32.SetInformationJobObject.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+    ]
+    ok = kernel32.SetInformationJobObject(
+        job, _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, ctypes.byref(info), ctypes.sizeof(info)
+    )
+    if not ok:
+        raise OSError("SetInformationJobObject failed")
+
+
+def _assign_current_process(kernel32: object, job: int) -> None:
+    """Put the current process into *job*."""
+    kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+    kernel32.AssignProcessToJobObject.restype = ctypes.c_int
+    kernel32.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    process = kernel32.GetCurrentProcess()
+    if not kernel32.AssignProcessToJobObject(job, process):
+        raise OSError("AssignProcessToJobObject failed")
+
+
+def _create_kill_on_close_job() -> int:
+    """Create a job, flag it ``KILL_ON_JOB_CLOSE``, and join it -- return its
+    handle. Split from :func:`bind_to_kill_on_close_job` so that function's
+    only job is deciding whether to try and what to do if this raises."""
+    kernel32 = _kernel32()
+    job = _create_job_object(kernel32)
+    _set_kill_on_close(kernel32, job)
+    _assign_current_process(kernel32, job)
+    return job
+
+
+#: Kept for the rest of the process's life and never closed: closing this
+#: handle is exactly what would trigger KILL_ON_JOB_CLOSE against ourselves,
+#: since the converter is itself a member of the job. A module-level global
+#: is the simplest thing that cannot be garbage-collected or accidentally
+#: dropped by a caller holding no reference to it.
+_job_handle: int | None = None
+
+
+def bind_to_kill_on_close_job() -> None:
+    """Assign this process to a Job Object that terminates it with ffmpeg.
+
+    Windows-only; a no-op everywhere else. Called once, at the start of the
+    convert command, before anything is spawned -- every ffmpeg/ffprobe
+    child then inherits job membership automatically. A failure to create or
+    assign the job removes only the orphan protection, never a conversion,
+    so it is reported once on stderr and swallowed rather than raised: the
+    broad ``except Exception`` is deliberate here, this is a best-effort
+    safety net whose precise failure mode (a missing DLL entry point, a
+    permission error, a stubbed test double) does not matter to the caller.
+    """
+    global _job_handle
+    if not _is_windows():
+        return
+    try:
+        _job_handle = _create_kill_on_close_job()
+    except Exception as exc:
+        print(f"warning: could not bind to a Windows Job Object: {exc}", file=sys.stderr)

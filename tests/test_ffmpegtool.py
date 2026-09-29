@@ -1,7 +1,13 @@
-"""Tests for locating the executables and for parsing ffprobe's output."""
+"""Tests for locating the executables, running them, and parsing ffprobe's
+output. Also owns the Popen/registry/termination machinery -- the subprocess
+boundary at ``ffmpegtool.run`` -- and the Windows Job Object binding."""
 
+import ctypes
 import json
+import subprocess
+import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +15,26 @@ from converter import ffmpegtool
 from converter.ffmpegtool import CommandResult, FfmpegMissingError, ProbeError, Stream, Tools
 
 TOOLS = Tools(ffmpeg="ffmpeg", ffprobe="ffprobe")
+
+
+class FakePopen:
+    """Stand-in for ``subprocess.Popen`` that never starts a real process."""
+
+    def __init__(self, argv, **kwargs):
+        self.argv = argv
+        self.kwargs = kwargs
+        self.returncode = 0
+        self.killed = False
+        self._communicate_result = ("out", "err")
+
+    def communicate(self, timeout=None):
+        return self._communicate_result
+
+    def kill(self):
+        self.killed = True
+
+    def wait(self, timeout=None):
+        return self.returncode
 
 
 def stub_run(monkeypatch, returncode: int, stdout: str = "", stderr: str = "") -> None:
@@ -309,3 +335,232 @@ class TestProbeStreams:
         assert "-of" in captured["argv"]
         assert captured["argv"][captured["argv"].index("-of") + 1] == "json"
         assert captured["argv"][-1] == "in.mkv"
+
+
+class TestRunIsShellFree:
+    """Moved from tests/test_argv.py and rewritten against Popen (issue #145):
+    `run` no longer calls `subprocess.run` at all."""
+
+    def test_argv_list_no_shell_and_stdin_closed(self, monkeypatch):
+        captured = {}
+
+        def fake_popen(argv, **kwargs):
+            captured["argv"] = argv
+            captured["kwargs"] = kwargs
+            return FakePopen(argv, **kwargs)
+
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+        result = ffmpegtool.run(["ffmpeg", "-version"])
+
+        assert isinstance(captured["argv"], list)
+        assert "shell" not in captured["kwargs"]
+        assert captured["kwargs"]["stdin"] is subprocess.DEVNULL
+        assert captured["kwargs"]["text"] is True
+        assert captured["kwargs"]["errors"] == "replace"
+        assert result.stdout == "out"
+        assert result.stderr == "err"
+        assert result.returncode == 0
+
+    def test_timeout_kills_the_process_reaps_it_and_reraises(self, monkeypatch):
+        class TimingOutPopen(FakePopen):
+            def communicate(self, timeout=None):
+                if not self.killed:
+                    raise subprocess.TimeoutExpired(cmd=self.argv, timeout=timeout)
+                return ("", "")
+
+        monkeypatch.setattr(subprocess, "Popen", TimingOutPopen)
+
+        with pytest.raises(subprocess.TimeoutExpired):
+            ffmpegtool.run(["ffmpeg", "-version"], timeout=1)
+
+
+class TestRegistry:
+    """The live-process registry `terminate_all` kills from."""
+
+    def test_a_process_is_registered_only_while_it_runs(self, monkeypatch):
+        seen_during_communicate = {}
+
+        class ObservingPopen(FakePopen):
+            def communicate(self, timeout=None):
+                seen_during_communicate["count"] = len(ffmpegtool._live_processes)
+                return super().communicate(timeout=timeout)
+
+        monkeypatch.setattr(subprocess, "Popen", ObservingPopen)
+
+        assert len(ffmpegtool._live_processes) == 0
+
+        ffmpegtool.run(["ffmpeg"])
+
+        assert seen_during_communicate["count"] == 1
+        assert len(ffmpegtool._live_processes) == 0
+
+    def test_a_failing_process_is_still_deregistered(self, monkeypatch):
+        class RaisingPopen(FakePopen):
+            def communicate(self, timeout=None):
+                raise subprocess.TimeoutExpired(cmd=self.argv, timeout=timeout)
+
+        monkeypatch.setattr(subprocess, "Popen", RaisingPopen)
+
+        with pytest.raises(subprocess.TimeoutExpired):
+            ffmpegtool.run(["ffmpeg"], timeout=1)
+
+        assert len(ffmpegtool._live_processes) == 0
+
+
+class TestTerminateAll:
+    """`terminate_all` closes the registry and kills/reaps every process."""
+
+    def test_sets_the_shutdown_flag(self):
+        assert ffmpegtool.terminated() is False
+
+        ffmpegtool.terminate_all()
+
+        assert ffmpegtool.terminated() is True
+
+    def test_kills_and_reaps_every_registered_process(self):
+        first, second = FakePopen([], stdin=None), FakePopen([], stdin=None)
+        ffmpegtool._live_processes[id(first)] = first
+        ffmpegtool._live_processes[id(second)] = second
+
+        ffmpegtool.terminate_all(timeout=5)
+
+        assert first.killed and second.killed
+
+    def test_a_process_that_will_not_die_does_not_block_forever(self):
+        class StuckPopen(FakePopen):
+            def wait(self, timeout=None):
+                raise subprocess.TimeoutExpired(cmd=[], timeout=timeout)
+
+        stuck = StuckPopen([], stdin=None)
+        ffmpegtool._live_processes[id(stuck)] = stuck
+
+        ffmpegtool.terminate_all(timeout=0.01)  # must return, not raise
+
+        assert stuck.killed
+
+    def test_a_process_registered_while_terminate_all_waits_for_the_lock_is_still_killed(self):
+        """Drives the race with real threads rather than asserting the
+        mechanism from the outside: `run` holds `ffmpegtool._lock` across its
+        whole spawn-and-register step, so `terminate_all` cannot take its
+        registry snapshot until that step has either registered the process
+        or given up on it -- there is no window where a process is running
+        but invisible to a `terminate_all` that started after it."""
+        fake = FakePopen([], stdin=None)
+        lock_acquired = threading.Event()
+        proceed = threading.Event()
+
+        def spawn_holding_lock():
+            with ffmpegtool._lock:
+                lock_acquired.set()
+                proceed.wait(timeout=2)
+                ffmpegtool._live_processes[id(fake)] = fake
+
+        spawner = threading.Thread(target=spawn_holding_lock)
+        spawner.start()
+        assert lock_acquired.wait(timeout=2)
+
+        terminator = threading.Thread(target=ffmpegtool.terminate_all, kwargs={"timeout": 1})
+        terminator.start()
+        proceed.set()
+        spawner.join(timeout=2)
+        terminator.join(timeout=2)
+
+        assert fake.killed
+
+
+class TestTerminated:
+    """The `Terminated` exception and `run`'s post-shutdown behaviour."""
+
+    def test_is_a_base_exception_not_a_plain_exception(self):
+        assert issubclass(ffmpegtool.Terminated, BaseException)
+        assert not issubclass(ffmpegtool.Terminated, Exception)
+
+    def test_run_raises_without_spawning_once_terminated(self, monkeypatch):
+        def fail_if_called(argv, **kwargs):
+            raise AssertionError("run() must not spawn once terminated")
+
+        monkeypatch.setattr(subprocess, "Popen", fail_if_called)
+        ffmpegtool.terminate_all()
+
+        with pytest.raises(ffmpegtool.Terminated):
+            ffmpegtool.run(["ffmpeg"])
+
+
+def _fake_kernel32(*, create_ok=True, set_ok=True, assign_ok=True):
+    """A SimpleNamespace, not a class: its callables are plain functions, so
+    production code's `kernel32.X.restype = ...` assignments succeed the same
+    way they would on a real ctypes function pointer -- a bound method would
+    reject that assignment."""
+    state = {"set_info_args": None, "limit_flags": None}
+
+    def create_job_object_w(*_args):
+        return 4242 if create_ok else 0
+
+    def set_information_job_object(job, info_class, info_ptr, info_size):
+        info = ctypes.cast(info_ptr, ctypes.POINTER(ffmpegtool._ExtendedLimitInformation)).contents
+        state["set_info_args"] = (job, info_class, info_size)
+        state["limit_flags"] = info.basic_limit_information.limit_flags
+        return 1 if set_ok else 0
+
+    def get_current_process():
+        return 999
+
+    def assign_process_to_job_object(job, process):
+        return 1 if assign_ok else 0
+
+    kernel32 = SimpleNamespace(
+        CreateJobObjectW=create_job_object_w,
+        SetInformationJobObject=set_information_job_object,
+        GetCurrentProcess=get_current_process,
+        AssignProcessToJobObject=assign_process_to_job_object,
+    )
+    kernel32.state = state
+    return kernel32
+
+
+class TestBindToKillOnCloseJob:
+    """The Windows Job Object binding -- Win32 calls always stubbed, on
+    every platform, via the `_is_windows`/`_kernel32` seams."""
+
+    def test_noop_on_non_windows(self, monkeypatch):
+        monkeypatch.setattr(ffmpegtool, "_is_windows", lambda: False)
+        touched = []
+        monkeypatch.setattr(ffmpegtool, "_kernel32", lambda: touched.append(True))
+
+        ffmpegtool.bind_to_kill_on_close_job()
+
+        assert touched == []
+
+    def test_success_sets_the_kill_on_close_flag_and_keeps_the_handle(self, monkeypatch):
+        monkeypatch.setattr(ffmpegtool, "_is_windows", lambda: True)
+        monkeypatch.setattr(ffmpegtool, "_job_handle", None)
+        kernel32 = _fake_kernel32()
+        monkeypatch.setattr(ffmpegtool, "_kernel32", lambda: kernel32)
+
+        ffmpegtool.bind_to_kill_on_close_job()
+
+        assert ffmpegtool._job_handle == 4242
+        assert kernel32.state["limit_flags"] == ffmpegtool._JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+
+    def test_a_failed_creation_only_warns_and_leaves_no_handle(self, monkeypatch, capsys):
+        monkeypatch.setattr(ffmpegtool, "_is_windows", lambda: True)
+        monkeypatch.setattr(ffmpegtool, "_job_handle", None)
+        kernel32 = _fake_kernel32(create_ok=False)
+        monkeypatch.setattr(ffmpegtool, "_kernel32", lambda: kernel32)
+
+        ffmpegtool.bind_to_kill_on_close_job()  # must not raise
+
+        assert ffmpegtool._job_handle is None
+        assert "warning" in capsys.readouterr().err.lower()
+
+    def test_a_failed_assignment_only_warns_and_leaves_no_handle(self, monkeypatch, capsys):
+        monkeypatch.setattr(ffmpegtool, "_is_windows", lambda: True)
+        monkeypatch.setattr(ffmpegtool, "_job_handle", None)
+        kernel32 = _fake_kernel32(assign_ok=False)
+        monkeypatch.setattr(ffmpegtool, "_kernel32", lambda: kernel32)
+
+        ffmpegtool.bind_to_kill_on_close_job()  # must not raise
+
+        assert ffmpegtool._job_handle is None
+        assert "warning" in capsys.readouterr().err.lower()
