@@ -521,17 +521,39 @@ def run_batch(
         with tqdm(total=len(tasks), desc=profile.label, unit="file", disable=not progress) as bar:
             for result in early_failures:
                 _record(result, results, bar, on_result)
-            future_tasks = {pool.submit(work, task): task for task in runnable_tasks}
-            try:
-                _drain(future_tasks, results, bar, on_result)
-            except (KeyboardInterrupt, ffmpegtool.Terminated):
-                # Conversions already in flight are stopped by terminate_all
-                # rather than left to finish the file they are on.
-                _handle_interrupt(future_tasks, results, bar, on_result)
-                raise
+            _submit_and_drain(pool, work, runnable_tasks, results, bar, on_result)
     finally:
         pool.shutdown(wait=False)
     return results
+
+
+def _submit_and_drain(
+    pool: ThreadPoolExecutor,
+    work: Callable[[Task], Result],
+    tasks: Sequence[Task],
+    results: list[Result],
+    bar: tqdm,
+    on_result: Callable[[Result], None] | None,
+) -> None:
+    """Submit *tasks* and drain them, with submission inside the interrupt's reach.
+
+    A signal can land while tasks are still being submitted, not only while the
+    main thread waits on them (issue #159). Submitting one at a time into the
+    same dict ``_handle_interrupt`` receives means such an interrupt still
+    reaches ``terminate_all`` and sees every future started so far. One raised
+    between ``submit()`` returning and the assignment leaves that single future
+    out of the dict; its worker is still covered by its own post-run check.
+    """
+    future_tasks: dict[Future[Result], Task] = {}
+    try:
+        for task in tasks:
+            future_tasks[pool.submit(work, task)] = task
+        _drain(future_tasks, results, bar, on_result)
+    except (KeyboardInterrupt, ffmpegtool.Terminated):
+        # Conversions already in flight are stopped by terminate_all
+        # rather than left to finish the file they are on.
+        _handle_interrupt(future_tasks, results, bar, on_result)
+        raise
 
 
 @dataclass(frozen=True)
