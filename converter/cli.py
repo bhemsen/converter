@@ -26,7 +26,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from types import FrameType
 
-from converter import __version__, ffmpegtool, paths
+from converter import __version__, ffmpegtool, paths, report
 from converter.batch import Outcome, Result, Task, default_jobs, run_batch, summarise
 from converter.profiles import PROFILES, SOURCE_SUFFIXES, Profile, resolve_target
 
@@ -375,6 +375,7 @@ def _run_tasks(profile: Profile, tasks: Sequence[Task], args: argparse.Namespace
         jobs=args.jobs,
         overwrite=args.overwrite,
         progress=not args.quiet,
+        on_result=report.render_text,
     )
 
 

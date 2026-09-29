@@ -383,7 +383,33 @@ def _stage_output_directories(tasks: Sequence[Task]) -> tuple[list[Task], list[R
     return runnable, failures
 
 
-def _drain(future_tasks: dict[Future[Result], Task], results: list[Result], bar: tqdm) -> None:
+def _record(
+    result: Result,
+    results: list[Result],
+    bar: tqdm,
+    on_result: Callable[[Result], None] | None,
+) -> None:
+    """Append *result*, hand it to *on_result*, then advance the bar.
+
+    The single choke point every result passes through -- the normal
+    ``as_completed``-style loop, a staging failure reported before the pool
+    even starts, and one drained during the bounded interrupt wait -- so
+    *on_result* is called exactly once per result, from the main thread
+    (``docs/specs/spec-json-output.md``). ``None`` means no per-file output,
+    matching the progress bar's own ``disable`` flag.
+    """
+    results.append(result)
+    if on_result is not None:
+        on_result(result)
+    bar.update(1)
+
+
+def _drain(
+    future_tasks: dict[Future[Result], Task],
+    results: list[Result],
+    bar: tqdm,
+    on_result: Callable[[Result], None] | None,
+) -> None:
     """Report each future's Result as it lands, polling rather than blocking.
 
     ``concurrent.futures.wait`` in a loop instead of ``as_completed``: whether a
@@ -402,9 +428,7 @@ def _drain(future_tasks: dict[Future[Result], Task], results: list[Result], bar:
             # would otherwise leave the future both reported here and still
             # present for `_handle_interrupt` to report a second time.
             del future_tasks[future]
-            results.append(result)
-            _report(result, bar)
-            bar.update(1)
+            _record(result, results, bar, on_result)
 
 
 #: How long the main thread waits for an in-flight conversion to notice a
@@ -415,7 +439,10 @@ _SHUTDOWN_WAIT_TIMEOUT = 10.0
 
 
 def _handle_interrupt(
-    future_tasks: dict[Future[Result], Task], results: list[Result], bar: tqdm
+    future_tasks: dict[Future[Result], Task],
+    results: list[Result],
+    bar: tqdm,
+    on_result: Callable[[Result], None] | None,
 ) -> None:
     """Stop every ffmpeg, drop what never started, and account for the rest.
 
@@ -439,9 +466,7 @@ def _handle_interrupt(
     for future in (*(set(future_tasks) - pending), *done):
         result = _safe_result(future)
         if result is not None:
-            results.append(result)
-            _report(result, bar)
-            bar.update(1)
+            _record(result, results, bar, on_result)
     for future in timed_out:
         _delete_partial(partial_for(future_tasks[future].dst))
 
@@ -466,8 +491,17 @@ def run_batch(
     jobs: int | None = None,
     overwrite: bool = False,
     progress: bool = True,
+    on_result: Callable[[Result], None] | None = None,
 ) -> list[Result]:
-    """Run *tasks* through *profile* with at most *jobs* conversions in flight."""
+    """Run *tasks* through *profile* with at most *jobs* conversions in flight.
+
+    *on_result* is called exactly once per result, from the main thread,
+    including staging failures reported before the pool starts and results
+    drained during a bounded interrupt wait; ``None`` prints nothing per file.
+    This is the only seam into per-file output -- ``batch`` never imports
+    ``converter.report``, so ``cli`` is the one that decides which renderer,
+    if any, sees each result (``docs/specs/spec-json-output.md``).
+    """
     tasks = list(tasks)
     workers = max(1, jobs or default_jobs())
 
@@ -486,30 +520,18 @@ def run_batch(
     try:
         with tqdm(total=len(tasks), desc=profile.label, unit="file", disable=not progress) as bar:
             for result in early_failures:
-                results.append(result)
-                _report(result, bar)
-                bar.update(1)
+                _record(result, results, bar, on_result)
             future_tasks = {pool.submit(work, task): task for task in runnable_tasks}
             try:
-                _drain(future_tasks, results, bar)
+                _drain(future_tasks, results, bar, on_result)
             except (KeyboardInterrupt, ffmpegtool.Terminated):
                 # Conversions already in flight are stopped by terminate_all
                 # rather than left to finish the file they are on.
-                _handle_interrupt(future_tasks, results, bar)
+                _handle_interrupt(future_tasks, results, bar, on_result)
                 raise
     finally:
         pool.shutdown(wait=False)
     return results
-
-
-def _report(result: Result, bar: tqdm) -> None:
-    """Emit per-file detail without fighting the progress bar for the cursor."""
-    name = result.task.src.name
-    if result.outcome is Outcome.FAILED:
-        bar.write(f"FAILED  {name}: {result.error}", file=sys.stderr)
-        return
-    for note in result.notes:
-        bar.write(f"note    {name}: {note}")
 
 
 @dataclass(frozen=True)

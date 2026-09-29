@@ -1051,6 +1051,65 @@ class TestRunBatch:
         assert len(calls) == 3
 
 
+class TestOnResult:
+    """Issue #139: `run_batch`'s callback seam. `batch` itself prints nothing
+    any more -- `_report` is gone -- so every per-file output decision, text,
+    JSON or none at all, is made by whoever passes `on_result` in.
+    """
+
+    def test_called_once_per_result_from_the_main_thread(self, tmp_path, fake_ffmpeg):
+        tasks = [make_task(tmp_path, f"clip{i}") for i in range(4)]
+        seen_from: set[int] = set()
+        reported: list[Result] = []
+
+        def on_result(result: Result) -> None:
+            seen_from.add(threading.get_ident())
+            reported.append(result)
+
+        results = run_batch(MP4, tasks, TOOLS, jobs=2, progress=False, on_result=on_result)
+
+        assert reported == results
+        assert len(reported) == len(tasks)
+        assert seen_from == {threading.get_ident()}
+
+    def test_called_for_a_staging_failure(self, tmp_path, fake_ffmpeg, monkeypatch):
+        """A directory that can never be created (a stand-in for Windows'
+        MAX_PATH) is reported through `on_result` exactly like any ladder
+        result -- the callback contract does not stop at the pool boundary.
+        """
+        tasks = [make_task(tmp_path, "clip")]
+
+        def boom(_path: Path) -> None:
+            raise OSError("path too long")
+
+        monkeypatch.setattr(batch, "ensure_directory", boom)
+        reported: list[Result] = []
+
+        results = run_batch(MP4, tasks, TOOLS, progress=False, on_result=reported.append)
+
+        assert len(results) == 1
+        assert results[0].outcome is Outcome.FAILED
+        assert reported == results
+
+    def test_none_prints_nothing_per_file(self, tmp_path, fake_ffmpeg, capsys, monkeypatch):
+        """The default: `on_result=None` must not fall back to any built-in
+        prose -- that would be `batch` re-growing the `_report` it lost.
+        """
+        tasks = [make_task(tmp_path, "clip")]
+
+        def boom(_path: Path) -> None:
+            raise OSError("path too long")
+
+        monkeypatch.setattr(batch, "ensure_directory", boom)
+
+        results = run_batch(MP4, tasks, TOOLS, progress=False)
+
+        assert results[0].outcome is Outcome.FAILED
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err == ""
+
+
 class TestLossySourceAdvisory:
     """Issue #88, `docs/specs/archive/spec-lossy-source-notes.md`: the advisory that
     fires when a lossy source reaches FLAC's selective (failure-side) rung --
@@ -1564,10 +1623,14 @@ class TestHandleInterrupt:
         with ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(lambda: expected)
             results: list[Result] = []
+            reported: list[Result] = []
 
-            batch._handle_interrupt({future: task}, results, self._bar())
+            batch._handle_interrupt({future: task}, results, self._bar(), reported.append)
 
         assert results == [expected]
+        # Issue #139: a result drained during the bounded interrupt wait must
+        # reach `on_result` exactly like any other, not just land in `results`.
+        assert reported == [expected]
 
     def test_a_future_that_raises_terminated_yields_no_result(self, tmp_path):
         task = make_task(tmp_path)
@@ -1579,10 +1642,12 @@ class TestHandleInterrupt:
         with ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(raise_terminated)
             results: list[Result] = []
+            reported: list[Result] = []
 
-            batch._handle_interrupt({future: task}, results, self._bar())
+            batch._handle_interrupt({future: task}, results, self._bar(), reported.append)
 
         assert results == []
+        assert reported == []
 
     def test_a_future_still_running_past_the_bounded_wait_has_its_partial_removed(
         self, tmp_path, monkeypatch
@@ -1596,11 +1661,13 @@ class TestHandleInterrupt:
         with ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(lambda: release.wait(timeout=2))
             results: list[Result] = []
+            reported: list[Result] = []
 
-            batch._handle_interrupt({future: task}, results, self._bar())
+            batch._handle_interrupt({future: task}, results, self._bar(), reported.append)
 
             assert not partial_for(task.dst).exists()
             assert results == []
+            assert reported == []
             release.set()  # let the worker finish before the pool tears down
 
 
@@ -1662,17 +1729,10 @@ class TestRunBatchTermination:
 
         monkeypatch.setattr(batch.ffmpegtool, "terminate_all", terminate_all)
 
-        real_report = batch._report
         reported: list[Result] = []
 
-        def spy_report(result, bar):
-            reported.append(result)
-            real_report(result, bar)
-
-        monkeypatch.setattr(batch, "_report", spy_report)
-
         with pytest.raises(KeyboardInterrupt):
-            run_batch(MP4, tasks, TOOLS, jobs=1, progress=False)
+            run_batch(MP4, tasks, TOOLS, jobs=1, progress=False, on_result=reported.append)
 
         assert started.is_set()
         assert terminate_all_calls["n"] == 1
