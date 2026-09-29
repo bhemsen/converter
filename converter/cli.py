@@ -475,7 +475,8 @@ def _report_no_candidates(args: argparse.Namespace) -> int:
     """Handle a run with no candidates: a zero summary, the hint stays on stderr."""
     summary = summarise(())
     if args.json:
-        _emit_json(report.summary_record(summary, planned=0, exit_code=0, dry_run=False))
+        record = report.summary_record(summary, planned=0, exit_code=0, dry_run=args.dry_run)
+        _emit_json(record)
     else:
         print(summary.describe())
     print(_nothing_found_hint(args), file=sys.stderr)

@@ -1360,7 +1360,14 @@ class TestJsonOutput:
         self._wire(monkeypatch, run, probe)
 
         code = main(["--to", AUDIO_TARGET, str(in_dir), str(in_dir), "--json"])
-        records = _json_lines(capfdbinary.readouterr().out)
+        captured = capfdbinary.readouterr()
+        records = _json_lines(captured.out)
+
+        # No per-file prose anywhere under --json -- not even on stderr for the
+        # one file that failed, whose text-mode ``FAILED`` line would otherwise
+        # land there (docs/specs/spec-json-output.md).
+        assert b"FAILED" not in captured.err
+        assert b"note" not in captured.err
 
         file_records = [r for r in records if r["type"] == "file"]
         summaries = [r for r in records if r["type"] == "summary"]
@@ -1503,6 +1510,54 @@ class TestJsonOutput:
         assert summary["exit_code"] == 0
         assert b"no convertible files found" in captured.err
 
+    def test_no_candidates_dry_run_under_json_reports_dry_run_true(self, tmp_path, capfdbinary):
+        """The no-candidates branch in ``_convert`` runs *before* the
+        ``--dry-run`` check, so its summary must still read ``args.dry_run``
+        rather than a hardcoded ``False`` -- otherwise
+        ``--json --dry-run`` over an empty tree would lie about its own
+        ``dry_run`` field (``docs/specs/spec-json-output.md``).
+        """
+        (tmp_path / "in").mkdir()
+        (tmp_path / "in" / "notes.txt").write_text("hi")
+
+        code = main(
+            convert_argv(str(tmp_path / "in"), str(tmp_path / "out"), "--json", "--dry-run")
+        )
+        records = _json_lines(capfdbinary.readouterr().out)
+
+        assert code == 0
+        assert len(records) == 1
+        assert records[0]["type"] == "summary"
+        assert records[0]["dry_run"] is True
+        assert records[0]["planned"] == 0
+        assert records[0]["total"] == 0
+
+    def test_skip_records_flush_immediately_with_no_real_tasks(
+        self, tmp_path, monkeypatch, capfdbinary
+    ):
+        """When every candidate is a self-write, ``_run_tasks`` short-circuits
+        before ever resolving tools -- the ``before_start`` callback's *other*
+        branch, ``if not tasks: before_start()``, is what still gets the
+        pre-batch skip record onto stdout in that case
+        (``docs/specs/spec-json-output.md``).
+        """
+
+        def explode(*_a, **_k):
+            raise AssertionError("a run with no real tasks must never resolve tools")
+
+        monkeypatch.setattr(cli.ffmpegtool, "resolve_tools", explode)
+        make_source(tmp_path / "in", f"a{VIDEO_SUFFIX}")  # the only candidate: a self-write
+
+        code = main(convert_argv(str(tmp_path / "in"), str(tmp_path / "in"), "--json"))
+        records = _json_lines(capfdbinary.readouterr().out)
+
+        assert code == 0
+        assert [r["type"] for r in records] == ["file", "summary"]
+        assert records[0]["outcome"] == "skipped"
+        assert records[1]["skipped"] == 1
+        assert records[1]["converted"] == 0
+        assert records[1]["exit_code"] == 0
+
     def test_a_single_file_input_works_under_json(self, tmp_path, capfdbinary, stub_ffmpeg):
         source = make_source(tmp_path, "song.flac")
 
@@ -1528,6 +1583,32 @@ class TestJsonOutput:
 
         assert code == 130
         assert all(record["type"] != "summary" for record in records)
+
+    def test_no_summary_is_written_on_an_aborting_error(self, tmp_path, monkeypatch, capfdbinary):
+        """An unexpected ``OSError`` that aborts the run must not get a
+        ``summary`` either -- only exit 130/143 name the rule explicitly, but
+        the mechanism (the summary write sits *after* ``_run_tasks`` returns)
+        applies just the same to any exception that unwinds out of it. The
+        self-write's ``file`` record, already flushed before ``run_batch`` is
+        even called, is exactly the kind of record the spec says must stand
+        (``docs/specs/spec-json-output.md``).
+        """
+        make_source(tmp_path / "in", f"a{VIDEO_SUFFIX}")  # self-write, flushed early
+        make_source(tmp_path / "in", "clip.mkv")  # forces tool resolution
+        monkeypatch.setattr(cli.ffmpegtool, "resolve_tools", lambda *_a: FAKE_TOOLS)
+        monkeypatch.setattr(cli.ffmpegtool, "version", lambda _tools: "ffmpeg test build")
+
+        def explode(*_a, **_k):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(cli, "run_batch", explode)
+
+        code = main(convert_argv(str(tmp_path / "in"), str(tmp_path / "in"), "--json"))
+        records = _json_lines(capfdbinary.readouterr().out)
+
+        assert code == 1
+        assert [r["type"] for r in records] == ["file"]
+        assert records[0]["outcome"] == "skipped"
 
     def test_list_formats_is_unaffected_by_json(self, capfdbinary):
         code = main(["--to", VIDEO_TARGET, "in", cli.LIST_FORMATS_FLAG, "--json"])
