@@ -20,9 +20,11 @@ rather than a diff here (``docs/constitution.md``).  A test walks this file with
 """
 
 import argparse
+import signal
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from types import FrameType
 
 from converter import __version__, ffmpegtool, paths
 from converter.batch import Outcome, Result, Task, default_jobs, run_batch, summarise
@@ -376,7 +378,44 @@ def _run_tasks(profile: Profile, tasks: Sequence[Task], args: argparse.Namespace
     )
 
 
+def _raise_terminated(_signum: int, _frame: FrameType | None) -> None:
+    """SIGTERM handler for the convert command: raise, and do nothing else.
+
+    ``signal.signal`` requires this exact two-argument shape; both are unused
+    -- the whole point is to do nothing with the signal number or the
+    interrupted frame. A handler installed this way runs in the main thread
+    only, between bytecode instructions, and must not take a lock or shut
+    anything down itself -- doing real work here is exactly what
+    cpython#121649 warns against. Raising is what breaks a blocked syscall
+    out of PEP 475's automatic retry-on-EINTR, so this is the whole handler:
+    ``ffmpegtool.terminate_all`` and the batch's own clean-up run from the
+    exception's unwind, never from here (``docs/specs/spec-abort-safe-writes.md``).
+    """
+    raise ffmpegtool.Terminated
+
+
 def convert_command(args: argparse.Namespace) -> int:
+    """Bind the Windows Job Object and the SIGTERM handler, then convert.
+
+    Both happen before anything can be spawned: the Job Object only protects
+    processes started after the current one joins it, and a SIGTERM landing
+    before the handler is installed would fall back to Python's default
+    handling -- silent process death -- instead of today's exit-143 contract.
+    SIGINT is left untouched, so Ctrl+C keeps Python's default
+    ``KeyboardInterrupt``. The previous SIGTERM handler is restored on every
+    way out, including when ``_convert`` raises, so the repeated in-process
+    ``main()`` calls the test suite makes never stack a second handler on top
+    of this one (``docs/specs/spec-abort-safe-writes.md``).
+    """
+    ffmpegtool.bind_to_kill_on_close_job()
+    previous_handler = signal.signal(signal.SIGTERM, _raise_terminated)
+    try:
+        return _convert(args)
+    finally:
+        signal.signal(signal.SIGTERM, previous_handler)
+
+
+def _convert(args: argparse.Namespace) -> int:
     """Select, refuse or convert -- the whole of ``docs/design/source-selection.md``.
 
     Selection finishes before ffmpeg is ever located, which is what lets
@@ -603,6 +642,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\nInterrupted.", file=sys.stderr)
         return 130
+    except ffmpegtool.Terminated:
+        print("\nTerminated.", file=sys.stderr)
+        return 143
 
 
 __all__ = ["build_mirror_parser", "build_parser", "dispatch", "main"]
