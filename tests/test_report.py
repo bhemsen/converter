@@ -4,17 +4,17 @@ Per record type, these pin the exact key set and order (``docs/specs/spec-json-o
 *The record contract*), the null rules for ``attempt``/``error``, that ``notes``
 is always an array, that paths are absolute via ``Path.absolute()`` and not
 ``Path.resolve()``, that a non-ASCII or lone-surrogate name still produces a
-pure-ASCII line ``json.loads`` round-trips, and that the text renderer
-reproduces ``batch._report``'s own lines exactly.
+pure-ASCII line ``json.loads`` round-trips, and that the text renderer prints
+the exact lines the now-removed ``batch._report`` used to (issue #139 moved
+these expectations here unchanged, since ``batch`` no longer prints anything
+itself).
 """
 
 import io
 import json
 from pathlib import Path
 
-from tqdm import tqdm
-
-from converter import batch, report
+from converter import report
 from converter.batch import Outcome, Result, Summary, Task
 
 
@@ -23,7 +23,8 @@ def _task(tmp_path: Path, name: str = "in.mkv", out: str = "out.mp4") -> Task:
 
 
 class TestRenderText:
-    """The text renderer must reproduce ``batch._report``'s lines exactly."""
+    """Pins the exact lines the removed ``batch._report`` used to print
+    (issue #139: its test expectations moved here unchanged)."""
 
     def _results(self, tmp_path: Path) -> list[Result]:
         task = _task(tmp_path)
@@ -35,23 +36,21 @@ class TestRenderText:
             Result(task, Outcome.CONVERTED),  # no notes at all
         ]
 
-    def test_matches_batch_report_line_for_line(self, tmp_path, capsys):
-        results = self._results(tmp_path)
+    def test_matches_the_original_report_lines(self, tmp_path, capsys):
+        name = _task(tmp_path).src.name
+        expected_out = (
+            f"note    {name}: note one\nnote    {name}: note two\n"
+            f"note    {name}: output already exists\n"
+            f"note    {name}: no audio or video stream\n"
+        )
+        expected_err = f"FAILED  {name}: ffmpeg exited 1\n"
 
-        bar = tqdm(disable=True)
-        try:
-            for result in results:
-                batch._report(result, bar)
-        finally:
-            bar.close()
-        expected = capsys.readouterr()
-
-        for result in results:
+        for result in self._results(tmp_path):
             report.render_text(result)
         actual = capsys.readouterr()
 
-        assert actual.out == expected.out
-        assert actual.err == expected.err
+        assert actual.out == expected_out
+        assert actual.err == expected_err
 
     def test_failed_goes_to_stderr_only(self, tmp_path, capsys):
         task = _task(tmp_path)
