@@ -1641,6 +1641,12 @@ class TestRunBatchTermination:
         def fake_wait(*args, **kwargs):
             wait_calls["n"] += 1
             if wait_calls["n"] == 1:
+                # Wait for the worker to actually be inside its ffmpeg call
+                # before raising -- otherwise a slow scheduler could let this
+                # fire before the single worker thread has even picked up
+                # the first task, which `_handle_interrupt` would then just
+                # cancel outright and the test would prove nothing.
+                started.wait(timeout=5)
                 raise KeyboardInterrupt
             return real_wait(*args, **kwargs)
 
