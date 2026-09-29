@@ -36,6 +36,7 @@ def _no_verification_profile() -> Profile:
         name="stub",
         description="test double, not a shipped format",
         target_suffix=".out",
+        muxer="mp4",
         container_options=(),
         cheap_attempt=Attempt(label="copy-all", options=flags("-c copy")),
         explicit_streams=False,

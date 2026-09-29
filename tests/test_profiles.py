@@ -435,6 +435,7 @@ class TestMp4Profile:
             name="mp4",
             description="Video: copies compatible streams, re-encodes the rest to h264/aac",
             target_suffix=".mp4",
+            muxer="mp4",
             container_options=("-movflags", "+faststart"),
             cheap_attempt=Attempt(
                 label="remux",
@@ -573,6 +574,7 @@ class TestWavProfile:
             name="wav",
             description="Audio: single stream, uncompressed 16-bit PCM",
             target_suffix=".wav",
+            muxer="wav",
             container_options=(),
             cheap_attempt=Attempt(
                 label="pcm_s16le", options=("-map", "0:a:0", "-c:a", "pcm_s16le")
@@ -1889,6 +1891,51 @@ class TestRegistryStructuralInvariants:
         )
 
 
+#: The measured muxer table from `docs/specs/spec-abort-safe-writes.md` --
+#: the muxer ffmpeg itself selects from each target suffix, read from
+#: `Output #0, <muxer>` against ffmpeg 9.0. Spelled out as a literal here,
+#: not derived from `PROFILES`, so this test can only ever compare the
+#: registry against the spec's own table rather than against itself.
+MEASURED_MUXERS = {
+    "mp4": "mp4",
+    "mkv": "matroska",
+    "webm": "webm",
+    "mov": "mov",
+    "mp3": "mp3",
+    "m4a": "ipod",
+    "flac": "flac",
+    "wav": "wav",
+    "opus": "opus",
+    "ogg": "ogg",
+    "png": "image2",
+    "jpg": "image2",
+    "webp": "webp",
+    "avif": "avif",
+    "gif": "gif",
+    "tiff": "image2",
+    "bmp": "image2",
+}
+
+
+class TestMuxerField:
+    """`Profile.muxer` (issue #143, `docs/specs/spec-abort-safe-writes.md`):
+    required so a write to a `.partial` name can still name the format
+    ffmpeg would have chosen from the suffix -- see the field's own
+    docstring in `converter/profiles.py`.
+    """
+
+    def test_table_covers_every_shipped_profile(self):
+        """A profile missing from the table below would make the parametrized
+        test silently short -- pin the two sets are the same first."""
+        assert set(MEASURED_MUXERS) == set(PROFILES)
+
+    @pytest.mark.parametrize(
+        ("name", "expected_muxer"), sorted(MEASURED_MUXERS.items()), ids=lambda x: x
+    )
+    def test_muxer_matches_the_measured_table(self, name, expected_muxer):
+        assert PROFILES[name].muxer == expected_muxer
+
+
 class TestRegistryTargetCoherence:
     """Target-suffix coherence across the whole registry (issue #30).
 
@@ -2296,6 +2343,7 @@ class TestValueTypesAreFrozen:
             "explicit_streams",
             "partial_mapping",
             "rules",
+            "muxer",
             "alpha_unsupported",
             "last_resort",
         }

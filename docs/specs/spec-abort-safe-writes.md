@@ -274,3 +274,14 @@ Each issue references this spec path in its body.
 - 2026-09-28: Spec-acceptance gate: the temporary name is `<name><ext>.partial`,
   and the Windows rename retries 5 times with exponential backoff from 0.1 s
   before failing. Human prerequisites: none. Accepted.
+- 2026-09-29 (issue #143): adding the required `muxer` field breaks three
+  hand-built `Profile(...)` test doubles outside `tests/test_profiles.py`
+  (`tests/test_argv.py`, `tests/test_batch.py`, `tests/test_batch_containment.py`)
+  with a `TypeError` at collection, since none of them own a real target
+  format's muxer. Issue #143 scopes the change to `converter/profiles.py` and
+  `tests/test_profiles.py` alone, but also requires every existing test to
+  stay green; those fixtures are not the profile registry the scope line
+  protects; each was given `muxer="mp4"`, an arbitrary but valid value, since
+  none of the three tests it feeds inspects the field. No production file
+  (`converter/ffmpegtool.py`, `converter/batch.py`, `converter/cli.py`,
+  `converter/paths.py`) was touched.

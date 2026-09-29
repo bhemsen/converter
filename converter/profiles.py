@@ -112,6 +112,19 @@ class Profile:
     stays the display form ``--list-formats`` and progress bars print
     (``"MP4"``). ``description`` is the one-line explanation
     ``--list-formats`` and the interactive prompt print next to ``name``.
+
+    ``muxer`` is the ffmpeg muxer this profile's ``target_suffix`` selects by
+    itself, measured against ffmpeg 9.0 (``docs/specs/spec-abort-safe-writes.md``'s
+    muxer table). Writing straight to the final path lets ffmpeg pick the muxer
+    from that suffix; writing to a ``.partial`` name defeats that inference, so
+    ``build_argv``'s ``output_format`` keyword passes this value through ``-f``
+    to force the same choice ffmpeg would have made on its own. Declared, not
+    derived, for the same reason ``explicit_streams`` and ``partial_mapping``
+    are: it is a fact about ffmpeg's own suffix-sniffing this module cannot
+    recover without invoking ffmpeg. Required on every profile, not defaulted,
+    so a new target format cannot ship without it -- the same discipline
+    ``docs/vision.md``'s "adding a target format changes only its profile
+    entry" already holds every other field to.
     """
 
     label: str
@@ -123,6 +136,7 @@ class Profile:
     explicit_streams: bool
     partial_mapping: bool
     rules: dict[str, StreamRule]
+    muxer: str
     alpha_unsupported: bool = False
     last_resort: Attempt | None = None
 
@@ -541,6 +555,7 @@ MP4 = Profile(
     name="mp4",
     description="Video: copies compatible streams, re-encodes the rest to h264/aac",
     target_suffix=".mp4",
+    muxer="mp4",
     container_options=FASTSTART,
     # Deliberately not "-map 0": that also selects MKV attachments (font files
     # for ASS subtitles) and data streams, which MP4 cannot hold, so an
@@ -595,6 +610,7 @@ WAV = Profile(
     name="wav",
     description="Audio: single stream, uncompressed 16-bit PCM",
     target_suffix=".wav",
+    muxer="wav",
     container_options=(),
     # The stream is selected explicitly rather than left to ffmpeg's implicit
     # "best stream" heuristic, so a file with several audio streams converts
@@ -695,6 +711,7 @@ MKV = Profile(
     name="mkv",
     description="Video: copies almost every codec as-is, keeps font attachments",
     target_suffix=".mkv",
+    muxer="matroska",
     # Measured: +faststart is MP4/MOV furniture that MKV's own muxer ignores,
     # so declaring it here would be noise, not a real container option.
     container_options=(),
@@ -783,6 +800,7 @@ MOV = Profile(
     name="mov",
     description="Video: copies compatible streams, re-encodes the rest to h264/aac; no attachments",
     target_suffix=".mov",
+    muxer="mov",
     container_options=FASTSTART,
     # Deliberately maps "0:t?" even though MOV holds no attachment rule below:
     # MOV's muxer rejects any mapped attachment outright ("Could not find tag
@@ -868,6 +886,7 @@ WEBM = Profile(
     name="webm",
     description="Video: copies VP8/VP9/AV1 and Opus/Vorbis, re-encodes the rest to VP9/Opus",
     target_suffix=".webm",
+    muxer="webm",
     # Measured: WebM's muxer enforces its own codec set and has no faststart
     # equivalent worth declaring, so this stays empty like MKV's.
     container_options=(),
@@ -975,6 +994,7 @@ MP3 = Profile(
     name="mp3",
     description="Audio: single stream, MP3 (libmp3lame if re-encoded)",
     target_suffix=".mp3",
+    muxer="mp3",
     container_options=(),
     # Blind by type, not by index: the mp3 muxer -- not this mapping --
     # enforces "at most one audio stream" (measured against ffmpeg 9.0,
@@ -1048,6 +1068,7 @@ FLAC = Profile(
     name="flac",
     description="Audio: single stream, lossless FLAC",
     target_suffix=".flac",
+    muxer="flac",
     container_options=(),
     # Same blind-by-type shape and the same reason as MP3's above: the flac
     # muxer enforces "at most one audio stream" itself.
@@ -1093,6 +1114,7 @@ M4A = Profile(
     name="m4a",
     description="Audio: every stream the source has; most players use only the first",
     target_suffix=".m4a",
+    muxer="ipod",
     container_options=(),
     # ".m4a" auto-selects the "ipod" muxer, whose accept set is narrower than a
     # standard MP4's -- it rejects mp3, opus and flac stream copies -- so the
@@ -1150,6 +1172,7 @@ OGG = Profile(
     name="ogg",
     description="Audio: every stream the source has; most players use only the first",
     target_suffix=".ogg",
+    muxer="ogg",
     container_options=(),
     # "-c copy" rather than "-c:a copy": the ogg muxer's own video codec is
     # theora, so mapping video here would pass a theora source straight
@@ -1195,6 +1218,7 @@ OPUS = Profile(
     name="opus",
     description="Audio: every stream the source has; most players use only the first",
     target_suffix=".opus",
+    muxer="opus",
     container_options=(),
     # "-c copy": on the happy path the muxer, not the copy mask, decides --
     # the opus muxer also accepts a Vorbis stream, so a blind copy can ship a
@@ -1268,6 +1292,7 @@ PNG = Profile(
     name="png",
     description="Image: force-encoded to PNG, lossless",
     target_suffix=".png",
+    muxer="image2",
     container_options=(),
     cheap_attempt=Attempt(label="force-encode", options=flags("-map 0:v? -c:v png")),
     explicit_streams=False,
@@ -1362,6 +1387,7 @@ JPG = Profile(
     name="jpg",
     description="Image: force-encoded to JPEG; transparency is not carried",
     target_suffix=".jpg",
+    muxer="image2",
     container_options=(),
     cheap_attempt=Attempt(
         label="force-encode",
@@ -1411,6 +1437,7 @@ TIFF = Profile(
     name="tiff",
     description="Image: force-encoded to TIFF, lossless",
     target_suffix=".tiff",
+    muxer="image2",
     container_options=(),
     cheap_attempt=Attempt(label="force-encode", options=flags("-map 0:v? -c:v tiff")),
     explicit_streams=False,
@@ -1439,6 +1466,7 @@ BMP = Profile(
     name="bmp",
     description="Image: force-encoded to BMP, lossless",
     target_suffix=".bmp",
+    muxer="image2",
     container_options=(),
     cheap_attempt=Attempt(label="force-encode", options=flags("-map 0:v? -c:v bmp")),
     explicit_streams=False,
@@ -1495,6 +1523,7 @@ GIF = Profile(
     name="gif",
     description="Image: force-encoded to GIF, animated; a photograph is reduced to 256 colours",
     target_suffix=".gif",
+    muxer="gif",
     container_options=(),
     cheap_attempt=Attempt(
         label="force-encode",
@@ -1561,6 +1590,7 @@ WEBP = Profile(
     name="webp",
     description="Image: copies compatible streams, animated; falls back to WebP re-encode",
     target_suffix=".webp",
+    muxer="webp",
     container_options=(),
     cheap_attempt=Attempt(label="remux", options=flags("-map 0:v? -c copy")),
     explicit_streams=False,
@@ -1591,6 +1621,7 @@ AVIF = Profile(
     name="avif",
     description="Image: force-encoded to AVIF; a multi-frame source is reduced to a single frame",
     target_suffix=".avif",
+    muxer="avif",
     container_options=(),
     cheap_attempt=Attempt(
         label="force-encode",

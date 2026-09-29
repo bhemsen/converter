@@ -3524,6 +3524,7 @@ def _audio_and_picture_profile(*, picture_rule: bool = True) -> Profile:
         name="pict",
         description="a test double, not a shipped format",
         target_suffix=".pict",
+        muxer="mp4",
         container_options=(),
         cheap_attempt=Attempt(
             label="remux", options=flags("-map 0:a? -map 0:disp:attached_pic? -c copy")

@@ -44,6 +44,7 @@ def exhaustive_profile() -> Profile:
         name="exh",
         description="a test double, not a shipped format",
         target_suffix=".exh",
+        muxer="mp4",
         container_options=(),
         cheap_attempt=Attempt(label="copy-all", options=flags("-c copy")),
         explicit_streams=False,
@@ -63,6 +64,7 @@ def picture_carrying_profile() -> Profile:
         name="pict",
         description="a test double, not a shipped format",
         target_suffix=".pict",
+        muxer="mp4",
         container_options=(),
         cheap_attempt=Attempt(
             label="remux", options=flags("-map 0:a? -map 0:disp:attached_pic? -c copy")
