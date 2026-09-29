@@ -108,6 +108,7 @@ file's own directory — or `converter --help` for the full option list
 | `--overwrite` | replace existing output files instead of skipping them |
 | `--dry-run` | print what would be converted and stop |
 | `-q`, `--quiet` | hide the progress bar |
+| `--json` | emit newline-delimited JSON on stdout instead of prose (implies no progress bar) — see [Machine-readable output](#machine-readable-output) |
 | `--ffmpeg`, `--ffprobe` | use a specific executable instead of searching `PATH` |
 
 > **A file as `INPUT`.** A named file is converted whatever its suffix — it
@@ -161,11 +162,19 @@ only does the remaining work.
 
 | Exit code | Meaning |
 | --- | --- |
-| `0` | nothing failed |
-| `1` | at least one file failed |
-| `2` | a usage error or a missing ffmpeg |
+| `0` | nothing failed — `skipped` and `unsupported` files count as success too |
+| `1` | at least one file failed, or an unexpected error aborted the run |
+| `2` | a usage error, a refusal (e.g. a collision or overwrite hazard), or a missing ffmpeg |
 | `130` | interrupted (Ctrl+C / SIGINT) |
 | `143` | terminated (`SIGTERM`, POSIX only) |
+
+> **Under `--json`, exit 2 always leaves stdout empty.** A usage error, a
+> refusal, or a missing ffmpeg happens before any file is reported, so nothing
+> reaches stdout — the exit code alone says the run did nothing; the reason is
+> on stderr as always. Exit 130, exit 143, and an aborting exit 1 all end the
+> run without writing the final `summary` record — see
+> [Machine-readable output](#machine-readable-output) for what a consumer does
+> with a stream that ends that way.
 
 > **Every output is written safely.** A conversion writes to `<output>.partial`
 > and is renamed into place only after ffmpeg has succeeded and, where the loss
@@ -196,6 +205,75 @@ only does the remaining work.
 > ffmpeg keeps running until it finishes unless the whole process group is
 > killed with it, and either way the next run removes the `.partial` file it
 > finds.
+
+## Machine-readable output
+
+`--json` replaces every printed line with newline-delimited JSON on stdout: one
+`file` record per file as it finishes (completion order, not the order you
+passed them), then one `summary` record last. Nothing else reaches stdout — no
+progress bar, no `Using ffmpeg …` banner (it moves to stderr, still hidden by
+`-q`), no `note`/`FAILED` prose.
+
+Each line is one complete, pure-ASCII JSON object terminated by a single `\n`
+byte — never `\r\n`, on Windows either, because the bytes go straight to the
+stdout buffer instead of through the text layer. A non-ASCII path (or, on
+POSIX, a file name that reached Python as lone surrogates) is escaped to
+`\uXXXX`, so every line parses under any locale or code page. Every record's
+first two keys, in order, are `type` (the discriminator) and `schema` (the
+integer schema version, `1` today).
+
+Example — captured from one real run (`--to png` over a directory holding a
+video and an audio-only file), paths shortened:
+
+```json
+{"type": "file", "schema": 1, "source": "D:\\Rips\\audio_only.mp3", "output": "E:\\Done\\audio_only.png", "outcome": "unsupported", "attempt": null, "notes": ["audio stream 0 (mp3) dropped: not supported by PNG"], "error": null}
+{"type": "file", "schema": 1, "source": "D:\\Rips\\clip1.mp4", "output": "E:\\Done\\clip1.png", "outcome": "converted", "attempt": "single-frame", "notes": ["only the first frame was kept; PNG cannot hold more than one image", "non-video streams, and any video stream beyond the first, are not carried into PNG"], "error": null}
+{"type": "summary", "schema": 1, "converted": 1, "skipped": 0, "failed": 0, "unsupported": 1, "total": 2, "planned": 0, "exit_code": 0, "dry_run": false}
+```
+
+### Record types
+
+**`file`** — one per file the run reports on, including a pre-batch skip (a
+self-write) and a staging failure: nothing that was pointed at is left off the
+stream.
+
+| Key | Type | Meaning |
+| --- | --- | --- |
+| `source` | string | the source path, absolute (`Path.absolute()`, never `resolve()`) |
+| `output` | string | the output path it maps to, absolute, whether or not it was written |
+| `outcome` | string | `"converted"`, `"skipped"`, `"failed"`, or `"unsupported"` |
+| `attempt` | string \| `null` | the rung that produced the file (`remux`, `selective`, …); `null` unless `outcome` is `"converted"` |
+| `notes` | array of strings | every note and advisory, in the order the text mode prints them; `[]` when there are none |
+| `error` | string \| `null` | the failure reason; `null` unless `outcome` is `"failed"` |
+
+**`planned`** — `--dry-run` only, one per task that would convert: `type`,
+`schema`, `source`, `output`. A pre-batch skip still appears as a `file` record
+with `outcome: "skipped"`, dry run or not.
+
+**`summary`** — exactly one, last:
+
+| Key | Type | Meaning |
+| --- | --- | --- |
+| `converted`, `skipped`, `failed`, `unsupported`, `total` | integer | the same counts the text summary sentence uses |
+| `planned` | integer | number of `planned` records emitted; `0` outside `--dry-run` |
+| `exit_code` | integer | the code the process is about to exit with |
+| `dry_run` | boolean | whether this was `--dry-run` |
+
+### An incomplete stream
+
+A stream **without** a `summary` line is incomplete: exit 130, exit 143, and an
+aborting exit 1 (an unexpected error, not a per-file failure) all stop the run
+before one is written. The `file` records already written still stand — but an
+interrupt can also cut the very last line mid-write, so a consumer should
+discard a trailing line that is not `\n`-terminated rather than fail to parse
+it.
+
+### The schema is open
+
+A consumer must ignore keys it does not recognise — a later version can add a
+key, or a new record type, without breaking anything reading today's stream.
+Removing or renaming a key, or changing what a value means, is a breaking
+change and raises `schema` past `1`.
 
 ## How a conversion works
 
