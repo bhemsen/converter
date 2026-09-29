@@ -136,6 +136,20 @@ def output_for(
     return Path(output_root) / relative.with_suffix(target_suffix)
 
 
+def partial_for(dst: str | os.PathLike[str]) -> Path:
+    """Return the temporary name a conversion writes to before it succeeds.
+
+    ``clip.mp4`` becomes ``clip.mp4.partial`` -- appended, not substituted for
+    the suffix, so the final rename is a plain truncation of the name rather
+    than a second suffix computation, and so ``.partial`` collects in no
+    source-suffix set a directory walk could ever match
+    (``docs/specs/spec-abort-safe-writes.md``'s *Prior decisions*). Pure: no
+    filesystem access, so it is as cheap to call speculatively as it is to
+    call once and hold onto the result.
+    """
+    return Path(os.fspath(dst) + ".partial")
+
+
 def mirror_to_drive(
     path: str | os.PathLike[str],
     output_root: str | os.PathLike[str],

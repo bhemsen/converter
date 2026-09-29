@@ -19,6 +19,7 @@ from converter.paths import (
     mirror_to_drive,
     normalise_suffixes,
     output_for,
+    partial_for,
     select_input,
 )
 
@@ -212,6 +213,39 @@ class TestOutputFor:
         result = output_for(tmp_path / "a" / "ep1.mkv", tmp_path, Path("out"), ".mp4")
 
         assert result == Path("out") / "a" / "ep1.mp4"
+
+
+class TestPartialFor:
+    def test_appends_the_partial_suffix(self):
+        assert partial_for(Path("clip.mp4")) == Path("clip.mp4.partial")
+
+    def test_does_not_replace_the_existing_suffix(self):
+        """`.partial` is appended, not substituted for -- a `with_suffix` call
+        would turn `clip.mp4` into `clip.partial`, losing the container."""
+        result = partial_for(Path("clip.mp4"))
+
+        assert result.suffix == ".partial"
+        assert result.name == "clip.mp4.partial"
+
+    def test_keeps_the_directory_tree(self, tmp_path):
+        result = partial_for(tmp_path / "a" / "clip.mkv")
+
+        assert result == tmp_path / "a" / "clip.mkv.partial"
+
+    def test_accepts_a_plain_string(self):
+        assert partial_for("clip.mp4") == Path("clip.mp4.partial")
+
+    def test_does_not_touch_the_filesystem(self, tmp_path, monkeypatch):
+        """Pure by contract (docs/specs/spec-abort-safe-writes.md): no
+        Path.exists/stat/mkdir call is allowed to sneak in."""
+
+        def fail(*_args, **_kwargs):
+            raise AssertionError("partial_for must not touch the filesystem")
+
+        monkeypatch.setattr(Path, "exists", fail)
+        monkeypatch.setattr(Path, "stat", fail)
+
+        partial_for(tmp_path / "clip.mp4")
 
 
 class TestMirrorToDrive:
