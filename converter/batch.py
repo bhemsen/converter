@@ -296,6 +296,21 @@ def _probe_first(
     return engine.retries(profile, streams), list(streams)
 
 
+def _plan_ladder(
+    profile: Profile, task: Task, tools: Tools, partial: Path
+) -> tuple[list[Attempt], list[Stream] | None] | Result:
+    """The rungs to run first, plus the source's streams when already probed.
+
+    The engine's own cheap attempt when it offers one (nothing probed yet, the
+    failure side probes later); otherwise the up-front probe of
+    :func:`_probe_first`, which may already end the run.
+    """
+    first = engine.first_attempt(profile)
+    if first is not None:
+        return [first], None
+    return _probe_first(profile, task, tools, partial)
+
+
 def _climb_the_ladder(profile: Profile, task: Task, tools: Tools, partial: Path) -> Result:
     """Run every rung until one succeeds or the ladder is exhausted.
 
@@ -304,18 +319,12 @@ def _climb_the_ladder(profile: Profile, task: Task, tools: Tools, partial: Path)
     *any* exit that is not one of the explicit ``Result``-returning paths
     below -- a termination raised mid-probe included.
     """
-    first = engine.first_attempt(profile)
+    planned = _plan_ladder(profile, task, tools, partial)
+    if isinstance(planned, Result):
+        return planned
+    pending, known = planned
     errors: list[str] = []
-    known: list[Stream] | None = None
-    if first is None:
-        planned = _probe_first(profile, task, tools, partial)
-        if isinstance(planned, Result):
-            return planned
-        pending, known = planned
-    else:
-        pending = [first]
     probed = known is not None
-    first_run = True
 
     while pending:
         attempt = pending.pop(0)
@@ -328,12 +337,11 @@ def _climb_the_ladder(profile: Profile, task: Task, tools: Tools, partial: Path)
             # The first attempt run is the one verified: the cheap attempt, or --
             # when the source was probed up front -- the engine's selective rung
             # (a last resort's notes are fixed profile text).
-            verify = first_run and (known is None or engine.is_selective_rung(attempt))
+            verify = not errors and (known is None or engine.is_selective_rung(attempt))
             return _finish_conversion(
                 profile, task, tools, partial, attempt, verify=verify, streams=known
             )
 
-        first_run = False
         errors.append(f"[{attempt.label}] {result.stderr or f'exit code {result.returncode}'}")
         if not probed:
             probed = True
