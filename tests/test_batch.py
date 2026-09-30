@@ -1794,3 +1794,233 @@ class TestRunBatchTermination:
         for task in tasks:
             assert not partial_for(task.dst).exists()
             assert not task.dst.exists()
+
+
+def probe_first_profile() -> Profile:
+    """A synthetic probe-first profile, shaped like the `web` target that will use
+    the capability (issue #164): no cheap attempt, a pixel-format copy condition,
+    a subtitle rule that always drops, and a fixed-note last resort.
+
+    Not a shipped format -- no real profile is probe-first yet -- so every
+    behaviour below is proven against this test double alone.
+    """
+    return Profile(
+        label="PF",
+        name="pf",
+        description="a test double, not a shipped format",
+        target_suffix=".pf",
+        muxer="mp4",
+        container_options=(),
+        cheap_attempt=None,
+        explicit_streams=False,
+        partial_mapping=False,
+        probe_first=True,
+        rules={
+            "video": StreamRule(
+                frozenset({"h264"}),
+                flags("-c:v:{n} copy"),
+                fallback_options=flags("-c:v:{n} libx264"),
+                fallback_name="h264",
+                copy_pix_fmts=frozenset({"yuv420p"}),
+                pix_fmt_reason="only 8-bit 4:2:0 plays everywhere",
+            ),
+            "audio": StreamRule(
+                frozenset({"aac"}),
+                flags("-c:a:{n} copy"),
+                fallback_options=flags("-c:a:{n} aac"),
+                fallback_name="aac",
+            ),
+            "subtitle": StreamRule(
+                frozenset(),
+                flags("-c:s:{n} copy"),
+                drop_reason="not shown from inside the container",
+            ),
+        },
+        last_resort=Attempt(
+            label="re-encode",
+            options=flags("-map 0:v:0? -map 0:a? -c:v libx264 -c:a aac"),
+            notes=("re-encoded to h264/aac",),
+        ),
+    )
+
+
+class TestProbeFirstProfile:
+    """The engine offers no first attempt: `batch` probes, then climbs `retries`."""
+
+    def _task(self, tmp_path: Path) -> Task:
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        return task
+
+    def test_the_source_is_probed_once_before_the_first_run(
+        self, tmp_path, fake_ffmpeg, monkeypatch
+    ):
+        task = self._task(tmp_path)
+        runs_at_probe: list[int] = []
+        streams = [Stream(0, "video", "h264", pix_fmt="yuv420p"), Stream(1, "audio", "aac")]
+
+        def probe(_tools, _src):
+            runs_at_probe.append(len(fake_ffmpeg.calls))
+            return streams
+
+        monkeypatch.setattr(batch.ffmpegtool, "probe_streams", probe)
+
+        result = convert_one(probe_first_profile(), task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert runs_at_probe == [0]
+
+    def test_a_copyable_source_is_copied_not_sent_to_the_last_resort(
+        self, tmp_path, fake_ffmpeg, monkeypatch
+    ):
+        """The `explicit_streams` regression: the selective rung must exist for a
+        plan that gives nothing up, or every copyable source is re-encoded."""
+        task = self._task(tmp_path)
+        probes = spy_on_probe(
+            monkeypatch,
+            [Stream(0, "video", "h264", pix_fmt="yuv420p"), Stream(1, "audio", "aac")],
+            output_streams=[],
+            task=task,
+        )
+
+        result = convert_one(probe_first_profile(), task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert result.attempt == "selective"
+        assert result.notes == ()
+        assert len(fake_ffmpeg.calls) == 1
+        assert "libx264" not in fake_ffmpeg.calls[0]
+        assert fake_ffmpeg.calls[0].count("copy") == 2
+        # Nothing predicted lost, so the written file is never probed.
+        assert probes == [task.src]
+
+    def test_a_predicted_data_drop_the_output_holds_is_forgiven_a_subtitle_note_stays(
+        self, tmp_path, fake_ffmpeg, monkeypatch
+    ):
+        """The muxer put a timecode track back (issue #66): the structural drop
+        the engine predicted is not printed. The subtitle's drop is codec-level,
+        decided by the plan itself, so nothing forgives it."""
+        task = self._task(tmp_path)
+        probes = spy_on_probe(
+            monkeypatch,
+            [
+                Stream(0, "video", "h264", pix_fmt="yuv420p"),
+                Stream(1, "audio", "aac"),
+                Stream(2, "data", "", codec_tag="tmcd"),
+                Stream(3, "subtitle", "mov_text"),
+            ],
+            output_streams=[
+                Stream(0, "video", "h264", pix_fmt="yuv420p"),
+                Stream(1, "audio", "aac"),
+                Stream(2, "data", "", codec_tag="tmcd"),
+            ],
+            task=task,
+        )
+
+        result = convert_one(probe_first_profile(), task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert result.notes == (
+            "subtitle stream 3 (mov_text) dropped: not shown from inside the container",
+        )
+        assert probes == [task.src, partial_for(task.dst)]
+
+    def test_a_structural_drop_the_output_lacks_is_named_after_confirmation(
+        self, tmp_path, fake_ffmpeg, monkeypatch
+    ):
+        task = self._task(tmp_path)
+        spy_on_probe(
+            monkeypatch,
+            [Stream(0, "video", "h264", pix_fmt="yuv420p"), Stream(1, "attachment", "ttf")],
+            output_streams=[Stream(0, "video", "h264", pix_fmt="yuv420p")],
+            task=task,
+        )
+
+        result = convert_one(probe_first_profile(), task, TOOLS, overwrite=False)
+
+        assert result.notes == ("attachment stream 1 (ttf) dropped: not supported by PF",)
+
+    def test_a_pixel_format_re_encode_names_the_stream_and_the_reason(
+        self, tmp_path, fake_ffmpeg, monkeypatch
+    ):
+        task = self._task(tmp_path)
+        spy_on_probe(monkeypatch, [Stream(0, "video", "h264", pix_fmt="yuv420p10le")])
+
+        result = convert_one(probe_first_profile(), task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert result.notes == (
+            "video stream 0 (h264, yuv420p10le) re-encoded to h264: "
+            "only 8-bit 4:2:0 plays everywhere",
+        )
+        assert "libx264" in fake_ffmpeg.calls[0]
+
+    @pytest.mark.parametrize("error", [ProbeError("unreadable"), OSError("no ffprobe")])
+    def test_an_unreadable_source_ends_failed_without_running_ffmpeg(
+        self, tmp_path, fake_ffmpeg, monkeypatch, error
+    ):
+        task = self._task(tmp_path)
+
+        def probe(_tools, _src):
+            raise error
+
+        monkeypatch.setattr(batch.ffmpegtool, "probe_streams", probe)
+
+        result = convert_one(probe_first_profile(), task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.FAILED
+        assert str(error) in result.error
+        assert fake_ffmpeg.calls == []
+        assert not partial_for(task.dst).exists()
+
+    def test_a_source_with_no_stream_the_profile_has_a_rule_for_is_unsupported(
+        self, tmp_path, fake_ffmpeg, monkeypatch
+    ):
+        task = self._task(tmp_path)
+        spy_on_probe(monkeypatch, [Stream(0, "data", "bin_data")])
+
+        result = convert_one(probe_first_profile(), task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.UNSUPPORTED
+        assert result.notes == ("data stream 0 (bin_data) dropped: not supported by PF",)
+        assert fake_ffmpeg.calls == []
+
+    def test_a_failed_selective_rung_falls_to_the_last_resort_unverified(
+        self, tmp_path, fake_ffmpeg, monkeypatch
+    ):
+        """The last resort's notes are fixed profile text: nothing is verified,
+        and no second source probe is spent."""
+        task = self._task(tmp_path)
+        fake_ffmpeg.exit_codes = [1, 0]
+        probes = spy_on_probe(
+            monkeypatch,
+            [Stream(0, "video", "h264", pix_fmt="yuv420p"), Stream(1, "attachment", "ttf")],
+            output_streams=[],
+            task=task,
+        )
+
+        result = convert_one(probe_first_profile(), task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert result.attempt == "re-encode"
+        assert result.notes == ("re-encoded to h264/aac",)
+        assert probes == [task.src]
+
+    def test_the_mp4_selective_rung_still_spends_no_success_side_probe(
+        self, tmp_path, fake_ffmpeg, monkeypatch
+    ):
+        """MP4 is never probe-first: its selective rung is not the first attempt
+        run, so it stays unverified and the probe count is unchanged."""
+        task = self._task(tmp_path)
+        fake_ffmpeg.exit_codes = [1, 0]
+        probes = spy_on_probe(
+            monkeypatch,
+            [Stream(0, "video", "h264"), Stream(1, "attachment", "ttf")],
+            output_streams=[],
+            task=task,
+        )
+
+        result = convert_one(MP4, task, TOOLS, overwrite=False)
+
+        assert result.attempt == "selective"
+        assert probes == [task.src]
