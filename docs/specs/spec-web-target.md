@@ -270,3 +270,8 @@ Each issue references this spec path in its body.
   the verification runs. Known limit: a rule with both a `stream_limit` and a D3
   drop for one type can make `verify_success` predict a D2 drop the rung never
   made; `web` cannot hit it (video has no limit, audio has a fallback).
+- 2026-09-30: Profile (#164): `tests/test_cli.py` pins `README.md`'s fenced format list
+  byte-for-byte to `--list-formats`, so the `web` line is added to that one block in the
+  profile change (no source file besides `converter/profiles.py` changes). The `attached_pic`
+  drop reason is "only mjpeg and png cover art can be stored in MP4"; the last-resort notes
+  mirror `mp4`'s, adapted (cover art named, "so browsers can play them").

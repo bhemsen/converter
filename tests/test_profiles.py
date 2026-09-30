@@ -13,6 +13,7 @@ from converter.profiles import (
     ALPHA_FREE_PIX_FMTS,
     AVIF,
     BMP,
+    FASTSTART,
     FLAC,
     GIF,
     JPG,
@@ -30,6 +31,7 @@ from converter.profiles import (
     SOURCE_SUFFIXES,
     TIFF,
     WAV,
+    WEB,
     WEBM,
     WEBP,
     Attempt,
@@ -58,6 +60,7 @@ DISPOSITION_QUALIFIERS = {"attached_pic": "attached_pic"}
 #: Every profile the registry ships. A new one joins the invariant checks here.
 SHIPPED = [
     MP4,
+    WEB,
     WAV,
     MKV,
     MOV,
@@ -1819,6 +1822,7 @@ class TestRegistry:
     def test_keys_are_each_profile_s_own_name(self):
         assert PROFILES == {
             "mp4": MP4,
+            "web": WEB,
             "wav": WAV,
             "mkv": MKV,
             "mp3": MP3,
@@ -1938,6 +1942,7 @@ class TestRegistryStructuralInvariants:
 #: registry against the spec's own table rather than against itself.
 MEASURED_MUXERS = {
     "mp4": "mp4",
+    "web": "mp4",
     "mkv": "matroska",
     "webm": "webm",
     "mov": "mov",
@@ -1990,11 +1995,86 @@ class TestRegistryTargetCoherence:
     dict-literal equality is what would actually notice a missing profile.
     """
 
-    def test_no_two_profiles_share_a_target_suffix(self):
-        suffixes = [profile.target_suffix for profile in PROFILES.values()]
-        duplicates = {suffix for suffix in suffixes if suffixes.count(suffix) > 1}
+    def test_names_are_unique(self):
+        names = [profile.name for profile in PROFILES.values()]
 
-        assert not duplicates, f"target_suffix collision(s) in the registry: {sorted(duplicates)}"
+        assert len(names) == len(set(names))
+
+    def test_a_shared_target_suffix_is_only_allowed_between_profiles_sharing_a_muxer(self):
+        """Narrowed from "no two profiles share a suffix" (issue #30) by
+        `docs/specs/spec-web-target.md`: `web` and `mp4` both write `.mp4`, which
+        is what every browser and player expects. A shared suffix stays safe
+        while the muxer -- the thing ffmpeg picks from the suffix -- is the same;
+        two profiles that disagree on it would make one suffix mean two formats."""
+        muxers_by_suffix: dict[str, set[str]] = {}
+        for profile in PROFILES.values():
+            muxers_by_suffix.setdefault(profile.target_suffix, set()).add(profile.muxer)
+
+        conflicts = {suffix for suffix, muxers in muxers_by_suffix.items() if len(muxers) > 1}
+
+        assert not conflicts, f"target_suffix shared across muxers: {sorted(conflicts)}"
+
+    def test_the_only_shared_suffix_is_mp4_between_mp4_and_web(self):
+        """Pins the narrowing's actual reach, so widening it further is a
+        deliberate edit rather than a silent one."""
+        by_suffix: dict[str, set[str]] = {}
+        for profile in PROFILES.values():
+            by_suffix.setdefault(profile.target_suffix, set()).add(profile.name)
+
+        assert {s: n for s, n in by_suffix.items() if len(n) > 1} == {".mp4": {"mp4", "web"}}
+
+
+class TestWebProfile:
+    """`web` (issue #164, `docs/specs/spec-web-target.md`): the declared fields."""
+
+    def test_container_fields(self):
+        assert WEB.name == "web"
+        assert WEB.target_suffix == ".mp4"
+        assert WEB.muxer == "mp4"
+        assert WEB.container_options == FASTSTART
+        assert WEB.probe_first is True
+        assert WEB.cheap_attempt is None
+        assert WEB.partial_mapping is False
+        assert WEB.explicit_streams is False
+
+    def test_video_rule(self):
+        rule = WEB.rules["video"]
+
+        assert rule.copy_mask == frozenset({"h264"})
+        assert rule.copy_pix_fmts == frozenset({"yuv420p", "yuvj420p"})
+        assert rule.pix_fmt_reason == "browsers only play 8-bit 4:2:0 video"
+        assert rule.stream_limit is None
+        assert rule.fallback_name == "h264"
+
+    def test_audio_rule(self):
+        rule = WEB.rules["audio"]
+
+        assert rule.copy_mask == frozenset({"aac", "mp3"})
+        assert rule.stream_limit is None
+        assert rule.fallback_name == "aac"
+
+    def test_subtitles_are_never_copied(self):
+        rule = WEB.rules["subtitle"]
+
+        assert rule.copy_mask == frozenset()
+        assert rule.fallback_options is None
+        assert rule.drop_reason == "subtitles are not shown by a browser from inside an MP4"
+
+    def test_cover_art_rule_copies_mjpeg_and_png_only(self):
+        rule = WEB.rules["attached_pic"]
+
+        assert rule.copy_mask == frozenset({"mjpeg", "png"})
+        assert rule.fallback_options is None
+        assert rule.copy_pix_fmts is None
+        assert rule.drop_reason
+
+    def test_no_data_or_attachment_rule(self):
+        assert set(WEB.rules) == {"video", "audio", "subtitle", "attached_pic"}
+
+    def test_mp4_is_untouched_by_the_new_target(self):
+        assert MP4.probe_first is False
+        assert MP4.cheap_attempt is not None
+        assert MP4.rules["video"].copy_pix_fmts is None
 
 
 class TestLossyCodecs:
@@ -2246,7 +2326,7 @@ class TestResolveTarget:
             ValueError,
             match=(
                 r"avi.*available targets: avif, bmp, flac, gif, jpg, m4a, mkv, mov, "
-                r"mp3, mp4, ogg, opus, png, tiff, wav, webm, webp"
+                r"mp3, mp4, ogg, opus, png, tiff, wav, web, webm, webp"
             ),
         ):
             resolve_target("avi")
