@@ -63,11 +63,10 @@ shows a black picture or plays silently in Chrome or Firefox (`README.md`,
     when `probe_first`" and "a probe-first profile is never `explicit_streams`".
     The up-front probe catches `ProbeError` **and `OSError`** — it is now the only
     probe, so an unreadable source must end `failed`, not escape.
-  - After a probe-first profile's selective rung succeeds, **if** its plan
-    predicted a structural drop, `batch` spends the second probe through the
-    existing `_confirm_against_output` / `jobs.confirm_drops` and keeps only the
-    drops the written file does not hold; a plan that drops nothing costs no
-    second probe (`docs/constitution.md`'s ffprobe principle, unchanged).
+  - Confirming predicted drops — the mechanism, fixed in Prior decisions
+    ("Verification of a probe-first profile"): the engine verifies the *first
+    rung `batch` runs*, whichever it is, and a probe-first profile's selective
+    rung leaves its structural drops to that verification.
   - `StreamRule.copy_pix_fmts: frozenset[str] | None = None`. When set, a stream
     counts as copyable only if its codec is in `copy_mask` **and** its probed
     `pix_fmt` is in `copy_pix_fmts`; an unknown `pix_fmt` is not copyable. One
@@ -162,6 +161,7 @@ shows a black picture or plays silently in Chrome or Firefox (`README.md`,
 | Copy mask: video `h264` only with `pix_fmt` in {`yuv420p`, `yuvj420p`}; audio `aac`, `mp3` | Sparring on the research's evidence, 2026-09-28 (`docs/prior-art.md`). The pixel format is what separates a playable H.264 from High 10 / 4:2:2, which is the check jellyfin-web makes through `canPlayType` | 2026-09-30 |
 | Probe-first: the profile declares `probe_first=True` and `cheap_attempt=None`; `jobs.first_attempt` returns `None`; `batch` then probes and climbs `jobs.retries` | A remux is exactly what lets unplayable codecs through; skipping it costs nothing, because the probe count stays one per file — the same count MP4's `partial_mapping` already spends after a successful remux. `batch` asks the engine rather than reading the flag, per `docs/architecture.md`'s boundary | 2026-09-30 |
 | `web` sets `partial_mapping=False` and **`explicit_streams=False`** | `explicit_streams=True` makes `_build_selective` return `None` for a plan that gives nothing up (`jobs.py`, the ladder's PLAN→FIN edge), which is right only when a cheap attempt already mapped explicitly; for a probe-first profile it would send every fully copyable source to the last resort and re-encode it. Caught by the acceptance review | 2026-09-30 |
+| **Verification of a probe-first profile.** (1) `jobs.needs_verification(profile)` is `partial_mapping or probe_first`. (2) For a probe-first profile, `jobs.retries` builds the selective rung **without** its structural drop notes — "no rule for this type" (D1) and "no room" (D2) — because those are exactly the prediction `verify_success` makes; codec-level notes (re-encodes, the D3 drop reason such as the subtitle rule's) stay on the attempt. (3) `batch` verifies the **first attempt it actually runs** when `needs_verification` says so: the cheap attempt for every existing profile (unchanged), the selective rung for a probe-first one — known to `batch` because the engine offered no first attempt, never by reading `probe_first`. It passes the stream list it already probed, so the source is not probed twice. (4) `verify_success` + `_confirm_against_output` then add only the structural drops the written file lacks; the second probe runs only when one is predicted | Names the mechanism the review asked for. MP4's selective rung stays unverified — it is never the first attempt `batch` runs — so no existing target's probe count changes |
 | After the selective rung succeeds, predicted drops are confirmed against the written file (second probe only when a drop is predicted) | Measured: the MP4 muxer recreates `tmcd`. Without the confirmation every iPhone/GoPro `.mov` would carry a false "dropped" note, which the constitution forbids ("the claim is confirmed against the written file before it is printed") | 2026-09-30 |
 | An unknown `pix_fmt` is not copyable | The safe side: a stream the probe could not describe is re-encoded, never copied on a guess | 2026-09-30 |
 | One `jobs` helper decides "copyable" everywhere `copy_mask` is tested today | Four call sites testing the mask alone would silently disagree with `_decide_stream` once a rule restricts pixel formats | 2026-09-30 |
@@ -202,7 +202,9 @@ Each issue references this spec path in its body.
 - [ ] `tests/test_argv.py` / `tests/test_batch.py`: a `web` conversion calls
       `probe_streams` once before the first `run()`; after a success a second
       time only when a drop was predicted, and a predicted `tmcd` drop the output
-      holds yields no note; a `ProbeError` or `OSError` from the first probe is
+      holds yields no note — asserted together with a subtitle drop, whose note
+      stays (codec-level, never confirmed away); MP4's selective rung still spends
+      no success-side probe; a `ProbeError` or `OSError` from the first probe is
       `failed`; a source with no stream of a type `web` has a rule for (e.g.
       data-only) is `unsupported`; a copyable source is **copied, not sent to the
       last resort** (the `explicit_streams` regression).
@@ -255,3 +257,7 @@ Each issue references this spec path in its body.
   impact line assumed — the vision criterion still holds for the profile's own
   diff; and the Pi 4 measurement, promised "in the spec", is placed at the gate
   (before implementation or at QA) because it needs the human's hardware.
+- 2026-09-30: Second review round: the verification mechanism is now named (the
+  first rung `batch` runs is the one verified; structural drops leave the
+  probe-first plan for `verify_success`), and the ladder diagram gains the
+  `SEL → C` edge its rule text already described.

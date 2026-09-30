@@ -42,7 +42,8 @@ flowchart TD
     PLAN -->|"no stream survives the profile's rules"| FIN
     PLAN -->|"the cheap attempt already selects streams explicitly<br/>and the plan gives up nothing"| FIN
     PLAN -->|"otherwise"| SEL
-    SEL -->|"exit 0"| OK
+    SEL -->|"exit 0, the first rung run (probe-first),<br/>and a structural drop predicted"| C
+    SEL -->|"exit 0 — otherwise"| OK
     SEL -->|"exit != 0"| FIN
     FIN -->|"exit 0"| OK
     FIN -->|"exit != 0, or no last-resort attempt declared"| BAD
@@ -262,9 +263,11 @@ flowchart TD
   half is exercised.
 - **Every rung carries its own notes.** The notes of the attempt that actually
   succeeded are what the batch reports — the discarded rungs' notes are not. Only
-  the cheap attempt's notes are ever added to, and only by the two verification
-  nodes above it; a later rung was built from the stream list itself, so its
-  notes are already complete and it is never verified a second time.
+  the *first rung run* has its notes added to, and only by the verification
+  nodes: the cheap attempt for every profile that has one, the selective rung
+  for a probe-first profile, whose plan leaves its structural drops to `C`. A
+  later rung was built from the stream list itself, so its notes are already
+  complete and it is never verified a second time.
 - **Container-wide options are appended by the engine, once, at the end of every
   attempt.** The profile declares them in one place instead of repeating them in
   each attempt it declares.
