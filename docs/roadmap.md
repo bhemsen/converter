@@ -23,7 +23,7 @@
 | 10 | single-file-input | [spec-single-file-input.md](specs/archive/spec-single-file-input.md) | [#10](https://github.com/bhemsen/converter/milestone/10) |
 | 11 | json-output | [spec-json-output.md](specs/archive/spec-json-output.md) | [#11](https://github.com/bhemsen/converter/milestone/11) |
 | 12 | abort-safe-writes | [spec-abort-safe-writes.md](specs/archive/spec-abort-safe-writes.md) | [#12](https://github.com/bhemsen/converter/milestone/12) |
-| 13 | web-target | — | — |
+| 13 | web-target | [spec-web-target.md](specs/spec-web-target.md) | [#13](https://github.com/bhemsen/converter/milestone/13) |
 | 14 | subtitle-sidecars | — | — |
 
 A phase gets a Spec link once `/plan` drafts it, and a Milestone link once the

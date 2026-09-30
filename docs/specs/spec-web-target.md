@@ -151,8 +151,8 @@ shows a black picture or plays silently in Chrome or Firefox (`README.md`,
 ## Human prerequisites
 
 - [ ] Access to the Raspberry Pi 4 *videothek* runs on, with ffmpeg installed, to
-      run the preset benchmark — **before implementation** or **at QA**, as the
-      OPEN row on the preset decides.
+      run the preset benchmark **at the QA gate** — confirmed available by the
+      human at acceptance, 2026-09-30.
 
 ## Prior decisions
 
@@ -165,8 +165,8 @@ shows a black picture or plays silently in Chrome or Firefox (`README.md`,
 | After the selective rung succeeds, predicted drops are confirmed against the written file (second probe only when a drop is predicted) | Measured: the MP4 muxer recreates `tmcd`. Without the confirmation every iPhone/GoPro `.mov` would carry a false "dropped" note, which the constitution forbids ("the claim is confirmed against the written file before it is printed") | 2026-09-30 |
 | An unknown `pix_fmt` is not copyable | The safe side: a stream the probe could not describe is re-encoded, never copied on a guess | 2026-09-30 |
 | One `jobs` helper decides "copyable" everywhere `copy_mask` is tested today | Four call sites testing the mask alone would silently disagree with `_decide_stream` once a rule restricts pixel formats | 2026-09-30 |
-| Video fallback: `-c:v:{n} libx264 -crf:v:{n} 18 -preset:v:{n} <PRESET> -pix_fmt:v:{n} yuv420p`; audio fallback `-c:a:{n} aac -b:a:{n} 192k` | CRF 18 and AAC 192k match `mp4`, so `web` introduces no quality decision beyond the preset; `-pix_fmt` per stream, the form measured above | 2026-09-30 |
-| Last resort: `-map 0:v:0? -map 0:a? -c:v libx264 -crf 18 -preset <PRESET> -pix_fmt yuv420p -c:a aac -b:a 192k`, with notes naming what it gives up | Mirrors `mp4`'s last resort with the same preset | 2026-09-30 |
+| Video fallback: `-c:v:{n} libx264 -crf:v:{n} 18 -preset:v:{n} veryfast -pix_fmt:v:{n} yuv420p`; audio fallback `-c:a:{n} aac -b:a:{n} 192k` | CRF 18 and AAC 192k match `mp4`, so `web` introduces no quality decision beyond the preset; `-pix_fmt` per stream, the form measured above | 2026-09-30 |
+| Last resort: `-map 0:v:0? -map 0:a? -c:v libx264 -crf 18 -preset veryfast -pix_fmt yuv420p -c:a aac -b:a 192k`, with notes naming what it gives up | Mirrors `mp4`'s last resort with the same preset | 2026-09-30 |
 | Every audio stream is kept | Sparring: only Safari lets a user switch, elsewhere the default track plays; keeping the rest loses nothing a browser notices | 2026-09-30 |
 | Subtitles: one `subtitle` rule with an empty copy mask, no fallback, and the drop reason "subtitles are not shown by a browser from inside an MP4" | No browser renders in-band `mov_text` in a plain `<video>` (`docs/prior-art.md`); carrying it would look like a kept subtitle. Phase 14 adds sidecars | 2026-09-30 |
 | Cover art: an `attached_pic` rule copying `mjpeg` and `png`, dropping anything else with a note | Without it, an MJPEG cover would match the video rule and be re-encoded into a second H.264 stream. MP4 holds both formats; a browser ignores the picture, so keeping it costs nothing | 2026-09-30 |
@@ -181,12 +181,12 @@ shows a black picture or plays silently in Chrome or Firefox (`README.md`,
 | A source with only subtitle (or only data) streams ends `failed` under `web`, not `unsupported` | `describe_unsupported` returns `None` because `web` has a subtitle rule, and every rung then maps nothing. Such sources are not in the curated source-suffix set in practice; documented, not special-cased | 2026-09-30 |
 | The capability and the `web` profile land as separate issues, the profile last | Makes the vision's criterion checkable: the profile's own diff touches only `profiles.py` and tests | 2026-09-30 |
 | The foundation and design carriers are edited in this spec PR | Recorded by `/loopkit:roadmap`; phases 6, 10, 11 and 12 are the precedent | 2026-09-30 |
-| OPEN — Which x264 preset does `web` declare: `veryfast`, `ultrafast`, or `medium` like `mp4`? And is the Pi 4 benchmark a precondition for fixing it, or a QA confirmation? | resolved at the spec-acceptance gate | — |
-| OPEN — `web`'s output suffix: share `.mp4` with `mp4` (narrow the registry's no-shared-suffix guard from issue #30; an OUTPUT tree already holding `--to mp4` results is then skipped file by file as "output already exists"), or a compound `.web.mp4` (no guard change, no skip interaction, `.mp4` sources never self-write — but an in-place run would rediscover `x.web.mp4` as a source next time and write `x.web.web.mp4`)? | resolved at the spec-acceptance gate | — |
+| The preset is `veryfast`; its Pi 4 speed is measured at the QA gate and recorded here | Resolved at the spec-acceptance gate, 2026-09-30: measured here at ~1.9× `medium` with an equal or smaller file, estimated ~15–19 fps for 1080p on the Pi. `ultrafast` would roughly double file size; `medium` leaves the Pi near 8–10 fps. Measuring at QA lets implementation start now | 2026-09-30 |
+| `web` shares the `.mp4` suffix; the registry guard from issue #30 narrows from "no two profiles share a suffix" to "names are unique, and a shared suffix is allowed only between profiles that share the muxer" | Resolved at the spec-acceptance gate, 2026-09-30: `.mp4` is what every browser and player expects. A compound `.web.mp4` would be rediscovered as a source by an in-place run and grow `x.web.web.mp4`. Consequence, documented in the README: an OUTPUT tree that already holds `--to mp4` results is skipped file by file ("output already exists") — a `web` run writes to its own directory or passes `--overwrite`. The narrowed guard is a test change and lands in the profile issue | 2026-09-30 |
 
 ## Tracking
 
-- Milestone: filled at the acceptance gate
+- Milestone: [web-target](https://github.com/bhemsen/converter/milestone/13)
 - Issues: created from this spec once it is merged (one per implementable step)
 
 Each issue references this spec path in its body.
@@ -261,3 +261,6 @@ Each issue references this spec path in its body.
   first rung `batch` runs is the one verified; structural drops leave the
   probe-first plan for `verify_success`), and the ladder diagram gains the
   `SEL → C` edge its rule text already described.
+- 2026-09-30: Spec-acceptance gate: preset `veryfast`, Pi 4 measured at QA; `web`
+  shares `.mp4`, with the #30 guard narrowed to allow a shared suffix between
+  profiles sharing a muxer. Accepted.
