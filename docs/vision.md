@@ -43,8 +43,9 @@ shell loop around ffmpeg.
 
 ## Success criteria
 
-- `converter --to X` works for at least 17 target formats: `mp4 mkv webm mov`,
-  `mp3 m4a flac wav opus ogg`, `png jpg webp avif gif tiff bmp`.
+- `converter --to X` works for at least 18 target formats: `mp4 mkv webm mov`,
+  `mp3 m4a flac wav opus ogg`, `png jpg webp avif gif tiff bmp` — plus `web`, an
+  MP4 that every current browser plays.
 - Adding a target format changes only its profile entry and its test — no diff in
   `cli.py`, `batch.py` or `paths.py`. Checkable against the diff of the most
   recently added format.

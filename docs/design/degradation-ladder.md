@@ -16,6 +16,7 @@ only a run that is about to claim a loss ever reaches.
 
 ```mermaid
 flowchart TD
+    PF{"does the profile declare probe-first?"}
     A["Attempt 1 — the profile's cheap attempt<br/>(ffmpeg)"]
     V["predict what that mapping could carry<br/>(ffprobe on the source — the success side's first probe)"]
     C["confirm the prediction against the written file<br/>(ffprobe on the output — only when a loss is predicted)"]
@@ -26,6 +27,8 @@ flowchart TD
     OK["converted — the winning attempt's notes are reported"]
     BAD["failed — partial output removed, ffmpeg's stderr kept per rung"]
 
+    PF -->|"no"| A
+    PF -->|"yes — no cheap attempt; the one probe comes first"| P
     A -->|"exit 0, and the profile declares the mapping exhaustive"| OK
     A -->|"exit 0, and the profile declares the mapping partial"| V
     V -->|"stream list, and the mapping gave nothing up"| OK
@@ -39,7 +42,8 @@ flowchart TD
     PLAN -->|"no stream survives the profile's rules"| FIN
     PLAN -->|"the cheap attempt already selects streams explicitly<br/>and the plan gives up nothing"| FIN
     PLAN -->|"otherwise"| SEL
-    SEL -->|"exit 0"| OK
+    SEL -->|"exit 0, the first rung run (probe-first),<br/>and a structural drop predicted"| C
+    SEL -->|"exit 0 — otherwise"| OK
     SEL -->|"exit != 0"| FIN
     FIN -->|"exit 0"| OK
     FIN -->|"exit != 0, or no last-resort attempt declared"| BAD
@@ -47,6 +51,16 @@ flowchart TD
 
 ## Rules the diagram encodes
 
+- **A probe-first profile starts at `P`.** It declares no cheap attempt, because a
+  blind remux is precisely what would carry streams the target accepts but cannot
+  use — `web`'s HEVC or AC-3 in an MP4 a browser cannot play. Its one probe is the
+  failure side's `P`, moved to the front; its selective rung is built from it and
+  already carries accurate notes about what it re-encodes; only a predicted
+  *drop* is confirmed against the written file, through `C`, because the MP4
+  muxer puts back a `tmcd` track no `-map` selected. A probe-first profile is
+  never `explicit_streams`, so it never takes PLAN's "already selects streams
+  explicitly" edge to `FIN` — a copyable source is copied, not re-encoded
+  (`docs/specs/spec-web-target.md`).
 - **One probe per file, and none for an exhaustive cheap attempt — plus one more
   only for a run that is about to report a loss.** The failure-side `ffprobe`
   node sits behind the first non-zero exit and is reached at most once; every
@@ -215,13 +229,15 @@ flowchart TD
   a *blind* stream copy for a container that can hold the source codecs
   (`-map 0:v? -map 0:a? ...`), or a *stream-explicit* selection where it cannot
   (`-map 0:a:0 ...`). Which of the two it is, the profile declares — the engine
-  never parses an option list to find out.
+  never parses an option list to find out. A probe-first profile declares no
+  rung 1 at all and starts at the selective rung.
 - **The selective rung is skipped when it would add nothing.** Two conditions do
   that. Nothing survives the profile's rules, so there is no command to build. Or
   the profile's cheap attempt is stream-explicit *and* the plan gives up nothing
   worth naming — then the rung would be a second, equivalent ffmpeg run. A profile
   whose cheap attempt is blind always gets the rung: the explicit per-stream
-  mapping is exactly what can rescue a file the blind copy could not.
+  mapping is exactly what can rescue a file the blind copy could not. A
+  probe-first profile always gets it too — the rung is its first attempt.
 - **The last rung is optional.** A container that can always be reached by a full
   re-encode declares one; a container with nothing further to give up (WAV) does
   not, and a failure at the rung before it is then the end of the ladder.
@@ -247,9 +263,11 @@ flowchart TD
   half is exercised.
 - **Every rung carries its own notes.** The notes of the attempt that actually
   succeeded are what the batch reports — the discarded rungs' notes are not. Only
-  the cheap attempt's notes are ever added to, and only by the two verification
-  nodes above it; a later rung was built from the stream list itself, so its
-  notes are already complete and it is never verified a second time.
+  the *first rung run* has its notes added to, and only by the verification
+  nodes: the cheap attempt for every profile that has one, the selective rung
+  for a probe-first profile, whose plan leaves its structural drops to `C`. A
+  later rung was built from the stream list itself, so its notes are already
+  complete and it is never verified a second time.
 - **Container-wide options are appended by the engine, once, at the end of every
   attempt.** The profile declares them in one place instead of repeating them in
   each attempt it declares.

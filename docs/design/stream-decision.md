@@ -25,10 +25,10 @@ flowchart TD
     PIC{"is stream i an attached picture,<br/>and does the profile declare an attached_pic rule?"}
     T{"does the profile declare a rule for type t?"}
     ROOM{"is there still room for a t stream?<br/>(the rule's stream limit)"}
-    MASK{"is c in the rule's copy mask?"}
+    MASK{"is c in the rule's copy mask —<br/>and, where the rule restricts pixel formats,<br/>is stream i's probed pix_fmt among them?"}
     ENC{"does the rule declare a fallback encoder?"}
     COPY["accept — map stream i, emit the rule's pass-through codec<br/>(literal copy, or a cheap in-kind transcode such as mov_text)"]
-    REENC["re-encode — map stream i, emit the fallback encoder<br/>note: t stream i (c) re-encoded to TARGET_CODEC<br/>(a rule may declare no note where the re-encode gives up nothing)"]
+    REENC["re-encode — map stream i, emit the fallback encoder<br/>note: t stream i (c) re-encoded to TARGET_CODEC<br/>(when c was copyable but its pix_fmt was not, the note names<br/>the pix_fmt and why; a rule may declare no note where the<br/>re-encode gives up nothing)"]
     OPT{"does the rule declare a source-dependent option,<br/>and does stream i's probed property not already satisfy it?"}
     OVERRIDE["apply the option — append its value to stream i's re-encode,<br/>in the same per-stream form (:v:{n}) the rule's own positional<br/>options already carry"]
     STAND["fallback stands as declared — the option's condition is not met"]
