@@ -36,8 +36,10 @@ shows a black picture or plays silently in Chrome or Firefox (`README.md`,
 - [ ] Every subtitle stream is dropped with a note (phase 14 turns text
       subtitles into sidecars); cover art in MJPEG or PNG is kept, anything else
       dropped with a note.
-- [ ] A `web` conversion spends exactly one `ffprobe`, before its first
-      attempt, and none after a success.
+- [ ] A `web` conversion spends one `ffprobe` before its first attempt, plus a
+      second on the written file only when its plan predicted a dropped stream —
+      and keeps only the drops the output really lacks (the MP4 muxer puts a
+      `tmcd` track back that no `-map` selected; measured below).
 - [ ] Every existing target's argv, notes and probe count are unchanged.
 - [ ] The engine capability (probe-first, the pixel-format copy condition) lands
       in its own change; the change that adds `web` touches only
@@ -58,19 +60,30 @@ shows a black picture or plays silently in Chrome or Firefox (`README.md`,
     `batch` — which only sees that the engine offers no first attempt — probes
     first and climbs `jobs.retries` directly. `Profile.cheap_attempt` becomes
     `Attempt | None`; a test over `PROFILES` pins "`cheap_attempt is None` exactly
-    when `probe_first`".
+    when `probe_first`" and "a probe-first profile is never `explicit_streams`".
+    The up-front probe catches `ProbeError` **and `OSError`** — it is now the only
+    probe, so an unreadable source must end `failed`, not escape.
+  - After a probe-first profile's selective rung succeeds, **if** its plan
+    predicted a structural drop, `batch` spends the second probe through the
+    existing `_confirm_against_output` / `jobs.confirm_drops` and keeps only the
+    drops the written file does not hold; a plan that drops nothing costs no
+    second probe (`docs/constitution.md`'s ffprobe principle, unchanged).
   - `StreamRule.copy_pix_fmts: frozenset[str] | None = None`. When set, a stream
     counts as copyable only if its codec is in `copy_mask` **and** its probed
     `pix_fmt` is in `copy_pix_fmts`; an unknown `pix_fmt` is not copyable. One
     helper in `jobs.py` decides "copyable" for every place that asks today
     (`_decide_stream` and the three note builders that test `copy_mask`).
-  - A re-encode caused by the pixel-format condition gets its own note:
-    `video stream <i> (<codec>, <pix_fmt>) re-encoded to h264: browsers only play
-    8-bit 4:2:0 video`.
+  - `StreamRule.pix_fmt_reason: str | None = None`, required alongside
+    `copy_pix_fmts`. A re-encode caused by the pixel-format condition gets the
+    note `video stream <i> (<codec>, <pix_fmt>) re-encoded to <fallback_name>:
+    <pix_fmt_reason>` — the reason is profile data, so `jobs.py` stays free of
+    target-specific text.
 - **The `web` profile** (`converter/profiles.py` entry + tests only), in the
   change after the capability.
 - The self-write note (`cli._partition_self_writes`) is reworded so it no longer
-  claims there is nothing to convert — see Prior decisions.
+  claims there is nothing to convert — see Prior decisions. It lands in the
+  **capability** issue, never in the profile issue, and updates the
+  `tests/test_cli.py` tests that pin the old text.
 - `README.md`: `web` in the format list and a short section on what it copies,
   what it re-encodes, and why it differs from `mp4`.
 - Foundation and design carriers, **authored in this spec PR**: `docs/vision.md`,
@@ -114,6 +127,12 @@ shows a black picture or plays silently in Chrome or Firefox (`README.md`,
 - Per-stream options work as the engine emits them: a 10-bit HEVC + AC-3 source
   through `-c:v:0 libx264 -crf:v:0 20 -preset:v:0 veryfast -pix_fmt:v:0 yuv420p
   -c:a:0 aac -b:a:0 192k -f mp4` came out `h264, High, yuv420p` + `aac, LC`.
+- The MP4 muxer recreates a timecode track that no `-map` selected: a `.mov`
+  with streams h264, aac and `tmcd` data, written with `-map 0:0 -map 0:1` to
+  `-f mp4`, came out with a `tmcd` data stream again — both when copying and
+  when re-encoding. A probe-first plan that names the `tmcd` stream as dropped
+  would therefore be wrong without the confirming probe (issue #66's finding,
+  now on the selective rung).
 - Relative x264 speed, 10 s of 1080p30, 4 threads (the Pi 4 has 4 cores), on this
   Windows machine:
 
@@ -133,8 +152,8 @@ shows a black picture or plays silently in Chrome or Firefox (`README.md`,
 ## Human prerequisites
 
 - [ ] Access to the Raspberry Pi 4 *videothek* runs on, with ffmpeg installed, to
-      run the preset benchmark at the QA gate (see Verification). Needed for QA,
-      not for implementation.
+      run the preset benchmark — **before implementation** or **at QA**, as the
+      OPEN row on the preset decides.
 
 ## Prior decisions
 
@@ -142,7 +161,8 @@ shows a black picture or plays silently in Chrome or Firefox (`README.md`,
 |---|---|---|
 | Copy mask: video `h264` only with `pix_fmt` in {`yuv420p`, `yuvj420p`}; audio `aac`, `mp3` | Sparring on the research's evidence, 2026-09-28 (`docs/prior-art.md`). The pixel format is what separates a playable H.264 from High 10 / 4:2:2, which is the check jellyfin-web makes through `canPlayType` | 2026-09-30 |
 | Probe-first: the profile declares `probe_first=True` and `cheap_attempt=None`; `jobs.first_attempt` returns `None`; `batch` then probes and climbs `jobs.retries` | A remux is exactly what lets unplayable codecs through; skipping it costs nothing, because the probe count stays one per file — the same count MP4's `partial_mapping` already spends after a successful remux. `batch` asks the engine rather than reading the flag, per `docs/architecture.md`'s boundary | 2026-09-30 |
-| `web` sets `partial_mapping=False` and `explicit_streams=True` | Its first attempt is built stream by stream from the probe, so nothing is unmapped by construction and the selective rung's notes are already accurate; no success-side probe runs | 2026-09-30 |
+| `web` sets `partial_mapping=False` and **`explicit_streams=False`** | `explicit_streams=True` makes `_build_selective` return `None` for a plan that gives nothing up (`jobs.py`, the ladder's PLAN→FIN edge), which is right only when a cheap attempt already mapped explicitly; for a probe-first profile it would send every fully copyable source to the last resort and re-encode it. Caught by the acceptance review | 2026-09-30 |
+| After the selective rung succeeds, predicted drops are confirmed against the written file (second probe only when a drop is predicted) | Measured: the MP4 muxer recreates `tmcd`. Without the confirmation every iPhone/GoPro `.mov` would carry a false "dropped" note, which the constitution forbids ("the claim is confirmed against the written file before it is printed") | 2026-09-30 |
 | An unknown `pix_fmt` is not copyable | The safe side: a stream the probe could not describe is re-encoded, never copied on a guess | 2026-09-30 |
 | One `jobs` helper decides "copyable" everywhere `copy_mask` is tested today | Four call sites testing the mask alone would silently disagree with `_decide_stream` once a rule restricts pixel formats | 2026-09-30 |
 | Video fallback: `-c:v:{n} libx264 -crf:v:{n} 18 -preset:v:{n} <PRESET> -pix_fmt:v:{n} yuv420p`; audio fallback `-c:a:{n} aac -b:a:{n} 192k` | CRF 18 and AAC 192k match `mp4`, so `web` introduces no quality decision beyond the preset; `-pix_fmt` per stream, the form measured above | 2026-09-30 |
@@ -150,11 +170,19 @@ shows a black picture or plays silently in Chrome or Firefox (`README.md`,
 | Every audio stream is kept | Sparring: only Safari lets a user switch, elsewhere the default track plays; keeping the rest loses nothing a browser notices | 2026-09-30 |
 | Subtitles: one `subtitle` rule with an empty copy mask, no fallback, and the drop reason "subtitles are not shown by a browser from inside an MP4" | No browser renders in-band `mov_text` in a plain `<video>` (`docs/prior-art.md`); carrying it would look like a kept subtitle. Phase 14 adds sidecars | 2026-09-30 |
 | Cover art: an `attached_pic` rule copying `mjpeg` and `png`, dropping anything else with a note | Without it, an MJPEG cover would match the video rule and be re-encoded into a second H.264 stream. MP4 holds both formats; a browser ignores the picture, so keeping it costs nothing | 2026-09-30 |
-| `web` writes `.mp4` with muxer `mp4` and `+faststart`; `resolve_target` finds it by name only, so `.mp4` keeps resolving to `mp4` | `resolve_target` strips a leading dot and looks up the *name*; there is no suffix index to collide with | 2026-09-30 |
+| `web` uses muxer `mp4` and `+faststart`; `resolve_target` finds it by name only, so `.mp4` keeps resolving to `mp4` | `resolve_target` strips a leading dot and looks up the *name*. The *output suffix* is a separate question — see the OPEN row | 2026-09-30 |
 | The self-write note becomes "the output path is this file itself; not converted in place" | Today's "nothing to convert" is false for `--to web` over an HEVC `.mp4`, which does need converting. The new wording is true for every target, so the change stays target-agnostic | 2026-09-30 |
+| Video streams have no `stream_limit`: the selective rung keeps every video stream; the last resort keeps `v:0`, and its notes say so | Same as `mp4`; a browser plays the first | 2026-09-30 |
+| The subtitle rule's `accept_options` is `flags("-c:s:{n} copy")` with a comment that the empty mask makes it unreachable | The registry's placeholder test requires every rule's options to carry `{n}` | 2026-09-30 |
+| No `data` or `attachment` rule: such streams are dropped with the engine's generic note (e.g. an MKV's fonts) | A named loss is the constitution's contract; a browser uses neither | 2026-09-30 |
+| `attached_pic` declares no `copy_pix_fmts` | A cover is a still image the browser ignores; its pixel format does not affect playback | 2026-09-30 |
+| `probe_first: bool = False` sits after `partial_mapping` in `Profile`; `copy_pix_fmts` and `pix_fmt_reason` default to `None` in `StreamRule` | Defaults keep every existing profile literal unchanged | 2026-09-30 |
+| Registry tests that read `cheap_attempt` (`mapped_types`, `INVARIANT_CASES`, the argv invariants) skip a probe-first profile explicitly, with a test that the skip covers exactly those | They describe the remux rung, which a probe-first profile does not have | 2026-09-30 |
+| A source with only subtitle (or only data) streams ends `failed` under `web`, not `unsupported` | `describe_unsupported` returns `None` because `web` has a subtitle rule, and every rung then maps nothing. Such sources are not in the curated source-suffix set in practice; documented, not special-cased | 2026-09-30 |
 | The capability and the `web` profile land as separate issues, the profile last | Makes the vision's criterion checkable: the profile's own diff touches only `profiles.py` and tests | 2026-09-30 |
 | The foundation and design carriers are edited in this spec PR | Recorded by `/loopkit:roadmap`; phases 6, 10, 11 and 12 are the precedent | 2026-09-30 |
 | OPEN — Which x264 preset does `web` declare: `veryfast`, `ultrafast`, or `medium` like `mp4`? And is the Pi 4 benchmark a precondition for fixing it, or a QA confirmation? | resolved at the spec-acceptance gate | — |
+| OPEN — `web`'s output suffix: share `.mp4` with `mp4` (narrow the registry's no-shared-suffix guard from issue #30; an OUTPUT tree already holding `--to mp4` results is then skipped file by file as "output already exists"), or a compound `.web.mp4` (no guard change, no skip interaction, `.mp4` sources never self-write — but an in-place run would rediscover `x.web.mp4` as a source next time and write `x.web.web.mp4`)? | resolved at the spec-acceptance gate | — |
 
 ## Tracking
 
@@ -172,9 +200,13 @@ Each issue references this spec path in its body.
       note); a source with two audio streams (both kept); a source with a text
       and a bitmap subtitle (both dropped with the note); an MJPEG cover (copied).
 - [ ] `tests/test_argv.py` / `tests/test_batch.py`: a `web` conversion calls
-      `probe_streams` exactly once, before the first `run()`, and not after a
-      success; a probe failure is `failed` with the probe error; a source with
-      no video or audio is `unsupported`.
+      `probe_streams` once before the first `run()`; after a success a second
+      time only when a drop was predicted, and a predicted `tmcd` drop the output
+      holds yields no note; a `ProbeError` or `OSError` from the first probe is
+      `failed`; a source with no stream of a type `web` has a rule for (e.g.
+      data-only) is `unsupported`; a copyable source is **copied, not sent to the
+      last resort** (the `explicit_streams` regression).
+- [ ] The pixel-format note is asserted with the profile's `pix_fmt_reason`.
 - [ ] `tests/test_profiles.py`: `cheap_attempt is None` exactly when
       `probe_first`; `web`'s copy masks, `copy_pix_fmts`, muxer, suffix and
       `partial_mapping=False`.
@@ -189,6 +221,10 @@ Each issue references this spec path in its body.
         `yuv420p` + aac + aac, the subtitle dropped with its note, each re-encode
         named;
   - [ ] h264 `yuv420p10le` → re-encoded with the pixel-format note;
+  - [ ] h264 `yuvj420p` → copied, and plays with correct levels;
+  - [ ] an iPhone-style `.mov` (h264 + aac + `tmcd`) → no false "dropped" note;
+  - [ ] an `.m4a`/`.mp3` with an MJPEG cover → the cover is kept (`covr` in the
+        output) and the audio copied;
   - [ ] each output plays in Chrome, Firefox and Edge from a local HTML page with
         `<video src=…>` (Safari/iOS if a device is at hand);
   - [ ] `--to mp4` on the same sources behaves exactly as before;
@@ -201,7 +237,7 @@ Each issue references this spec path in its body.
 |---|---|
 | Making `cheap_attempt` optional breaks code that assumes it | A test pins the `probe_first` ↔ `None` pairing; `jobs.first_attempt` is the only reader and returns `None` explicitly |
 | The pixel-format check diverges between `_decide_stream` and the note builders | One helper, used by all four sites, with a test per site |
-| `yuvj420p` (full range) copied into MP4 plays with wrong levels in some browser | It is H.264 8-bit 4:2:0; the sparring accepted it; the QA playback check covers a `yuvj420p` source |
+| `yuvj420p` (full range) copied into MP4 plays with wrong levels in some browser | It is H.264 8-bit 4:2:0; the sparring accepted it; a dedicated QA case plays a `yuvj420p` source |
 | The preset is too slow on the Pi | Measured at QA on the Pi itself; the gate decides whether the number is a precondition |
 
 ## Decision log
@@ -209,3 +245,13 @@ Each issue references this spec path in its body.
 - 2026-09-30: Planned from the roadmap seed of 2026-09-28 (PR #136). Measured the
   per-stream re-encode options and relative preset speeds for this spec. The
   preset is the one genuinely open decision.
+- 2026-09-30: Acceptance review (REQUEST_CHANGES) addressed: `explicit_streams`
+  is `False` (otherwise every copyable file hit the last resort); predicted drops
+  are confirmed against the output after the selective rung (measured: the MP4
+  muxer recreates `tmcd`); the pixel-format reason is rule data; the output
+  suffix is a second OPEN row, since the registry guard from #30 forbids a
+  shared `.mp4` today. Two deviations from the roadmap seed are recorded: the
+  capability touches `batch.py` and `cli.py`, not only `jobs.py` as the seed's
+  impact line assumed — the vision criterion still holds for the profile's own
+  diff; and the Pi 4 measurement, promised "in the spec", is placed at the gate
+  (before implementation or at QA) because it needs the human's hardware.

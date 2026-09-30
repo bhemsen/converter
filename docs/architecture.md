@@ -64,7 +64,7 @@ only on `cli`.
    computed.
    Each result goes to the `on_result` callback `cli` passed in — a `report`
    renderer that writes text lines, or JSON records under `--json`.
-   Every profile shipped or currently specced declares its cheap attempt
+   Every profile shipped or currently specced *with a cheap attempt* declares it
    **partial by construction** (`partial_mapping=True`: MP4's blind
    `?`-selectors reach no attachment, WAV's single index reaches no second
    audio stream, and phases 3-5 follow the same shape), so a success spends one
@@ -91,8 +91,9 @@ only on `cli`.
    second probe.
    A profile whose cheap attempt is *exhaustive* would skip this probe
    entirely, but no shipped or currently specced profile is one — the
-   probe-on-success branch is presently the only path a successful conversion
-   takes; see the 2026-08-26 (issue #41) entries in
+   probe-on-success branch is the only path a successful *cheap attempt*
+   takes. A probe-first profile (`web`) has no cheap attempt at all and succeeds
+   on the selective rung instead; see the 2026-08-26 (issue #41) entries in
    `docs/specs/archive/spec-profile-registry.md`'s Decision log.
 2. **Degradation.** The attempt exits non-zero, so *now* `ffmpegtool.probe_streams`
    describes the file. Each stream is first resolved to a rule — by its
@@ -128,7 +129,8 @@ only on `cli`.
    file is recorded as
    `failed` with ffmpeg's stderr, the batch keeps going for every other file, and
    the process exits 1 at the end.
-5. **Unsupported.** Reached only from the failure-side probe of step 2: when the
+5. **Unsupported.** Reached only from a probe that precedes an attempt — the
+   failure-side probe of step 2, or a probe-first profile's up-front probe: when the
    source carries no stream of any type the target profile has a rule for at
    all, `jobs.py` reports that as a distinguishable signal instead of climbing
    the rest of the ladder, `batch.py` maps it onto a counted `unsupported`

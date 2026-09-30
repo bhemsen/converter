@@ -54,8 +54,12 @@ flowchart TD
   blind remux is precisely what would carry streams the target accepts but cannot
   use — `web`'s HEVC or AC-3 in an MP4 a browser cannot play. Its one probe is the
   failure side's `P`, moved to the front; its selective rung is built from it and
-  already carries accurate notes, so no success-side probe follows. Still one
-  probe per file (`docs/specs/spec-web-target.md`).
+  already carries accurate notes about what it re-encodes; only a predicted
+  *drop* is confirmed against the written file, through `C`, because the MP4
+  muxer puts back a `tmcd` track no `-map` selected. A probe-first profile is
+  never `explicit_streams`, so it never takes PLAN's "already selects streams
+  explicitly" edge to `FIN` — a copyable source is copied, not re-encoded
+  (`docs/specs/spec-web-target.md`).
 - **One probe per file, and none for an exhaustive cheap attempt — plus one more
   only for a run that is about to report a loss.** The failure-side `ffprobe`
   node sits behind the first non-zero exit and is reached at most once; every
@@ -224,13 +228,15 @@ flowchart TD
   a *blind* stream copy for a container that can hold the source codecs
   (`-map 0:v? -map 0:a? ...`), or a *stream-explicit* selection where it cannot
   (`-map 0:a:0 ...`). Which of the two it is, the profile declares — the engine
-  never parses an option list to find out.
+  never parses an option list to find out. A probe-first profile declares no
+  rung 1 at all and starts at the selective rung.
 - **The selective rung is skipped when it would add nothing.** Two conditions do
   that. Nothing survives the profile's rules, so there is no command to build. Or
   the profile's cheap attempt is stream-explicit *and* the plan gives up nothing
   worth naming — then the rung would be a second, equivalent ffmpeg run. A profile
   whose cheap attempt is blind always gets the rung: the explicit per-stream
-  mapping is exactly what can rescue a file the blind copy could not.
+  mapping is exactly what can rescue a file the blind copy could not. A
+  probe-first profile always gets it too — the rung is its first attempt.
 - **The last rung is optional.** A container that can always be reached by a full
   re-encode declares one; a container with nothing further to give up (WAV) does
   not, and a failure at the rung before it is then the end of the ladder.
