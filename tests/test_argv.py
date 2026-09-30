@@ -3665,3 +3665,197 @@ def test_every_attempt_produces_a_wellformed_command(attempt):
     assert argv[0] == "ffmpeg"
     assert argv[-1] == "out.mp4"
     assert options_of(argv, "in.mkv", "out.mp4") == list(attempt.options)
+
+
+def _probe_first_profile(**changes: object) -> Profile:
+    """A synthetic probe-first profile (no shipped one exists yet -- issue #164)."""
+    profile = Profile(
+        label="PF",
+        name="pf",
+        description="a test double, not a shipped format",
+        target_suffix=".pf",
+        muxer="mp4",
+        container_options=("-movflags", "+faststart"),
+        cheap_attempt=None,
+        explicit_streams=False,
+        partial_mapping=False,
+        probe_first=True,
+        rules={
+            "video": StreamRule(
+                frozenset({"h264"}),
+                flags("-c:v:{n} copy"),
+                fallback_options=flags("-c:v:{n} libx264"),
+                fallback_name="h264",
+                copy_pix_fmts=frozenset({"yuv420p", "yuvj420p"}),
+                pix_fmt_reason="only 8-bit 4:2:0 plays everywhere",
+            ),
+            "audio": StreamRule(
+                frozenset({"aac"}),
+                flags("-c:a:{n} copy"),
+                fallback_options=flags("-c:a:{n} aac"),
+                fallback_name="aac",
+            ),
+            "subtitle": StreamRule(
+                frozenset(),
+                flags("-c:s:{n} copy"),
+                drop_reason="not shown from inside the container",
+            ),
+        },
+        last_resort=Attempt("re-encode", flags("-map 0:v:0? -c:v libx264"), ("fixed",)),
+    )
+    return replace(profile, **changes)
+
+
+class TestProbeFirstEngine:
+    """`first_attempt`, `retries` and `needs_verification` for a probe-first profile."""
+
+    def test_there_is_no_first_attempt(self):
+        assert jobs.first_attempt(_probe_first_profile()) is None
+
+    def test_an_ordinary_profile_still_has_one(self):
+        assert jobs.first_attempt(MP4) is not None
+
+    def test_a_probe_first_profile_needs_verification(self):
+        assert jobs.needs_verification(_probe_first_profile())
+        assert not jobs.needs_verification(replace(MP4, partial_mapping=False))
+        assert jobs.needs_verification(MP4)
+
+    def test_a_copyable_source_still_gets_a_selective_rung(self):
+        """A plan that gives nothing up must not vanish (the `explicit_streams`
+        regression: the last resort would re-encode a fully copyable source)."""
+        streams = [Stream(0, "video", "h264", pix_fmt="yuv420p"), Stream(1, "audio", "aac")]
+
+        selective, last_resort = jobs.retries(_probe_first_profile(), streams)
+
+        assert selective.label == "selective"
+        assert selective.notes == ()
+        assert selective.options == (
+            "-map", "0:0", "-map", "0:1", "-c:v:0", "copy", "-c:a:0", "copy",
+            "-movflags", "+faststart",
+        )  # fmt: skip
+        assert last_resort.label == "re-encode"
+
+    def test_structural_drops_leave_the_rung_but_carry_no_note(self):
+        """D1 (no rule) and D2 (no room) are left to `verify_success`, whose
+        prediction `batch` confirms against the written file."""
+        profile = _probe_first_profile()
+        streams = [
+            Stream(0, "video", "h264", pix_fmt="yuv420p"),
+            Stream(1, "attachment", "ttf"),
+            Stream(2, "data", "", codec_tag="tmcd"),
+        ]
+
+        [selective, _] = jobs.retries(profile, streams)
+
+        assert selective.options[:2] == ("-map", "0:0")
+        assert "0:1" not in selective.options
+        assert selective.notes == ()
+        assert jobs.verify_success(profile, streams) == (
+            "attachment stream 1 (ttf) dropped: not supported by PF",
+            "data stream 2 (unknown) dropped: not supported by PF",
+        )
+
+    def test_a_codec_level_drop_note_stays_on_the_rung(self):
+        streams = [Stream(0, "video", "h264", pix_fmt="yuv420p"), Stream(1, "subtitle", "mov_text")]
+
+        [selective, _] = jobs.retries(_probe_first_profile(), streams)
+
+        assert selective.notes == (
+            "subtitle stream 1 (mov_text) dropped: not shown from inside the container",
+        )
+
+    def test_an_ordinary_profile_keeps_its_structural_notes_on_the_rung(self):
+        [selective, _] = jobs.retries(MP4, [Stream(0, "video", "h264"), Stream(1, "data", "")])
+
+        assert selective.notes == ("data stream 1 (unknown) dropped: not supported by MP4",)
+
+
+class TestPixelFormatCopyCondition:
+    """`jobs._copyable`: codec in the mask AND, when the rule declares one, the
+    probed pixel format in `copy_pix_fmts`; an unknown one is never copyable."""
+
+    def _selective(self, stream: Stream) -> Attempt:
+        return jobs.retries(_probe_first_profile(), [stream])[0]
+
+    @pytest.mark.parametrize("pix_fmt", ["yuv420p", "yuvj420p"])
+    def test_a_listed_pixel_format_is_copied(self, pix_fmt):
+        selective = self._selective(Stream(0, "video", "h264", pix_fmt=pix_fmt))
+
+        assert "libx264" not in selective.options
+        assert selective.notes == ()
+
+    @pytest.mark.parametrize("pix_fmt", ["yuv420p10le", "yuv422p", "yuv444p"])
+    def test_an_unlisted_pixel_format_is_re_encoded_with_the_rule_s_reason(self, pix_fmt):
+        selective = self._selective(Stream(0, "video", "h264", pix_fmt=pix_fmt))
+
+        assert "libx264" in selective.options
+        assert selective.notes == (
+            f"video stream 0 (h264, {pix_fmt}) re-encoded to h264: "
+            "only 8-bit 4:2:0 plays everywhere",
+        )
+
+    def test_an_unknown_pixel_format_is_not_copied(self):
+        selective = self._selective(Stream(0, "video", "h264"))
+
+        assert "libx264" in selective.options
+        assert selective.notes == (
+            "video stream 0 (h264, unknown) re-encoded to h264: only 8-bit 4:2:0 plays everywhere",
+        )
+
+    def test_a_codec_the_mask_misses_gets_the_plain_re_encode_note(self):
+        """The pixel format did not cause this one, so it is not named."""
+        selective = self._selective(Stream(0, "video", "hevc", pix_fmt="yuv420p10le"))
+
+        assert selective.notes == ("video stream 0 (hevc) re-encoded to h264",)
+
+    def test_a_rule_without_a_reason_falls_back_to_the_plain_note(self):
+        profile = _probe_first_profile()
+        video = replace(profile.rules["video"], pix_fmt_reason=None)
+        profile = replace(profile, rules={**profile.rules, "video": video})
+
+        [selective, _] = jobs.retries(profile, [Stream(0, "video", "h264", pix_fmt="yuv422p")])
+
+        assert selective.notes == ("video stream 0 (h264) re-encoded to h264",)
+
+    def test_a_rule_without_copy_pix_fmts_ignores_the_pixel_format(self):
+        [selective] = jobs.retries(MP4, [Stream(0, "video", "h264", pix_fmt="yuv420p10le")])[:1]
+
+        assert "libx264" not in selective.options
+        assert selective.notes == ()
+
+    def _restricted(self, profile: Profile, key: str, allowed: set[str]) -> Profile:
+        rule = replace(profile.rules[key], copy_pix_fmts=frozenset(allowed))
+        return replace(profile, rules={**profile.rules, key: rule})
+
+    def test_the_lossy_source_advisory_site_agrees(self):
+        """`_lossy_source_notes` asks the same question: a copy carries nothing
+        the target cannot restore, a pixel-format-forced re-encode does."""
+        stream = Stream(0, "audio", "mp3")
+        # A mask that copies mp3, so the unrestricted profile carries it verbatim.
+        copying = replace(
+            FLAC, rules={"audio": replace(FLAC.rules["audio"], copy_mask=frozenset({"mp3"}))}
+        )
+        # An audio stream carries no pixel format, so once the rule restricts
+        # them it is no longer copyable and takes the fallback branch.
+        restricted = self._restricted(copying, "audio", {"yuv420p"})
+
+        assert jobs._lossy_source_notes(copying, [stream]) == ()
+        assert jobs._lossy_source_notes(restricted, [stream]) != ()
+
+    def test_the_selective_transparency_site_agrees(self):
+        profile = _probe_first_profile(alpha_unsupported=True)
+        stream = Stream(0, "video", "h264", pix_fmt="yuva420p")
+        listed = self._restricted(profile, "video", {"yuva420p"})
+
+        assert jobs._selective_transparency_notes(listed, [stream]) == ()
+        assert jobs._selective_transparency_notes(profile, [stream]) != ()
+
+    def test_the_alpha_depth_site_agrees(self):
+        profile = _probe_first_profile()
+        video = replace(profile.rules["video"], alpha_pix_fmt="yuva420p")
+        profile = replace(profile, rules={**profile.rules, "video": video})
+        stream = Stream(0, "video", "h264", pix_fmt="rgba64le")
+        listed = self._restricted(profile, "video", {"rgba64le"})
+
+        assert jobs._alpha_depth_notes(listed, [stream]) == ()
+        assert jobs._alpha_depth_notes(profile, [stream]) != ()

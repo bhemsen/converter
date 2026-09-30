@@ -234,7 +234,12 @@ def named_index_counts(profile: Profile) -> dict[str, int]:
 #: exemption (`docs/specs/archive/spec-audio-formats.md`, which retired `MP3_SHAPED`),
 #: and `MOV` now proves the force-failure exemption the same way, retiring
 #: `MOV_SHAPED`.
-INVARIANT_CASES = SHIPPED
+#:
+#: Minus every probe-first profile: these checks read the option list of the
+#: blind cheap attempt, which a probe-first profile does not have
+#: (`cheap_attempt is None`). `TestProbeFirstDeclaration` pins that the skip
+#: covers exactly those profiles and nothing else.
+INVARIANT_CASES = [profile for profile in SHIPPED if not profile.probe_first]
 
 
 @pytest.mark.parametrize("profile", INVARIANT_CASES, ids=lambda profile: profile.label)
@@ -336,6 +341,41 @@ class TestPartialMappingInvariant:
             rule = profile.rules.get(kind)
             limit = rule.stream_limit if rule is not None else None
             assert limit == counts.get(kind, 0)
+
+
+class TestProbeFirstDeclaration:
+    """`probe_first` and `cheap_attempt` are two spellings of one fact."""
+
+    @pytest.mark.parametrize("profile", PROFILES.values(), ids=lambda profile: profile.label)
+    def test_cheap_attempt_is_none_exactly_when_probe_first(self, profile):
+        assert (profile.cheap_attempt is None) == profile.probe_first
+
+    @pytest.mark.parametrize("profile", PROFILES.values(), ids=lambda profile: profile.label)
+    def test_a_probe_first_profile_is_never_explicit_streams(self, profile):
+        """`explicit_streams` makes the selective rung vanish for a plan that
+        gives nothing up -- right only behind a cheap attempt that already
+        mapped explicitly, otherwise a fully copyable source hits the last
+        resort and is re-encoded."""
+        assert not (profile.probe_first and profile.explicit_streams)
+
+    @pytest.mark.parametrize("profile", PROFILES.values(), ids=lambda profile: profile.label)
+    def test_no_last_resort_borrows_the_engine_rung_s_label(self, profile):
+        """`jobs.is_selective_rung` recognises the engine-built rung by label, so a
+        profile's own last resort must never carry it."""
+        assert profile.last_resort is None or profile.last_resort.label != "selective"
+
+    def test_the_invariant_skip_covers_exactly_the_probe_first_profiles(self):
+        skipped = {profile.name for profile in SHIPPED} - {p.name for p in INVARIANT_CASES}
+
+        assert skipped == {p.name for p in SHIPPED if p.probe_first}
+        assert {p.name for p in PROFILES.values() if p.probe_first} == skipped
+
+    def test_the_new_fields_default_so_existing_literals_are_unchanged(self):
+        rule = StreamRule(copy_mask=frozenset(), accept_options=())
+
+        assert rule.copy_pix_fmts is None
+        assert rule.pix_fmt_reason is None
+        assert MP4.probe_first is False
 
 
 class TestLeafModule:
@@ -2342,6 +2382,7 @@ class TestValueTypesAreFrozen:
             "cheap_attempt",
             "explicit_streams",
             "partial_mapping",
+            "probe_first",
             "rules",
             "muxer",
             "alpha_unsupported",

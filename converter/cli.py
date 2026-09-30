@@ -299,7 +299,7 @@ def _partition_self_writes(
                 Result(
                     Task(src, dst),
                     Outcome.SKIPPED,
-                    notes=("the output path is this file itself; nothing to convert",),
+                    notes=("the output path is this file itself; not converted in place",),
                 )
             )
         else:

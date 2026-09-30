@@ -18,7 +18,7 @@ turns one profile into an ordered ladder of attempts, and
 against the profile's per-type rule.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 def flags(spec: str) -> tuple[str, ...]:
@@ -71,6 +71,17 @@ class StreamRule:
     #: already has. Only ``webm``'s video rule declares it, as ``"yuva420p"``
     #: (``docs/specs/archive/spec-webm-alpha.md``).
     alpha_pix_fmt: str | None = None
+    #: When set, a stream is copyable only if its codec is in ``copy_mask`` *and*
+    #: its probed ``pix_fmt`` is a member of this set; an unknown pix_fmt is not.
+    #: Separates a playable 8-bit 4:2:0 H.264 from High 10 / 4:2:2, which the
+    #: codec name alone cannot. ``None`` (the default) leaves the mask decisive.
+    copy_pix_fmts: frozenset[str] | None = None
+    #: The reason text of the note a *pixel-format-caused* re-encode carries
+    #: (the codec was accepted, the pixel format was not). Profile data, so the
+    #: engine holds no target-specific wording. Required alongside
+    #: ``copy_pix_fmts`` for the note to name it; without it the ordinary
+    #: re-encode note is used.
+    pix_fmt_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -88,7 +99,19 @@ class Profile:
     list. A profile that declares it true is verified by an ffprobe round-trip
     even when its cheap attempt exits 0, so a stream that attempt silently left
     behind is named rather than reported as a plain success
-    (``docs/design/degradation-ladder.md``).
+    (``docs/design/degradation-ladder.md``). ``probe_first`` below is verified
+    the same way, for its selective rung instead of a cheap attempt.
+
+    ``probe_first`` says the profile declares **no** blind cheap attempt
+    (``cheap_attempt`` is ``None``): the source is probed before anything runs
+    and the engine's selective rung is the first attempt, so a remux cannot let
+    an unplayable stream through. It counts as partial for verification too --
+    the selective rung's structural (D1/D2) drops are predicted by
+    ``jobs.verify_success`` and confirmed against the written file, one probe
+    of the source plus a second of the output only when a drop is predicted. A
+    probe-first profile is never ``explicit_streams``: that flag makes the
+    selective rung vanish for a plan that gives nothing up, which is right only
+    behind a cheap attempt that already mapped explicitly.
 
     ``alpha_unsupported`` says whether this profile's forced encoder cannot
     hold an alpha channel. Declared, not derived, for the same reason the two
@@ -132,9 +155,12 @@ class Profile:
     description: str
     target_suffix: str
     container_options: tuple[str, ...]
-    cheap_attempt: Attempt
+    cheap_attempt: Attempt | None
     explicit_streams: bool
     partial_mapping: bool
+    #: Keyword-only so it can sit here, beside ``partial_mapping``, while every
+    #: required field after it stays positional-compatible.
+    probe_first: bool = field(default=False, kw_only=True)
     rules: dict[str, StreamRule]
     muxer: str
     alpha_unsupported: bool = False

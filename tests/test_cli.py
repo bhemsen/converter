@@ -513,7 +513,7 @@ class TestSourceSelection:
         out = capsys.readouterr().out
 
         assert f"a{VIDEO_SUFFIX}" in out
-        assert "this file itself" in out
+        assert "this file itself; not converted in place" in out
 
     def test_the_self_write_guard_fires_under_mirror_to(self, tmp_path, capsys, stub_ffmpeg):
         """Mirroring INPUT straight back onto its own drive reconstructs the
@@ -614,7 +614,7 @@ class TestSourceSelection:
         code = main(convert_argv(str(typed_root), "--mirror-to", mirror_to, "-q"))
 
         assert code == 0
-        assert "this file itself" in capsys.readouterr().out
+        assert "this file itself; not converted in place" in capsys.readouterr().out
 
     def test_a_nested_output_root_converges(self, tmp_path, capsys, stub_ffmpeg):
         """Without the output-tree exclusion this grows one `converted` level per
@@ -731,7 +731,7 @@ class TestFileInput:
 
         assert code == 0
         assert "0 converted, 1 skipped" in out
-        assert "this file itself" in out
+        assert "this file itself; not converted in place" in out
         assert source.read_bytes() == before
 
     def test_an_existing_output_without_overwrite_is_skipped(self, tmp_path, capsys, stub_ffmpeg):

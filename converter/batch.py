@@ -158,6 +158,24 @@ def _verify_cheap_attempt(
     return (*_confirm_against_output(profile, tools, streams, predicted, output_path), *within)
 
 
+def _verify_selective_rung(
+    profile: Profile, tools: Tools, streams: Sequence[Stream], output_path: Path
+) -> tuple[str, ...]:
+    """Confirm the structural drops of a selective rung that ran *first*.
+
+    Reuses the *streams* the run already probed, so the source is not probed
+    twice; the output probe happens only when :func:`engine.verify_success`
+    predicts a drop. No within-stream transparency verdict is added here: the
+    selective rung already carries its own, decided per stream by the engine.
+    """
+    if not engine.needs_verification(profile):
+        return ()
+    predicted = engine.verify_success(profile, streams)
+    if not predicted:
+        return ()
+    return _confirm_against_output(profile, tools, streams, predicted, output_path)
+
+
 #: Windows-only backoff for a rename that lost a race with a reader (a scanner
 #: or an indexer briefly holding the target open) -- about 3 s in all
 #: (``docs/specs/archive/spec-abort-safe-writes.md``'s Prior decisions).
@@ -200,13 +218,23 @@ def _finish_conversion(
     partial: Path,
     attempt: Attempt,
     *,
-    probed: bool,
+    verify: bool,
+    streams: Sequence[Stream] | None,
 ) -> Result:
-    """Verify a successful rung (if it needs it), then rename it into place."""
-    # `probed` still being false means this was the cheap attempt: every later
-    # rung was built from the stream list itself and already carries accurate
-    # notes, so only this one needs verifying.
-    extra = () if probed else _verify_cheap_attempt(profile, task, tools, partial)
+    """Verify a successful rung (if it needs it), then rename it into place.
+
+    *verify* is true only for the first attempt a run makes: every later rung
+    was built from the stream list itself and already carries accurate notes.
+    *streams* is the source's stream list when the run probed it up front;
+    without it, the first attempt was the profile's cheap one and its
+    verification probes the source itself.
+    """
+    if not verify:
+        extra: tuple[str, ...] = ()
+    elif streams is None:
+        extra = _verify_cheap_attempt(profile, task, tools, partial)
+    else:
+        extra = _verify_selective_rung(profile, tools, streams, partial)
     _raise_if_terminated(partial)
     error = _rename_with_retry(partial, task.dst)
     if error is not None:
@@ -242,6 +270,47 @@ def _climb_ladder(
     return None
 
 
+def _probe_first(
+    profile: Profile, task: Task, tools: Tools, partial: Path
+) -> tuple[list[Attempt], list[Stream]] | Result:
+    """The ladder for a profile the engine offers no first attempt for.
+
+    Probes the source before anything runs -- now the only probe, so an
+    unreadable source (``OSError`` as much as ``ProbeError``) ends ``failed``
+    rather than escaping. A source with nothing the profile has a rule for is
+    ``unsupported`` without a single ffmpeg run; otherwise the rungs are the
+    engine's :func:`engine.retries`, and the streams travel along so the first
+    one can be verified without probing the source again.
+    """
+    try:
+        streams = ffmpegtool.probe_streams(tools, task.src)
+    except (ProbeError, OSError) as exc:
+        # A killed probe surfaces as an ordinary `ProbeError`; without this
+        # check the run would be filed as FAILED instead of terminated.
+        _raise_if_terminated(partial)
+        return Result(task, Outcome.FAILED, error=f"[probe] {exc}")
+    _raise_if_terminated(partial)
+    unsupported = engine.describe_unsupported(profile, streams)
+    if unsupported is not None:
+        return Result(task, Outcome.UNSUPPORTED, notes=unsupported)
+    return engine.retries(profile, streams), list(streams)
+
+
+def _plan_ladder(
+    profile: Profile, task: Task, tools: Tools, partial: Path
+) -> tuple[list[Attempt], list[Stream] | None] | Result:
+    """The rungs to run first, plus the source's streams when already probed.
+
+    The engine's own cheap attempt when it offers one (nothing probed yet, the
+    failure side probes later); otherwise the up-front probe of
+    :func:`_probe_first`, which may already end the run.
+    """
+    first = engine.first_attempt(profile)
+    if first is not None:
+        return [first], None
+    return _probe_first(profile, task, tools, partial)
+
+
 def _climb_the_ladder(profile: Profile, task: Task, tools: Tools, partial: Path) -> Result:
     """Run every rung until one succeeds or the ladder is exhausted.
 
@@ -250,9 +319,12 @@ def _climb_the_ladder(profile: Profile, task: Task, tools: Tools, partial: Path)
     *any* exit that is not one of the explicit ``Result``-returning paths
     below -- a termination raised mid-probe included.
     """
-    pending: list[Attempt] = [engine.first_attempt(profile)]
+    planned = _plan_ladder(profile, task, tools, partial)
+    if isinstance(planned, Result):
+        return planned
+    pending, known = planned
     errors: list[str] = []
-    probed = False
+    probed = known is not None
 
     while pending:
         attempt = pending.pop(0)
@@ -262,7 +334,13 @@ def _climb_the_ladder(profile: Profile, task: Task, tools: Tools, partial: Path)
         result = ffmpegtool.run(argv)
         _raise_if_terminated(partial)
         if result.ok:
-            return _finish_conversion(profile, task, tools, partial, attempt, probed=probed)
+            # The first attempt run is the one verified: the cheap attempt, or --
+            # when the source was probed up front -- the engine's selective rung
+            # (a last resort's notes are fixed profile text).
+            verify = not errors and (known is None or engine.is_selective_rung(attempt))
+            return _finish_conversion(
+                profile, task, tools, partial, attempt, verify=verify, streams=known
+            )
 
         errors.append(f"[{attempt.label}] {result.stderr or f'exit code {result.returncode}'}")
         if not probed:

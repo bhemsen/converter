@@ -37,6 +37,7 @@ from converter.profiles import (
     SHALLOW_ALPHA_PIX_FMTS,
     Attempt,
     Profile,
+    StreamRule,
 )
 
 #: What a stream is counted under -- either its full :func:`_stream_key` or its
@@ -71,6 +72,44 @@ def _reencode_note(stream: Stream, target_codec: str) -> str:
     kind = stream.codec_type or "unknown"
     codec = stream.codec_name or "unknown"
     return f"{kind} stream {stream.index} ({codec}) re-encoded to {target_codec}"
+
+
+def _copyable(rule: StreamRule, stream: Stream) -> bool:
+    """Whether *rule* lets *stream* through as a literal copy.
+
+    The one place the copy question is answered, so :func:`_decide_stream` and
+    every note builder that asks "was this stream re-encoded?" cannot disagree
+    once a rule restricts pixel formats as well as codecs. When the rule declares
+    ``copy_pix_fmts`` the probed ``pix_fmt`` must be a member too; an unknown
+    (empty) one is not, because a stream the probe could not describe is
+    re-encoded rather than copied on a guess.
+    """
+    if stream.codec_name not in rule.copy_mask:
+        return False
+    if rule.copy_pix_fmts is None:
+        return True
+    return bool(stream.pix_fmt) and stream.pix_fmt in rule.copy_pix_fmts
+
+
+def _fallback_note(stream: Stream, rule: StreamRule) -> str | None:
+    """The note a re-encode carries, or ``None`` when the rule names no encoder.
+
+    A stream whose *codec* the mask accepts but whose pixel format it refuses
+    (:func:`_copyable` is false only for that reason) gets the rule's own
+    ``pix_fmt_reason``, so the user learns the codec was fine and the pixel
+    format was not. The reason is profile data; this module carries no
+    target-specific wording.
+    """
+    if not rule.fallback_name:
+        return None
+    if stream.codec_name in rule.copy_mask and rule.pix_fmt_reason is not None:
+        kind = stream.codec_type or "unknown"
+        pix_fmt = stream.pix_fmt or "unknown"
+        return (
+            f"{kind} stream {stream.index} ({stream.codec_name}, {pix_fmt}) "
+            f"re-encoded to {rule.fallback_name}: {rule.pix_fmt_reason}"
+        )
+    return _reencode_note(stream, rule.fallback_name)
 
 
 def _lossy_source_note(stream: Stream, profile: Profile) -> str:
@@ -244,22 +283,24 @@ def _by_type(counts: dict[tuple[str, str, str], int]) -> dict[str, int]:
 
 
 def _decide_stream(
-    profile: Profile, stream: Stream, counts: dict[str, int]
+    profile: Profile, stream: Stream, counts: dict[str, int], *, structural_notes: bool = True
 ) -> tuple[list[str], list[str], str | None]:
     """One pass through stream-decision.md's flowchart for a single stream.
 
     Returns the maps and codec options *stream* contributes and the note it
     produces (or ``None``). ``counts`` is mutated so later streams see how many
-    output streams of their type already exist.
+    output streams of their type already exist. ``structural_notes=False`` still
+    drops a structurally unmappable stream but leaves its D1/D2 note to
+    :func:`verify_success`, which names it after checking the written file.
     """
     structural = _structural_drop(profile, stream, counts)
     if structural is not None:
-        return [], [], structural
+        return [], [], structural if structural_notes else None
 
     rule = profile.rules[_rule_key(profile, stream)]
     position = counts.get(stream.codec_type, 0)
     maps = ["-map", f"0:{stream.index}"]
-    if stream.codec_name in rule.copy_mask:
+    if _copyable(rule, stream):
         codecs = list(_substitute_position(rule.accept_options, position))
         note = None
     elif rule.fallback_options is not None:
@@ -269,7 +310,7 @@ def _decide_stream(
             # options carry the position -- a bare "-pix_fmt" would apply to
             # every video output stream, not just this one (spec-webm-alpha.md).
             codecs += list(_substitute_position(("-pix_fmt:v:{n}", rule.alpha_pix_fmt), position))
-        note = _reencode_note(stream, rule.fallback_name) if rule.fallback_name else None
+        note = _fallback_note(stream, rule)
     else:
         reason = rule.drop_reason or f"not supported by {profile.label}"
         return [], [], _drop_note(stream, reason)
@@ -278,12 +319,25 @@ def _decide_stream(
     return maps, codecs, note
 
 
+#: Label of the engine-built rung. Also how :func:`is_selective_rung` recognises
+#: it, so ``batch`` can ask the engine which attempt is worth verifying instead
+#: of reading a profile field.
+_SELECTIVE_LABEL = "selective"
+
+
 def _build_selective(profile: Profile, streams: Sequence[Stream]) -> Attempt | None:
     """The engine-built rung: the PLAN and SEL nodes of degradation-ladder.md.
 
     Returns ``None`` when the rung would add nothing over the cheap attempt --
     either no stream survives at all, or the cheap attempt already selects
     streams explicitly and this plan gives up nothing worth naming.
+
+    A probe-first profile's rung omits its structural (D1/D2) drop notes: it is
+    the first rung that runs, so :func:`verify_success` predicts exactly those
+    drops and ``batch`` confirms them against the written file -- a muxer may put
+    back a stream no ``-map`` selected, and a note printed before that check
+    would claim a loss that did not happen. Codec-level notes (re-encodes, a D3
+    ``drop_reason``) stay: they describe what the plan itself does.
     """
     maps: list[str] = []
     codecs: list[str] = []
@@ -291,7 +345,9 @@ def _build_selective(profile: Profile, streams: Sequence[Stream]) -> Attempt | N
     counts: dict[str, int] = {}
 
     for stream in streams:
-        stream_maps, stream_codecs, note = _decide_stream(profile, stream, counts)
+        stream_maps, stream_codecs, note = _decide_stream(
+            profile, stream, counts, structural_notes=not profile.probe_first
+        )
         maps += stream_maps
         codecs += stream_codecs
         if note is not None:
@@ -301,7 +357,7 @@ def _build_selective(profile: Profile, streams: Sequence[Stream]) -> Attempt | N
         return None
     if profile.explicit_streams and not notes:
         return None
-    return Attempt("selective", (*maps, *codecs), tuple(notes))
+    return Attempt(_SELECTIVE_LABEL, (*maps, *codecs), tuple(notes))
 
 
 #: The only target this advisory covers (Prior decisions,
@@ -394,9 +450,7 @@ def _lossy_source_notes(profile: Profile, streams: Sequence[Stream]) -> tuple[st
             continue
         counts[stream.codec_type] = counts.get(stream.codec_type, 0) + 1
         rule = profile.rules[_rule_key(profile, stream)]
-        was_reencoded = (
-            stream.codec_name not in rule.copy_mask and rule.fallback_options is not None
-        )
+        was_reencoded = not _copyable(rule, stream) and rule.fallback_options is not None
         if was_reencoded and stream.codec_name in LOSSY_CODECS:
             notes.append(_lossy_source_note(stream, profile))
     return tuple(notes)
@@ -447,7 +501,7 @@ def _alpha_notes(
             continue
         if exclude_copies:
             rule = profile.rules[_rule_key(profile, stream)]
-            if stream.codec_name in rule.copy_mask:
+            if _copyable(rule, stream):
                 continue
         if stream.pix_fmt not in ALPHA_FREE_PIX_FMTS:
             notes.append(_alpha_note(stream, profile))
@@ -519,9 +573,7 @@ def _alpha_depth_notes(profile: Profile, streams: Sequence[Stream]) -> tuple[str
         rule = profile.rules[_rule_key(profile, stream)]
         if rule.alpha_pix_fmt is None:
             continue
-        took_fallback = (
-            stream.codec_name not in rule.copy_mask and rule.fallback_options is not None
-        )
+        took_fallback = not _copyable(rule, stream) and rule.fallback_options is not None
         if not took_fallback:
             continue
         if stream.pix_fmt in ALPHA_FREE_PIX_FMTS or stream.pix_fmt in SHALLOW_ALPHA_PIX_FMTS:
@@ -575,9 +627,26 @@ def _with_last_resort_alpha_override(
     return replace(last_resort, options=(*last_resort.options, "-pix_fmt", alpha_pix_fmt))
 
 
-def first_attempt(profile: Profile) -> Attempt:
-    """Rung 1 of degradation-ladder.md: *profile*'s own cheap attempt."""
+def first_attempt(profile: Profile) -> Attempt | None:
+    """Rung 1 of degradation-ladder.md: *profile*'s own cheap attempt.
+
+    ``None`` for a probe-first profile: it declares no blind attempt, so the
+    caller must probe the source and climb :func:`retries` directly. Callers see
+    only that the engine offers no first attempt -- never the profile field
+    behind it (``docs/architecture.md``).
+    """
+    if profile.cheap_attempt is None:
+        return None
     return _with_container_options(profile.cheap_attempt, profile)
+
+
+def is_selective_rung(attempt: Attempt) -> bool:
+    """Whether *attempt* is the engine-built selective rung of :func:`retries`.
+
+    The one rung whose notes are an engine prediction rather than fixed profile
+    text, hence the one a probe-first run verifies; a last resort never is.
+    """
+    return attempt.label == _SELECTIVE_LABEL
 
 
 def retries(profile: Profile, streams: Sequence[Stream]) -> list[Attempt]:
@@ -600,14 +669,16 @@ def retries(profile: Profile, streams: Sequence[Stream]) -> list[Attempt]:
 
 
 def needs_verification(profile: Profile) -> bool:
-    """Whether a successful cheap attempt is worth an ffprobe round-trip.
+    """Whether the first attempt a run makes is worth an ffprobe round-trip.
 
-    True only for a profile whose cheap attempt is declared partial by
-    construction (``docs/design/degradation-ladder.md``) -- the narrowed happy
-    path in ``docs/constitution.md`` keeps every other profile's success
-    probe-free.
+    True for a profile whose cheap attempt is declared partial by construction
+    (``partial_mapping``) and for a probe-first profile, whose first attempt is
+    the selective rung and whose predicted structural drops must be confirmed
+    against the written file (``docs/design/degradation-ladder.md``). The
+    narrowed happy path in ``docs/constitution.md`` keeps every other profile's
+    success probe-free.
     """
-    return profile.partial_mapping
+    return profile.partial_mapping or profile.probe_first
 
 
 def verify_success(profile: Profile, streams: Sequence[Stream]) -> tuple[str, ...]:

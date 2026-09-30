@@ -264,3 +264,9 @@ Each issue references this spec path in its body.
 - 2026-09-30: Spec-acceptance gate: preset `veryfast`, Pi 4 measured at QA; `web`
   shares `.mp4`, with the #30 guard narrowed to allow a shared suffix between
   profiles sharing a muxer. Accepted.
+- 2026-09-30: Capability (#163): a probe-first run reports the rung's own notes
+  first and the confirmed structural drops after them (the cheap-attempt path
+  puts them first) -- the spec fixes no order and the rung's notes exist before
+  the verification runs. Known limit: a rule with both a `stream_limit` and a D3
+  drop for one type can make `verify_success` predict a D2 drop the rung never
+  made; `web` cannot hit it (video has no limit, audio has a fallback).
