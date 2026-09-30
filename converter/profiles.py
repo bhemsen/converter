@@ -1696,7 +1696,7 @@ AVIF = Profile(
     ),
 )
 
-#: Browser-playable MP4 (`docs/specs/spec-web-target.md`, roadmap phase 13). Where
+#: Browser-playable MP4 (`docs/specs/archive/spec-web-target.md`, roadmap phase 13). Where
 #: ``mp4`` asks "can MP4 hold this?", ``web`` asks "will a plain <video> play
 #: this?", so its copy masks are far narrower than MP4's and it never remuxes
 #: blind: the source is probed first and the engine's selective rung is the

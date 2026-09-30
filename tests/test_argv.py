@@ -3022,7 +3022,7 @@ class TestAnimatedProfileArgvPinning:
 
 
 class TestWebProfileArgvPinning:
-    """`web` (issue #164, `docs/specs/spec-web-target.md`): the full argv it builds,
+    """`web` (issue #164, `docs/specs/archive/spec-web-target.md`): the full argv it builds,
     pinned byte-for-byte. It has no cheap attempt, so the selective rung
     (`jobs.retries(...)[0]`) is the first and, for a copyable source, only
     attempt."""

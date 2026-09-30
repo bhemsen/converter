@@ -114,7 +114,7 @@ shows a black picture or plays silently in Chrome or Firefox (`README.md`,
 
 ## Prior art
 
-- [Browser-playable target (Phase 13)](../prior-art.md#browser-playable-target-phase-13)
+- [Browser-playable target (Phase 13)](../../prior-art.md#browser-playable-target-phase-13)
   — jellyfin-web gates direct play on profile and bit depth, not codec family;
   MDN/caniuse evidence for the copy mask (AAC and MP3 everywhere; no AC-3/E-AC-3
   in any browser; HEVC hardware-gated; AV1 without a Safari fallback; Opus/FLAC in
@@ -275,3 +275,21 @@ Each issue references this spec path in its body.
   profile change (no source file besides `converter/profiles.py` changes). The `attached_pic`
   drop reason is "only mjpeg and png cover art can be stored in MP4"; the last-resort notes
   mirror `mp4`'s, adapted (cover art named, "so browsers can play them").
+- 2026-09-30: Milestone QA gate, run against real ffmpeg 9.0 on Windows 11 and
+  on the videothek Raspberry Pi 4. Verdict: accepted. `--to web` copied h264
+  `yuv420p` + aac and h264 `yuvj420p` untouched; turned HEVC 10-bit with two
+  AC-3 tracks and an SRT into h264 `yuv420p` with two AAC tracks, naming every
+  re-encode and dropping the subtitle with its note; re-encoded h264
+  `yuv420p10le` with the pixel-format note; kept an MJPEG cover; and gave an
+  iPhone-style MOV with `tmcd` no false "dropped" note — the confirming probe
+  found the track the MP4 muxer had recreated. Every output had `moov` before
+  `mdat`. `--to mp4` on the same sources behaved exactly as before. The outputs
+  played in the browsers checked by the human. **Pi 4: libx264 `-preset
+  veryfast` encodes 1080p at 17 fps**, inside the 15–19 fps estimated from the
+  relative measurement — below real time, as expected for software encoding on
+  that board.
+- 2026-09-30: Close-out. Four non-blocking review findings filed as
+  `track:adhoc` issues rather than fixed here: the selective rung recognised by
+  its label (#169), a uniqueness test that cannot fail (#170), the `mp4`/`web`
+  last resort able to take a cover as the video (#171), and no test for a
+  termination during the up-front probe (#172).

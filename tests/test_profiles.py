@@ -2002,7 +2002,7 @@ class TestRegistryTargetCoherence:
 
     def test_a_shared_target_suffix_is_only_allowed_between_profiles_sharing_a_muxer(self):
         """Narrowed from "no two profiles share a suffix" (issue #30) by
-        `docs/specs/spec-web-target.md`: `web` and `mp4` both write `.mp4`, which
+        `docs/specs/archive/spec-web-target.md`: `web` and `mp4` both write `.mp4`, which
         is what every browser and player expects. A shared suffix stays safe
         while the muxer -- the thing ffmpeg picks from the suffix -- is the same;
         two profiles that disagree on it would make one suffix mean two formats."""
@@ -2025,7 +2025,7 @@ class TestRegistryTargetCoherence:
 
 
 class TestWebProfile:
-    """`web` (issue #164, `docs/specs/spec-web-target.md`): the declared fields."""
+    """`web` (issue #164, `docs/specs/archive/spec-web-target.md`): the declared fields."""
 
     def test_container_fields(self):
         assert WEB.name == "web"

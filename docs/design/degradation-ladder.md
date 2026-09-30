@@ -60,7 +60,7 @@ flowchart TD
   muxer puts back a `tmcd` track no `-map` selected. A probe-first profile is
   never `explicit_streams`, so it never takes PLAN's "already selects streams
   explicitly" edge to `FIN` — a copyable source is copied, not re-encoded
-  (`docs/specs/spec-web-target.md`).
+  (`docs/specs/archive/spec-web-target.md`).
 - **One probe per file, and none for an exhaustive cheap attempt — plus one more
   only for a run that is about to report a loss.** The failure-side `ffprobe`
   node sits behind the first non-zero exit and is reached at most once; every
