@@ -310,6 +310,40 @@ note    Show.S01E01.mkv: video stream 0 (theora) re-encoded to h264
 note    Show.S01E02.mkv: subtitle stream 2 (hdmv_pgs_subtitle) dropped: bitmap subtitles cannot be stored in MP4
 ```
 
+### `--to web`: an MP4 a browser plays
+
+`--to mp4` asks "can MP4 hold this?" and remuxes blindly, so HEVC, AC-3 or
+10-bit H.264 pass straight through and the file may show a black picture or play
+silently in Chrome or Firefox. `--to web` asks "does a browser play this?" and
+decides from an `ffprobe` run *before* its first attempt, so there is no blind
+remux to trust:
+
+* **Copied as-is:** H.264 video that is 8-bit 4:2:0 (`yuv420p`/`yuvj420p`), and
+  AAC or MP3 audio.
+* **Re-encoded:** every other video stream to H.264 `yuv420p` (libx264, CRF 18,
+  `-preset veryfast`, which keeps a small machine usable), every other audio
+  stream to AAC at 192k. Each one gets a note naming its index and codec.
+* **Every audio track is kept.** Subtitles are dropped with a note for now, since
+  a browser does not show them from inside an MP4. Cover art is kept when it is
+  MJPEG or PNG, dropped with a note otherwise.
+* The result is written with `+faststart`, so playback can begin before the
+  download finishes.
+
+```
+note    hevc.mkv: video stream 0 (hevc) re-encoded to h264
+note    hevc.mkv: audio stream 1 (ac3) re-encoded to aac
+```
+
+`web` writes `<name>.mp4`, the same output name as `--to mp4`, and that has two
+consequences:
+
+* An `OUTPUT` tree that already holds `--to mp4` results is skipped file by file
+  (`output already exists`), so nothing is upgraded to browser-safe. Use a
+  separate directory, or `--overwrite`.
+* `.mp4` sources converted with no separate `OUTPUT` map onto themselves and are
+  skipped as a self-write (`the output path is this file itself; not converted
+  in place`). Give it an `OUTPUT` of its own.
+
 ### Notes and limitations
 
 * **Some exotic codecs remux "successfully" but play badly.** ffmpeg will happily
