@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-09-30
+
+The converter becomes a dependable child process: a machine-readable output
+contract, writes that a kill cannot leave half-finished, and a target every
+browser plays.
+
+### Added
+
+- **`--json`: one JSON record per file, then a summary.** JSON Lines on stdout —
+  `file` records with `source`, `output` (both absolute), `outcome`, `attempt`,
+  `notes` and `error`, and one closing `summary` with the counts and the exit
+  code. Every record carries `type` and `schema` (`1`). Lines are pure ASCII and
+  end in `\n` on every platform; nothing else reaches stdout. A stream without a
+  `summary` is incomplete. `--json --dry-run` emits `planned` records.
+- **Exit codes are a documented contract**: `0` (nothing failed — `skipped` and
+  `unsupported` included), `1`, `2` (under `--json`, stdout stays empty), `130`,
+  and new **`143` for SIGTERM**.
+- **`--to web`: an MP4 every current browser plays.** It probes first instead
+  of remuxing blindly, copies only 8-bit 4:2:0 H.264 and AAC/MP3, and re-encodes
+  everything else to H.264 `yuv420p` (`-preset veryfast`) and AAC — naming each
+  re-encode, including one caused by a 10-bit or 4:2:2 pixel format. All audio
+  tracks and MJPEG/PNG cover art are kept; subtitles are dropped with a note.
+  It shares the `.mp4` suffix with `--to mp4`, so write it to its own output
+  directory. `--to mp4` is unchanged.
+
+### Changed
+
+- **Every output is written as `<output>.partial` and renamed only when
+  complete.** A killed run no longer leaves a finished-looking output that the
+  next run would skip; a stale `.partial` is removed by the next run that
+  targets the same output. The `.partial` name is reserved, and two runs over
+  the same tree at once are unsupported.
+- **`--overwrite` keeps the previous output until the new one is complete**, so
+  a failed overwrite no longer destroys a good file.
+- **Termination stops ffmpeg.** Ctrl+C and, on POSIX, SIGTERM terminate every
+  running ffmpeg and delete its partial file. On Windows, where a parent can only
+  `TerminateProcess` the converter, a Job Object takes ffmpeg down with it.
+- The note for a file whose output would be itself now reads "the output path
+  is this file itself; not converted in place".
+
+### Fixed
+
+- An interrupt that landed while tasks were still being submitted skipped the
+  termination path and left ffmpeg running (#159).
+
 ## [3.1.0] - 2026-09-28
 
 A single file can now be converted on its own, with the same degradation ladder
@@ -147,5 +192,6 @@ the history starts somewhere honest rather than at 3.0.0.
   `converter` CLI with `video` and `audio` sub-commands, installable with
   `pip install -e .`.
 
+[3.2.0]: https://github.com/bhemsen/converter/releases/tag/v3.2.0
 [3.1.0]: https://github.com/bhemsen/converter/releases/tag/v3.1.0
 [3.0.0]: https://github.com/bhemsen/converter/releases/tag/v3.0.0
