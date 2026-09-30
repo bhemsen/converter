@@ -1696,12 +1696,88 @@ AVIF = Profile(
     ),
 )
 
+#: Browser-playable MP4 (`docs/specs/spec-web-target.md`, roadmap phase 13). Where
+#: ``mp4`` asks "can MP4 hold this?", ``web`` asks "will a plain <video> play
+#: this?", so its copy masks are far narrower than MP4's and it never remuxes
+#: blind: the source is probed first and the engine's selective rung is the
+#: first attempt.
+WEB = Profile(
+    label="Web",
+    name="web",
+    description=(
+        "Video for web browsers: copies 8-bit h264 and aac/mp3, re-encodes the rest to h264/aac"
+    ),
+    target_suffix=".mp4",
+    muxer="mp4",
+    container_options=FASTSTART,
+    # No blind remux: MP4 legally holds HEVC, AC-3 and 10-bit H.264, so a remux
+    # would succeed and report a file no browser plays.
+    cheap_attempt=None,
+    # False on purpose: True would make the selective rung vanish for a plan that
+    # gives nothing up, sending every fully copyable source to the last resort.
+    explicit_streams=False,
+    # There is no cheap attempt whose mapping could be partial; the selective
+    # rung's drops are verified through probe_first instead.
+    partial_mapping=False,
+    probe_first=True,
+    rules={
+        "video": StreamRule(
+            # Codec alone cannot tell a playable H.264 from High 10 / 4:2:2.
+            copy_mask=frozenset({"h264"}),
+            copy_pix_fmts=frozenset({"yuv420p", "yuvj420p"}),
+            pix_fmt_reason="browsers only play 8-bit 4:2:0 video",
+            accept_options=flags("-c:v:{n} copy"),
+            # CRF 18 matches mp4; veryfast is ~1.9x faster than medium at equal
+            # or smaller size, which keeps a Raspberry Pi 4 usable.
+            fallback_options=flags(
+                "-c:v:{n} libx264 -crf:v:{n} 18 -preset:v:{n} veryfast -pix_fmt:v:{n} yuv420p"
+            ),
+            fallback_name="h264",
+        ),
+        "audio": StreamRule(
+            copy_mask=frozenset({"aac", "mp3"}),
+            accept_options=flags("-c:a:{n} copy"),
+            fallback_options=flags("-c:a:{n} aac -b:a:{n} 192k"),
+            fallback_name="aac",
+        ),
+        "subtitle": StreamRule(
+            copy_mask=frozenset(),
+            # Unreachable -- the empty mask never accepts -- but the registry's
+            # placeholder test requires every rule's options to carry "{n}".
+            accept_options=flags("-c:s:{n} copy"),
+            drop_reason="subtitles are not shown by a browser from inside an MP4",
+        ),
+        # Without this rule an MJPEG cover would match the video rule and be
+        # re-encoded into a second H.264 stream. A browser ignores the picture,
+        # so keeping it costs nothing; no copy_pix_fmts because its pixel format
+        # does not affect playback.
+        "attached_pic": StreamRule(
+            copy_mask=frozenset({"mjpeg", "png"}),
+            accept_options=flags("-c:v:{n} copy"),
+            drop_reason="only mjpeg and png cover art can be stored in MP4",
+        ),
+    },
+    last_resort=Attempt(
+        label="re-encode",
+        options=flags(
+            "-map 0:v:0? -map 0:a? "
+            "-c:v libx264 -crf 18 -preset veryfast -pix_fmt yuv420p "
+            "-c:a aac -b:a 192k"
+        ),
+        notes=(
+            "re-encoded to h264/aac (lossy); subtitles, cover art and extra video streams dropped",
+            "10-bit or HDR sources are reduced to 8-bit yuv420p so browsers can play them",
+        ),
+    ),
+)
+
 #: Target name -> profile. Built from each profile's own ``name`` rather than
 #: repeating it as a literal key, so the two can never drift apart.
 PROFILES: dict[str, Profile] = {
     profile.name: profile
     for profile in (
         MP4,
+        WEB,
         WAV,
         MKV,
         MOV,

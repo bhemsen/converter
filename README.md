@@ -30,6 +30,7 @@ Target formats:
   png   .png  Image: force-encoded to PNG, lossless
   tiff  .tiff  Image: force-encoded to TIFF, lossless
   wav   .wav  Audio: single stream, uncompressed 16-bit PCM
+  web   .mp4  Video for web browsers: copies 8-bit h264 and aac/mp3, re-encodes the rest to h264/aac
   webm  .webm  Video: copies VP8/VP9/AV1 and Opus/Vorbis, re-encodes the rest to VP9/Opus
   webp  .webp  Image: copies compatible streams, animated; falls back to WebP re-encode
 ```

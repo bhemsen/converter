@@ -24,6 +24,7 @@ from converter.profiles import (
     PROFILES,
     TIFF,
     WAV,
+    WEB,
     WEBM,
     WEBP,
     Attempt,
@@ -3018,6 +3019,238 @@ class TestAnimatedProfileArgvPinning:
             "AVIF holds a single frame",
             "non-video streams, and any video stream beyond the first, are not carried into AVIF",
         )
+
+
+class TestWebProfileArgvPinning:
+    """`web` (issue #164, `docs/specs/spec-web-target.md`): the full argv it builds,
+    pinned byte-for-byte. It has no cheap attempt, so the selective rung
+    (`jobs.retries(...)[0]`) is the first and, for a copyable source, only
+    attempt."""
+
+    HEAD: ClassVar[list[str]] = [
+        "ffmpeg",
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        "in.mkv",
+    ]
+    TAIL: ClassVar[list[str]] = ["-movflags", "+faststart", "out.mp4"]
+    H264_REENCODE: ClassVar[list[str]] = [
+        "-c:v:0",
+        "libx264",
+        "-crf:v:0",
+        "18",
+        "-preset:v:0",
+        "veryfast",
+        "-pix_fmt:v:0",
+        "yuv420p",
+    ]
+
+    def _first(self, streams: list[Stream]) -> Attempt:
+        return jobs.retries(WEB, streams)[0]
+
+    def _argv(self, attempt: Attempt) -> list[str]:
+        return build_argv("ffmpeg", "in.mkv", attempt.options, "out.mp4")
+
+    def test_h264_yuv420p_with_aac_is_copied_in_one_attempt(self):
+        selective = self._first(
+            [Stream(0, "video", "h264", pix_fmt="yuv420p"), Stream(1, "audio", "aac")]
+        )
+
+        assert self._argv(selective) == [
+            *self.HEAD,
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:v:0",
+            "copy",
+            "-c:a:0",
+            "copy",
+            *self.TAIL,
+        ]
+        assert selective.notes == ()
+
+    def test_yuvj420p_and_mp3_are_copied_too(self):
+        selective = self._first(
+            [Stream(0, "video", "h264", pix_fmt="yuvj420p"), Stream(1, "audio", "mp3")]
+        )
+
+        assert "libx264" not in selective.options
+        assert "aac" not in selective.options
+        assert selective.notes == ()
+
+    def test_hevc_with_ac3_is_reencoded_and_named(self):
+        selective = self._first(
+            [Stream(0, "video", "hevc", pix_fmt="yuv420p10le"), Stream(1, "audio", "ac3")]
+        )
+
+        assert self._argv(selective) == [
+            *self.HEAD,
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            *self.H264_REENCODE,
+            "-c:a:0",
+            "aac",
+            "-b:a:0",
+            "192k",
+            *self.TAIL,
+        ]
+        assert selective.notes == (
+            "video stream 0 (hevc) re-encoded to h264",
+            "audio stream 1 (ac3) re-encoded to aac",
+        )
+
+    def test_h264_ten_bit_is_reencoded_with_the_pixel_format_note(self):
+        selective = self._first(
+            [Stream(0, "video", "h264", pix_fmt="yuv420p10le"), Stream(1, "audio", "aac")]
+        )
+
+        assert self._argv(selective) == [
+            *self.HEAD,
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            *self.H264_REENCODE,
+            "-c:a:0",
+            "copy",
+            *self.TAIL,
+        ]
+        assert selective.notes == (
+            "video stream 0 (h264, yuv420p10le) re-encoded to h264: "
+            "browsers only play 8-bit 4:2:0 video",
+        )
+
+    def test_every_audio_stream_is_kept(self):
+        selective = self._first(
+            [
+                Stream(0, "video", "h264", pix_fmt="yuv420p"),
+                Stream(1, "audio", "aac"),
+                Stream(2, "audio", "ac3"),
+            ]
+        )
+
+        assert self._argv(selective) == [
+            *self.HEAD,
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-map",
+            "0:2",
+            "-c:v:0",
+            "copy",
+            "-c:a:0",
+            "copy",
+            "-c:a:1",
+            "aac",
+            "-b:a:1",
+            "192k",
+            *self.TAIL,
+        ]
+        assert selective.notes == ("audio stream 2 (ac3) re-encoded to aac",)
+
+    def test_text_and_bitmap_subtitles_are_both_dropped_with_the_note(self):
+        """The reason is the rule's, so neither codec is special-cased. The
+        structural drops (no rule) are not on the rung -- a subtitle drop is
+        codec-level (D3), so its note is."""
+        selective = self._first(
+            [
+                Stream(0, "video", "h264", pix_fmt="yuv420p"),
+                Stream(1, "audio", "aac"),
+                Stream(2, "subtitle", "subrip"),
+                Stream(3, "subtitle", "hdmv_pgs_subtitle"),
+            ]
+        )
+
+        assert self._argv(selective) == [
+            *self.HEAD,
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:v:0",
+            "copy",
+            "-c:a:0",
+            "copy",
+            *self.TAIL,
+        ]
+        assert selective.notes == (
+            "subtitle stream 2 (subrip) dropped: "
+            "subtitles are not shown by a browser from inside an MP4",
+            "subtitle stream 3 (hdmv_pgs_subtitle) dropped: "
+            "subtitles are not shown by a browser from inside an MP4",
+        )
+
+    def test_an_mjpeg_cover_is_copied_not_reencoded_as_video(self):
+        selective = self._first(
+            [
+                Stream(0, "audio", "mp3"),
+                Stream(1, "video", "mjpeg", pix_fmt="yuvj420p", attached_pic=True),
+            ]
+        )
+
+        assert self._argv(selective) == [
+            *self.HEAD,
+            "-map",
+            "0:0",
+            "-map",
+            "0:1",
+            "-c:a:0",
+            "copy",
+            "-c:v:0",
+            "copy",
+            *self.TAIL,
+        ]
+        assert selective.notes == ()
+
+    def test_a_cover_in_another_codec_is_dropped_with_a_note(self):
+        selective = self._first(
+            [
+                Stream(0, "audio", "mp3"),
+                Stream(1, "video", "bmp", pix_fmt="bgr24", attached_pic=True),
+            ]
+        )
+
+        assert "0:1" not in selective.options
+        assert selective.notes == (
+            "video stream 1 (bmp) dropped: only mjpeg and png cover art can be stored in MP4",
+        )
+
+    def test_last_resort_argv(self):
+        last_resort = jobs.retries(WEB, [Stream(0, "video", "hevc")])[-1]
+
+        assert self._argv(last_resort) == [
+            *self.HEAD,
+            "-map",
+            "0:v:0?",
+            "-map",
+            "0:a?",
+            "-c:v",
+            "libx264",
+            "-crf",
+            "18",
+            "-preset",
+            "veryfast",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            *self.TAIL,
+        ]
+        assert last_resort.notes == WEB.last_resort.notes
+        assert len(last_resort.notes) == 2
+
+    def test_there_is_no_blind_first_attempt(self):
+        assert jobs.first_attempt(WEB) is None
 
 
 class TestUnsupportedDiscriminator:
