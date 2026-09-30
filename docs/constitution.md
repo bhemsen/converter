@@ -37,7 +37,10 @@
   gives up is a prediction, and a muxer may put back what no `-map` selected, so
   the claim is confirmed against the written file before it is printed
   (`docs/design/degradation-ladder.md`). A conversion that gives nothing up never
-  pays for that second probe.
+  pays for that second probe. A profile may instead be **probe-first** — declared
+  as a field, with no cheap attempt — when a blind first attempt would carry
+  streams the target accepts but cannot use; its one probe then precedes the
+  first attempt, and its attempts are built from that probe.
 - A target format is data, not code: adding one must produce no diff in
   `cli.py`, `batch.py` or `paths.py`.
 - One broken input file must not abort the batch.

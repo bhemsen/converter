@@ -54,7 +54,9 @@ only on `cli`.
    inputs: a directory walk through `paths.find_sources`, or the named file alone
    (`docs/design/source-selection.md`). `paths.find_collisions` refuses up front
    if two inputs would write to the same output, then `batch.run_batch`
-   runs the profile's cheapest attempt per file through the engine in `jobs.py`.
+   runs the profile's cheapest attempt per file through the engine in `jobs.py`
+   — or, for a probe-first profile (`web`), for which the engine offers no cheap
+   attempt, probes first and starts at the selective rung.
    Every attempt writes to `<output>.partial` (with `-f` naming the profile's
    muxer, since the suffix no longer tells ffmpeg the format); the partial is
    moved into place only after the success-side verification below has run

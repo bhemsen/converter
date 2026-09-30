@@ -16,6 +16,7 @@ only a run that is about to claim a loss ever reaches.
 
 ```mermaid
 flowchart TD
+    PF{"does the profile declare probe-first?"}
     A["Attempt 1 — the profile's cheap attempt<br/>(ffmpeg)"]
     V["predict what that mapping could carry<br/>(ffprobe on the source — the success side's first probe)"]
     C["confirm the prediction against the written file<br/>(ffprobe on the output — only when a loss is predicted)"]
@@ -26,6 +27,8 @@ flowchart TD
     OK["converted — the winning attempt's notes are reported"]
     BAD["failed — partial output removed, ffmpeg's stderr kept per rung"]
 
+    PF -->|"no"| A
+    PF -->|"yes — no cheap attempt; the one probe comes first"| P
     A -->|"exit 0, and the profile declares the mapping exhaustive"| OK
     A -->|"exit 0, and the profile declares the mapping partial"| V
     V -->|"stream list, and the mapping gave nothing up"| OK
@@ -47,6 +50,12 @@ flowchart TD
 
 ## Rules the diagram encodes
 
+- **A probe-first profile starts at `P`.** It declares no cheap attempt, because a
+  blind remux is precisely what would carry streams the target accepts but cannot
+  use — `web`'s HEVC or AC-3 in an MP4 a browser cannot play. Its one probe is the
+  failure side's `P`, moved to the front; its selective rung is built from it and
+  already carries accurate notes, so no success-side probe follows. Still one
+  probe per file (`docs/specs/spec-web-target.md`).
 - **One probe per file, and none for an exhaustive cheap attempt — plus one more
   only for a run that is about to report a loss.** The failure-side `ffprobe`
   node sits behind the first non-zero exit and is reached at most once; every
