@@ -358,6 +358,12 @@ class TestProbeFirstDeclaration:
         resort and is re-encoded."""
         assert not (profile.probe_first and profile.explicit_streams)
 
+    @pytest.mark.parametrize("profile", PROFILES.values(), ids=lambda profile: profile.label)
+    def test_no_last_resort_borrows_the_engine_rung_s_label(self, profile):
+        """`jobs.is_selective_rung` recognises the engine-built rung by label, so a
+        profile's own last resort must never carry it."""
+        assert profile.last_resort is None or profile.last_resort.label != "selective"
+
     def test_the_invariant_skip_covers_exactly_the_probe_first_profiles(self):
         skipped = {profile.name for profile in SHIPPED} - {p.name for p in INVARIANT_CASES}
 
