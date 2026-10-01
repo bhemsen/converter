@@ -68,8 +68,9 @@ shell loop around ffmpeg.
   tree.
 - Loss accounting per file.
 - Text subtitles written as sidecar files next to a browser target's output, so
-  one source may write more than one path — each covered by the same guards,
-  temporary-name writes and per-file record as the output itself.
+  one source may write more than one path — each covered by the collision,
+  self-write and overwrite guards, temporary-name writes and the per-file
+  record; an existing sidecar is kept and named rather than skipping the file.
 - Skipping existing outputs, and refusing colliding output paths up front.
 - Bounded parallelism, progress reporting, non-zero exit when anything failed.
 - Machine-readable output: one JSON record per file plus a summary, and exit

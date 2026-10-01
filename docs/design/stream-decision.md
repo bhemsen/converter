@@ -2,7 +2,8 @@
 
 > Design artifact (`docs/design.md`, `kind: concept`). The sibling of
 > `degradation-ladder.md`: that file decides the order of attempts, this one
-> decides what happens to a single stream inside the selective rung.
+> decides what happens to a single stream inside the selective rung — including
+> whether it leaves the rung for a sidecar file written after the ladder.
 >
 > Declared deviation from `docs/design.md`'s per-stream convention: the contract
 > asks for one decision node per stream type. A profile-driven engine has no
@@ -13,7 +14,7 @@
 ## The decision this settles
 
 Given one probed stream and the target profile's rule for that stream's type,
-whether the stream is copied, re-encoded, or dropped — and what the resulting
+whether the stream is copied, re-encoded, dropped, or written as a sidecar — and what the resulting
 note says. No node here spends a subprocess call: the whole plan is built in
 Python from one stream list. `TARGET` below is the profile's display label
 (`MP4`, `WAV`), `TARGET_CODEC` the human-readable name of what the fallback

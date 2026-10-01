@@ -27,7 +27,7 @@ flowchart TD
     OK["the attempt succeeded — its notes are the run's notes"]
     SCQ{"did the stream plan route any stream to a sidecar?<br/>(only a probe-first profile can declare one)"}
     SCS["sidecar step — one ffmpeg, one output per sidecar<br/>(each to its own .partial; a failure drops the sidecars<br/>with a note each, never the output)"]
-    DONE["converted — renamed into place, sidecars first,<br/>the output last; the notes are reported"]
+    DONE["rename into place — sidecars first, the output last;<br/>converted, the notes are reported"]
     BAD["failed — partial output removed, ffmpeg's stderr kept per rung"]
 
     PF -->|"no"| A
@@ -54,6 +54,7 @@ flowchart TD
     SCQ -->|"no"| DONE
     SCQ -->|"yes"| SCS
     SCS --> DONE
+    DONE -->|"the output's own rename fails —<br/>renamed sidecars stay"| BAD
 ```
 
 ## Rules the diagram encodes
