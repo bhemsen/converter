@@ -24,7 +24,10 @@ flowchart TD
     PLAN["build the selective plan<br/>(no subprocess — see stream-decision.md)"]
     SEL["Attempt 2 — selective<br/>(ffmpeg)"]
     FIN["Attempt 3 — the profile's last-resort attempt<br/>(ffmpeg; a profile may declare none)"]
-    OK["converted — the winning attempt's notes are reported"]
+    OK["the attempt succeeded — its notes are the run's notes"]
+    SCQ{"did the stream plan route any stream to a sidecar?<br/>(only a probe-first profile can declare one)"}
+    SCS["sidecar step — one ffmpeg, one output per sidecar<br/>(each to its own .partial; a failure drops the sidecars<br/>with a note each, never the output)"]
+    DONE["converted — renamed into place, sidecars first,<br/>the output last; the notes are reported"]
     BAD["failed — partial output removed, ffmpeg's stderr kept per rung"]
 
     PF -->|"no"| A
@@ -47,10 +50,24 @@ flowchart TD
     SEL -->|"exit != 0"| FIN
     FIN -->|"exit 0"| OK
     FIN -->|"exit != 0, or no last-resort attempt declared"| BAD
+    OK --> SCQ
+    SCQ -->|"no"| DONE
+    SCQ -->|"yes"| SCS
+    SCS --> DONE
 ```
 
 ## Rules the diagram encodes
 
+- **The sidecar step runs after the ladder, never inside it.** Whichever rung
+  wrote the output — the selective rung or the last resort — the streams the
+  plan routed to a sidecar (`stream-decision.md`'s `SIDECAR`) are written by one
+  further ffmpeg process with one output per sidecar, built from the stream
+  list the up-front probe already holds, so it spends no probe. A sidecar that
+  fails costs its own file and a note, never the output and never a rung:
+  carrying sidecars as extra outputs on a rung would let a subtitle the WebVTT
+  encoder rejects push the video down to a re-encode. Every sidecar is renamed
+  before the output, so an output at its final path implies its sidecar step
+  finished (`docs/specs/spec-subtitle-sidecars.md`).
 - **A probe-first profile starts at `P`.** It declares no cheap attempt, because a
   blind remux is precisely what would carry streams the target accepts but cannot
   use — `web`'s HEVC or AC-3 in an MP4 a browser cannot play. Its one probe is the

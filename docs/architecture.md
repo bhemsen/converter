@@ -11,11 +11,11 @@ Everything else exists today.
 | Component | Responsibility |
 | --------- | -------------- |
 | `converter/cli.py` | Argument parsing, target-format selection, the interactive prompt, usage errors, exit codes |
-| `converter/profiles.py` | One declarative profile per target format: the copy mask, the fallback encoder and the drop reason per stream type, the container flags, the ffmpeg muxer that writes it, the cheap and last-resort attempts the format declares as data, and whether that cheap attempt's mapping is partial by construction |
-| `converter/jobs.py` | The generic conversion engine: turns a profile plus a probed stream list into an ordered ladder of attempts, and into the notes a *successful* partial cheap attempt owes. It owns the *order* of the rungs and how the selective rung is built; the profiles own what each declared rung contains |
+| `converter/profiles.py` | One declarative profile per target format: the copy mask, the fallback encoder and the drop reason per stream type, the container flags, the ffmpeg muxer that writes it, the cheap and last-resort attempts the format declares as data, whether that cheap attempt's mapping is partial by construction, and — for a probe-first profile — which streams it writes as sidecar files instead (codecs, options, muxer, suffix) |
+| `converter/jobs.py` | The generic conversion engine: turns a profile plus a probed stream list into an ordered ladder of attempts, and into the notes a *successful* partial cheap attempt owes. It owns the *order* of the rungs, how the selective rung is built and which streams a sidecar step writes; the profiles own what each declared rung contains |
 | `converter/batch.py` | Bounded parallel execution, the per-file outcome, the progress bar, the aggregate summary and the process exit code; hands each result to a caller-supplied callback |
-| `converter/report.py` | Rendering results: the human text lines and the `--json` records (JSON Lines), both over `batch.Result` / `batch.Summary` |
-| `converter/paths.py` | Input discovery, output-path construction, tree mirroring, collision detection, Windows path-length diagnosis |
+| `converter/report.py` | Rendering results: the human text lines and the `--json` records (JSON Lines, including each converted file's `sidecars`), both over `batch.Result` / `batch.Summary` |
+| `converter/paths.py` | Input discovery, output-path construction, sidecar naming (language normalisation, the duplicate rule, the stale-partial sweep), tree mirroring, collision detection, Windows path-length diagnosis |
 | `converter/ffmpegtool.py` | Locating ffmpeg and ffprobe, building argv, running without a shell, probing streams; keeps every running process in a registry it can terminate, bound to a Job Object on Windows |
 | `converter/__main__.py` | The `python -m converter` entry point |
 
@@ -95,6 +95,14 @@ only on `cli`.
    takes. A probe-first profile (`web`) has no cheap attempt at all and succeeds
    on the selective rung instead; see the 2026-08-26 (issue #41) entries in
    `docs/specs/archive/spec-profile-registry.md`'s Decision log.
+   A profile that routes streams to sidecars (`web`'s text subtitles) adds one
+   step after whichever rung wrote the output: `jobs.plan_sidecars` names the
+   streams from the stream list already probed, `paths.sidecar_paths` names
+   their files, and `batch` runs **one** further ffmpeg process with one
+   `.partial` output per sidecar. A failure there drops the sidecars with a
+   note each and never the output. Every sidecar is renamed into place
+   **before** the output, so an output at its final path implies its sidecar
+   step finished (`docs/specs/spec-subtitle-sidecars.md`).
 2. **Degradation.** The attempt exits non-zero, so *now* `ffmpegtool.probe_streams`
    describes the file. Each stream is first resolved to a rule — by its
    disposition when it is an attached picture and the profile declares a rule for
@@ -121,7 +129,10 @@ only on `cli`.
 3. **Idempotent re-run.** An output that already exists and no `--overwrite` makes
    the file `skipped` without starting a process (a stale `<output>.partial` from
    a killed run is removed first), so a second run over a finished
-   tree does no work for the files it already converted. A source whose output
+   tree does no work for the files it already converted. Sidecars take no part
+   in that decision: the output's existence alone decides it, and stale sidecar
+   partials beside it are swept by name grammar (`paths.stale_sidecar_partials`)
+   whether the file is skipped or not. A source whose output
    path would be its own input path is `skipped` too — reported rather than passed
    over in silence, and counted, per `docs/design/source-selection.md`.
 4. **Failure.** The `.partial` file is removed — an existing output is left
@@ -142,7 +153,8 @@ only on `cli`.
    thread (`KeyboardInterrupt`, or `ffmpegtool.Terminated` from the SIGTERM
    handler), which calls `ffmpegtool.terminate_all`: the registry closes to new
    spawns and every running process is killed and reaped. Each worker sees the
-   shutdown flag after its `run()` returns, deletes its own `.partial` and stops
+   shutdown flag after its `run()` returns, deletes its own `.partial` (and its
+   sidecar partials, when the sidecar step was running) and stops
    without a result; the main thread waits for them, then removes any partial
    still in flight. The run exits 130 or 143 without a summary. A Windows
    `TerminateProcess` cannot be caught: the Job Object kills ffmpeg with the
