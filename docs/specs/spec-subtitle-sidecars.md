@@ -28,14 +28,14 @@ second file per source has nowhere to go.
 - [ ] `converter --to web` writes each text subtitle stream (a codec in
       `TEXT_SUBTITLE_CODECS`) of a source as `<stem>.<lang>.vtt` beside
       `<stem>.mp4`, where `<lang>` is the stream's normalised language tag or
-      `und`; a second stream that normalises to the same language follows the
-      duplicate-naming rule fixed in *Prior decisions*.
+      `und`; a further stream of the same language is `<stem>.<lang>.2.vtt`,
+      `.3.vtt`, ... in source-stream order.
 - [ ] An image subtitle stream (PGS, DVD, DVB) is dropped with a note naming
       its index, its codec and the reason; a text subtitle stream that became a
       sidecar earns no drop note.
-- [ ] A sidecar that gives up styling earns a note naming the stream index, its
-      codec and what was lost, per the styling-note rule fixed in *Prior
-      decisions*.
+- [ ] An ASS or SSA sidecar earns a note naming the stream index, its codec
+      and that styling and positioning are not carried; SubRip and `mov_text`
+      earn none.
 - [ ] Every sidecar is written under `<sidecar>.partial` and renamed into place
       only after the MP4 conversion succeeded and was verified; every sidecar is
       renamed **before** the MP4, so an MP4 at its final path implies its run
@@ -211,7 +211,7 @@ without a language tag.
 | Stale sidecar partials are swept by **grammar**: at the start of every task (before the skip check, beside today's primary-partial sweep), in the outer `except BaseException` net of `_attempt_conversion`, and in the main thread's stuck-future clean-up, `paths.stale_sidecar_partials(dst, suffix)` lists matching `*.partial` files and each is removed best-effort. `run_batch` asks `jobs.sidecar_suffix(profile)` once and threads the value into the worker and into `_handle_interrupt` (`None` → no sweep) | Sidecar names need the probe, which a skipped task never spends and neither the outer net nor the main thread holds; grammar plus `normcase` makes the match exact for one MP4 name exactly where `find_collisions` already treats two names as one, so two tasks that may run concurrently never sweep each other's partials (`Ep1`/`ep1` on POSIX are distinct to both). Satisfies the constitution's "a stale one is removed by the next run that targets the same output". It widens `spec-abort-safe-writes.md`'s "only the exact partial path of a task is ever deleted" to "only names that task alone can produce" — a listing of one directory, not a tree walk | 2026-10-01 |
 | Termination: after the sidecar process returns, `_raise_if_terminated` removes the MP4 partial **and** every sidecar partial of the run before raising | Same ownership rule as phase 12: each partial has one owner at a time | 2026-10-01 |
 | A sidecar path past Windows MAX_PATH while the MP4 fits is not pre-checked: the sidecar step fails and every sidecar gets the failure note | Rare (a sidecar adds ~8 characters); failing the sidecars, not the MP4, is the designed degradation | 2026-10-01 |
-| **An MP4 at its final path is done**, missing sidecars or not: the skip decision is unchanged and probe-free; a sidecar never takes part in it. Sidecars beside an MP4 written by v3.2.0 are backfilled only by `--overwrite` (a full reconversion) | Constraint-determined: a backfill on skip would probe every already-converted `web` file on every re-run, against the probe principle and the vision's "a second run does no work", and would need a new outcome for "skipped but wrote something". Presented at the gate for confirmation | 2026-10-01 |
+| **An MP4 at its final path is done**, missing sidecars or not: the skip decision is unchanged and probe-free; a sidecar never takes part in it. Sidecars beside an MP4 written by v3.2.0 are backfilled only by `--overwrite` (a full reconversion) | Constraint-determined: a backfill on skip would probe every already-converted `web` file on every re-run, against the probe principle and the vision's "a second run does no work", and would need a new outcome for "skipped but wrote something". Confirmed by the human at the spec-acceptance gate | 2026-10-01 |
 | **ASS and SSA always earn a styling note** when written: `subtitle stream <i> (<codec>) written to <name>: styling and positioning are not carried by WebVTT` | Measured loss of override tags and styles — the constitution forbids reporting it silently | 2026-10-01 |
 | A sidecar's argv: `-map 0:<index> <options> -f <muxer> <sidecar>.partial` per sidecar, all in one process; options `-c:s webvtt`, muxer `webvtt` | Measured above; `-f` is required because `.partial` defeats suffix-based muxer choice (phase 12). No `-vn`/`-an` needed: explicit `-map` selects nothing else | 2026-10-01 |
 | Which streams: `codec_type == "subtitle"` and codec in `TEXT_SUBTITLE_CODECS` (`subrip`, `srt`, `ass`, `ssa`, `mov_text`, `webvtt`, `text`); every other subtitle codec takes the rule's D3 drop with reason "bitmap subtitles cannot be written as WebVTT" | Reuses the curated set MP4 and WebM already use for "is this text"; the reason replaces "subtitles are not shown by a browser from inside an MP4", which is no longer true of the streams that still reach it | 2026-10-01 |
@@ -219,8 +219,8 @@ without a language tag.
 | JSON: the `file` record gains `sidecars` as its **last** key: `null` unless `converted`; otherwise an array (empty when none were written) of `{"path": <absolute, via Path.absolute()>, "stream": <source stream index>, "language": <normalised lang>}` in source-stream order, listing only sidecars actually written. `schema` stays `1`; `planned` and `summary` records are unchanged | The record contract is open and additive changes keep the schema (`docs/specs/archive/spec-json-output.md`). `null` for non-converted outcomes follows `attempt`'s convention: a skipped file's sidecars are unknown, and `[]` would wrongly assert there are none. Last position keeps every existing key's order | 2026-10-01 |
 | Text mode prints no line for a written sidecar | A `note` line reports what was given up; a sidecar gives nothing up. Notes for styling loss, an existing path or a failed step are printed as usual | 2026-10-01 |
 | `batch.Result` gains `sidecars: tuple[WrittenSidecar, ...] = ()`, `WrittenSidecar` a frozen dataclass `(path: Path, stream: int, language: str)` in `batch.py` | Value types are frozen dataclasses (`docs/constitution.md`); the default keeps every existing construction site unchanged | 2026-10-01 |
-| OPEN — **naming of a second stream that normalises to the same language** (and to `und`). Admissible space, all inside the grammar above: the first stream bare or numbered too; `<k>` from 1 or from 2; ordinals per language or global; `und` numbered like any other language. Any other form (`eng.forced`, `eng-2`, an index in the name) reopens the guards-by-construction row | resolved at the spec-acceptance gate | — |
-| OPEN — **SubRip and `mov_text`: unconditional styling note or none?** Their `<font color>` is lost when present (measured), but whether it is present is in the subtitle payload, which neither the probe nor stderr may supply — so the only choices are a note on every such sidecar or none | resolved at the spec-acceptance gate | — |
+| **Duplicate languages**: the first stream of a normalised language is bare (`<stem>.eng.vtt`); each further stream of that language, in source-stream order, takes `.<k>` with `k` counting from 2 (`<stem>.eng.2.vtt`, `<stem>.eng.3.vtt`). Ordinals count per language; `und` is numbered like any other language (`<stem>.und.vtt`, `<stem>.und.2.vtt`) | Decided at the spec-acceptance gate. The common case — one track per language — gets the plain name players already recognise; the form stays inside the guards-by-construction grammar (`<k>` purely numeric, ≥ 2) | 2026-10-01 |
+| **SubRip and `mov_text` earn no styling note** | Decided at the spec-acceptance gate. Their `<font color>` is lost when present (measured), but presence is in the payload, which neither the probe nor stderr may supply; colour tags are rare, so an unconditional note would be a false alarm on nearly every file. Recorded as an accepted gap in *Risks* | 2026-10-01 |
 
 ## Foundation impact (authored in this spec PR)
 
@@ -287,7 +287,7 @@ without a language tag.
 - [ ] QA smoke (real ffmpeg 9.0, `--ffmpeg`/`--ffprobe` absolute):
   - [ ] An MKV with H.264, AAC, two `eng` SubRip and one untagged ASS
         (generated) → `--to web --json`: an MP4 plus three `.vtt` files named per
-        the gate's duplicate rule, each a valid WebVTT that a browser `<track>`
+        `<stem>.eng.vtt`, `<stem>.eng.2.vtt` and `<stem>.und.vtt`, each a valid WebVTT that a browser `<track>`
         loads; the record lists all three; notes name the styling losses.
   - [ ] Optional, if a PGS/VobSub sample is at hand: its bitmap stream is
         dropped with the bitmap note.
@@ -307,6 +307,7 @@ without a language tag.
 | A container whose language tag is free text (`English`) | Normalised to `und` — never a broken name; the stream index in the JSON record still identifies it |
 | A Windows `TerminateProcess` kill between the sidecar renames and the MP4 rename leaves finished sidecars without an MP4 | The next run converts the MP4 and meets the sidecars as existing: kept, named in a note, content identical. Documented, not engineered away |
 | Grammar sweep deleting a user's file | It only matches names ending in `<suffix>.partial` with the exact stem — a name the converter alone produces |
+| A SubRip or `mov_text` stream carrying `<font color>` loses its colours without a note | Accepted at the gate: presence is unknowable without reading the payload, and colour tags are rare. Revisit if a consumer reports it |
 | The sidecar step's ffmpeg is not a ladder rung, so a future change could forget its termination check | The termination test for the sidecar step pins it |
 
 ## Decision log
@@ -322,6 +323,9 @@ without a language tag.
   always noted; bitmap QA fixture not generatable, pinned in stubbed tests;
   placement, note order and `plan_sidecars`' type fixed; the stale-partial
   sweep knowingly widens phase 12's exact-path rule to an exact-grammar rule.
+- 2026-10-01: Spec-acceptance gate: first same-language stream bare, further
+  ones `.2`, `.3`, ... per language (`und` alike); no styling note for SubRip or
+  `mov_text`; "an MP4 at its final path is done" confirmed.
 - 2026-10-01: Issue order avoids an intermediate `main` where `web` silently
   loses text subtitles: the engine mechanism lands with no profile declaring a
   sidecar, and `WEB`'s declaration lands only once the batch step can write it.
