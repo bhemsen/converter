@@ -140,6 +140,22 @@ flowchart TD
   file is counted, because `0 converted, 12 skipped` is the idempotent-re-run
   evidence the vision promises. A `.txt`, or a file inside the output tree, is not,
   because counting everything a directory happens to hold means nothing.
+- **Every path a source writes is guarded, but only the output is selected.**
+  A target that writes sidecars (`--to web`'s WebVTT files) has more than one
+  path per source, and selection cannot know them: their names follow from the
+  source's subtitle streams, which only a probe reveals. The guards above still
+  cover them, by construction of the name — a sidecar is the output's name with
+  its suffix replaced by `.<lang>[.<k>]<sidecar suffix>`, where `<lang>` is never
+  purely numeric, `<k>` always is, and neither holds a dot. Two distinct output
+  names in one directory therefore never share a sidecar (their components
+  cannot line up), a sidecar never equals an output (different suffix), and it
+  never equals a selected source's input path (the sidecar suffix is in no
+  source-suffix set, and a named file's own sidecars carry one component more
+  than its stem). So `COLL`, `SELF` and `HAZ` hold for sidecars without a node of
+  their own, and `cli.py` is unchanged. `EXISTS` is the one guard that is asked
+  **per sidecar, after the ladder**, not here: an existing sidecar path is left
+  alone without `--overwrite` and named in a note, and the output's own
+  existence alone decides the skip (`docs/specs/spec-subtitle-sidecars.md`).
 - **Selection cannot tell whether a source can *produce* the target.** Whether a
   video-only file has audio to put in a WAV is only knowable from a probe, and
   selection has no probe to spend: the one the ladder may now spend on a

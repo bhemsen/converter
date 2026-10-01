@@ -2,7 +2,8 @@
 
 > Design artifact (`docs/design.md`, `kind: concept`). The sibling of
 > `degradation-ladder.md`: that file decides the order of attempts, this one
-> decides what happens to a single stream inside the selective rung.
+> decides what happens to a single stream inside the selective rung — including
+> whether it leaves the rung for a sidecar file written after the ladder.
 >
 > Declared deviation from `docs/design.md`'s per-stream convention: the contract
 > asks for one decision node per stream type. A profile-driven engine has no
@@ -13,11 +14,12 @@
 ## The decision this settles
 
 Given one probed stream and the target profile's rule for that stream's type,
-whether the stream is copied, re-encoded, or dropped — and what the resulting
-note says. No node here spends a subprocess call: the whole plan is built in
-Python from one stream list. `TARGET` below is the profile's display label
-(`MP4`, `WAV`), `TARGET_CODEC` the human-readable name of what the fallback
-encoder produces (`h264`, `aac`), `DROP_REASON` the reason the rule declares.
+whether the stream is copied, re-encoded, dropped, or written as a sidecar — and
+what the resulting note says. No node here spends a subprocess call: the whole
+plan is built in Python from one stream list. `TARGET` below is the profile's
+display label (`MP4`, `WAV`), `TARGET_CODEC` the human-readable name of what the
+fallback encoder produces (`h264`, `aac`), `DROP_REASON` the reason the rule
+declares.
 
 ```mermaid
 flowchart TD
@@ -35,6 +37,8 @@ flowchart TD
     D1["drop — note: t stream i (c) dropped: not supported by TARGET"]
     D2["drop — note: t stream i (c) dropped: TARGET holds LIMIT t stream<br/>(the noun agrees in number with LIMIT)"]
     D3["drop — note: t stream i (c) dropped: DROP_REASON"]
+    SIDE{"does the rule declare a sidecar<br/>that accepts c?"}
+    SIDECAR["sidecar — not mapped into the output; written to a file<br/>of its own after the ladder (degradation-ladder.md's sidecar step)<br/>note only when the sidecar format gives up styling"]
 
     S --> PIC
     PIC -->|"yes — use that rule"| ROOM
@@ -46,7 +50,9 @@ flowchart TD
     MASK -->|"yes"| COPY
     MASK -->|"no"| ENC
     ENC -->|"yes"| REENC
-    ENC -->|"no"| D3
+    ENC -->|"no"| SIDE
+    SIDE -->|"yes"| SIDECAR
+    SIDE -->|"no"| D3
     REENC --> OPT
     OPT -->|"yes"| OVERRIDE
     OPT -->|"no"| STAND
@@ -61,9 +67,14 @@ flowchart TD
   declares no `attached_pic` rule is unaffected, since the fallback is what it
   already did. The engine still counts a carried picture under `video`, because
   ffmpeg numbers it as a video output stream.
-- **Three outcomes, never a fourth.** A stream is accepted, re-encoded, or
-  dropped. Every drop edge names the reason, because a silent drop is exactly
-  what the vision forbids.
+- **Four outcomes, never a fifth.** A stream is accepted, re-encoded, dropped,
+  or — only where the rule declares a sidecar (`web`'s text subtitles) — moved
+  into a sidecar file of its own. `SIDE` sits on `ENC`'s `no` edge, so a stream
+  the output itself can carry is never diverted: the sidecar is the alternative
+  to a drop, not to a copy (`docs/specs/spec-subtitle-sidecars.md`). A sidecar
+  is not a drop and earns no drop note; a sidecar format that cannot hold the
+  stream's styling earns a styling note instead. Every drop edge names the
+  reason, because a silent drop is exactly what the vision forbids.
 - **A re-encoded stream may also need a source-dependent option.** `OPT` sits
   after `REENC`: a rule may declare a value its fallback needs only when a
   second, independent probed property — not the one `MASK` already used to
