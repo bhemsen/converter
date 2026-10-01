@@ -243,7 +243,7 @@ without a language tag.
 
 ## Tracking
 
-- Milestone: subtitle-sidecars (linked from `docs/roadmap.md`)
+- Milestone: [subtitle-sidecars](https://github.com/bhemsen/converter/milestone/14)
 - Issues: created from this spec once it is merged (one per implementable step)
 
 ## Verification
@@ -286,9 +286,9 @@ without a language tag.
 - [ ] `profiles`: the reworded `web` `last_resort` note is pinned.
 - [ ] QA smoke (real ffmpeg 9.0, `--ffmpeg`/`--ffprobe` absolute):
   - [ ] An MKV with H.264, AAC, two `eng` SubRip and one untagged ASS
-        (generated) → `--to web --json`: an MP4 plus three `.vtt` files named per
-        `<stem>.eng.vtt`, `<stem>.eng.2.vtt` and `<stem>.und.vtt`, each a valid WebVTT that a browser `<track>`
-        loads; the record lists all three; notes name the styling losses.
+        (generated) → `--to web --json`: an MP4 plus `<stem>.eng.vtt`,
+        `<stem>.eng.2.vtt` and `<stem>.und.vtt`, each a valid WebVTT that a
+        browser `<track>` loads; the record lists all three; notes name the styling losses.
   - [ ] Optional, if a PGS/VobSub sample is at hand: its bitmap stream is
         dropped with the bitmap note.
   - [ ] An HEVC 10-bit source with a SubRip stream (re-encode path) → the MP4
