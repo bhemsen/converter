@@ -28,7 +28,7 @@ flowchart TD
     SCQ{"did the stream plan route any stream to a sidecar?<br/>(only a probe-first profile can declare one)"}
     SCS["sidecar step — one ffmpeg, one output per sidecar<br/>(each to its own .partial; a failure drops the sidecars<br/>with a note each, never the output)"]
     DONE["rename into place — sidecars first, the output last;<br/>converted, the notes are reported"]
-    BAD["failed — partial output removed, ffmpeg's stderr kept per rung"]
+    BAD["failed — partial output removed, the error kept<br/>(stderr per rung, or the rename's reason)"]
 
     PF -->|"no"| A
     PF -->|"yes — no cheap attempt; the one probe comes first"| P

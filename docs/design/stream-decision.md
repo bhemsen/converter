@@ -14,11 +14,12 @@
 ## The decision this settles
 
 Given one probed stream and the target profile's rule for that stream's type,
-whether the stream is copied, re-encoded, dropped, or written as a sidecar —
-and what the resulting note says. No node here spends a subprocess call: the whole plan is built in
-Python from one stream list. `TARGET` below is the profile's display label
-(`MP4`, `WAV`), `TARGET_CODEC` the human-readable name of what the fallback
-encoder produces (`h264`, `aac`), `DROP_REASON` the reason the rule declares.
+whether the stream is copied, re-encoded, dropped, or written as a sidecar — and
+what the resulting note says. No node here spends a subprocess call: the whole
+plan is built in Python from one stream list. `TARGET` below is the profile's
+display label (`MP4`, `WAV`), `TARGET_CODEC` the human-readable name of what the
+fallback encoder produces (`h264`, `aac`), `DROP_REASON` the reason the rule
+declares.
 
 ```mermaid
 flowchart TD
