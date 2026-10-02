@@ -1746,7 +1746,9 @@ AVIF = Profile(
 #: ``mp4`` asks "can MP4 hold this?", ``web`` asks "will a plain <video> play
 #: this?", so its copy masks are far narrower than MP4's and it never remuxes
 #: blind: the source is probed first and the engine's selective rung is the
-#: first attempt.
+#: first attempt. Text subtitles are not mapped into the MP4 at all: the
+#: ``subtitle`` rule's sidecar writes each as a WebVTT file beside it in a
+#: separate step (``docs/specs/spec-subtitle-sidecars.md``).
 WEB = Profile(
     label="Web",
     name="web",
@@ -1791,7 +1793,22 @@ WEB = Profile(
             # Unreachable -- the empty mask never accepts -- but the registry's
             # placeholder test requires every rule's options to carry "{n}".
             accept_options=flags("-c:s:{n} copy"),
-            drop_reason="subtitles are not shown by a browser from inside an MP4",
+            # No browser shows an in-band mov_text track in a plain <video>, so
+            # a text subtitle never goes into the MP4: it becomes a WebVTT file
+            # beside it, loaded through <track> (docs/prior-art.md, "Subtitle
+            # sidecars for browsers"). Only ASS/SSA earn a styling note;
+            # SubRip/mov_text lose <font color> only when it is present, which
+            # neither the probe nor stderr may tell (spec Decision log).
+            sidecar=Sidecar(
+                codecs=TEXT_SUBTITLE_CODECS,
+                options=flags("-c:s webvtt"),
+                muxer="webvtt",
+                suffix=".vtt",
+                styling_codecs=frozenset({"ass", "ssa"}),
+                styling_reason="styling and positioning are not carried by WebVTT",
+            ),
+            # What the sidecar cannot take: a bitmap stream WebVTT cannot hold.
+            drop_reason="bitmap subtitles cannot be written as WebVTT",
         ),
         # Without this rule an MJPEG cover would match the video rule and be
         # re-encoded into a second H.264 stream. A browser ignores the picture,
@@ -1811,7 +1828,10 @@ WEB = Profile(
             "-c:a aac -b:a 192k"
         ),
         notes=(
-            "re-encoded to h264/aac (lossy); subtitles, cover art and extra video streams dropped",
+            (
+                "re-encoded to h264/aac (lossy); bitmap subtitles, cover art and extra video "
+                "streams dropped"
+            ),
             "10-bit or HDR sources are reduced to 8-bit yuv420p so browsers can play them",
         ),
     ),

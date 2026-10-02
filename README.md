@@ -227,8 +227,8 @@ Example — captured from one real run (`--to png` over a directory holding a
 video and an audio-only file), paths shortened:
 
 ```json
-{"type": "file", "schema": 1, "source": "D:\\Rips\\audio_only.mp3", "output": "E:\\Done\\audio_only.png", "outcome": "unsupported", "attempt": null, "notes": ["audio stream 0 (mp3) dropped: not supported by PNG"], "error": null}
-{"type": "file", "schema": 1, "source": "D:\\Rips\\clip1.mp4", "output": "E:\\Done\\clip1.png", "outcome": "converted", "attempt": "single-frame", "notes": ["only the first frame was kept; PNG cannot hold more than one image", "non-video streams, and any video stream beyond the first, are not carried into PNG"], "error": null}
+{"type": "file", "schema": 1, "source": "D:\\Rips\\audio_only.mp3", "output": "E:\\Done\\audio_only.png", "outcome": "unsupported", "attempt": null, "notes": ["audio stream 0 (mp3) dropped: not supported by PNG"], "error": null, "sidecars": null}
+{"type": "file", "schema": 1, "source": "D:\\Rips\\clip1.mp4", "output": "E:\\Done\\clip1.png", "outcome": "converted", "attempt": "single-frame", "notes": ["only the first frame was kept; PNG cannot hold more than one image", "non-video streams, and any video stream beyond the first, are not carried into PNG"], "error": null, "sidecars": []}
 {"type": "summary", "schema": 1, "converted": 1, "skipped": 0, "failed": 0, "unsupported": 1, "total": 2, "planned": 0, "exit_code": 0, "dry_run": false}
 ```
 
@@ -246,6 +246,7 @@ stream.
 | `attempt` | string \| `null` | the rung that produced the file (`remux`, `selective`, …); `null` unless `outcome` is `"converted"` |
 | `notes` | array of strings | every note and advisory, in the order the text mode prints them; `[]` when there are none |
 | `error` | string \| `null` | the failure reason; `null` unless `outcome` is `"failed"` |
+| `sidecars` | array of objects \| `null` | the last key. `null` unless `outcome` is `"converted"`; otherwise the extra files written beside the output (today only `--to web`'s WebVTT subtitles), `[]` when there are none. Each object is `{"path", "stream", "language"}`: the absolute path, the source stream index and the language as it was written into the name (`"eng"`, `"und"`). Only files actually written are listed, in source-stream order. `schema` stays `1` |
 
 **`planned`** — `--dry-run` only, one per task that would convert: `type`,
 `schema`, `source`, `output`. A pre-batch skip still appears as a `file` record
@@ -323,16 +324,34 @@ remux to trust:
 * **Re-encoded:** every other video stream to H.264 `yuv420p` (libx264, CRF 18,
   `-preset veryfast`, which keeps a small machine usable), every other audio
   stream to AAC at 192k. Each one gets a note naming its index and codec.
-* **Every audio track is kept.** Subtitles are dropped with a note for now, since
-  a browser does not show them from inside an MP4. Cover art is kept when it is
-  MJPEG or PNG, dropped with a note otherwise.
+* **Every audio track is kept.** Cover art is kept when it is MJPEG or PNG,
+  dropped with a note otherwise.
+* **Text subtitles become WebVTT sidecar files.** No browser shows a subtitle
+  track from inside an MP4, so each text subtitle stream (SubRip, ASS/SSA,
+  `mov_text`, WebVTT) is written as `<name>.<lang>.vtt` beside the MP4, where
+  `<lang>` is the language tag as the container wrote it (`eng`, not `en`), or
+  `und` when the stream has none. A further stream of the same language is
+  `<name>.eng.2.vtt`, `<name>.eng.3.vtt`, … in source order. Bitmap subtitles
+  (PGS, VobSub, DVB) cannot be written as WebVTT and are dropped with a note.
+  ASS/SSA streams get a note too, because styling and positioning are not
+  carried by WebVTT (SubRip and `mov_text` earn no note, although a `<font color>` tag is lost: whether
+  one was present is not known without reading the text).
+* **An existing sidecar is never replaced** without `--overwrite`: it is kept
+  and named in a note. A sidecar that cannot be written does not cost the MP4;
+  the file still counts as converted and the note says which stream was missed.
+  Text mode prints no line for a sidecar that was written.
 * The result is written with `+faststart`, so playback can begin before the
   download finishes.
 
 ```
 note    hevc.mkv: video stream 0 (hevc) re-encoded to h264
 note    hevc.mkv: audio stream 1 (ac3) re-encoded to aac
+note    movie.mkv: subtitle stream 3 (ass) written to movie.und.vtt: styling and positioning are not carried by WebVTT
 ```
+
+Load a sidecar in the page with
+`<track kind="subtitles" src="movie.eng.vtt" srclang="en" label="English">`
+(`srclang` is the player's concern; the file name keeps the tag as found).
 
 `web` writes `<name>.mp4`, the same output name as `--to mp4`, and that has two
 consequences:
@@ -343,6 +362,12 @@ consequences:
 * `.mp4` sources converted with no separate `OUTPUT` map onto themselves and are
   skipped as a self-write (`the output path is this file itself; not converted
   in place`). Give it an `OUTPUT` of its own.
+* An MP4 that already exists counts as done, with or without its sidecars, so a
+  second run never re-probes a converted tree. Output written by v3.2.0, before
+  sidecars existed, therefore needs `--overwrite` (a full reconversion) to gain
+  them.
+* `--dry-run` cannot list sidecars: selection spends no probe, so it does not
+  know a source's subtitle streams.
 
 ### Notes and limitations
 
