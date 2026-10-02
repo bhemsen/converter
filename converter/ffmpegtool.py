@@ -99,6 +99,27 @@ class Stream:
     #: :data:`converter.profiles.ALPHA_FREE_PIX_FMTS`
     #: (docs/specs/archive/spec-within-stream-loss-notes.md, issue #105).
     pix_fmt: str = ""
+    #: The container's language tag for the stream (``eng``, ``deu``, or free
+    #: text -- whatever the muxer wrote), ``""`` when untagged. ffprobe's JSON
+    #: nests it under ``tags`` and omits the whole key for an untagged stream.
+    #: Kept raw: normalising it into a filename component is the naming
+    #: layer's job (docs/specs/spec-subtitle-sidecars.md).
+    language: str = ""
+
+
+@dataclass(frozen=True)
+class OutputSpec:
+    """One output of a multi-output ffmpeg command line.
+
+    *options* are the per-output options (mapping, codec), *muxer* the explicit
+    ``-f`` value -- mandatory here because every caller writes to a ``.partial``
+    name that defeats ffmpeg's suffix-based muxer choice -- and *path* the
+    destination.
+    """
+
+    options: tuple[str, ...]
+    muxer: str
+    path: str | os.PathLike[str]
 
 
 @dataclass(frozen=True)
@@ -166,6 +187,24 @@ def build_argv(
         *(("-f", output_format) if output_format is not None else ()),
         cli_path(dst),
     ]
+
+
+def build_multi_output_argv(
+    ffmpeg: str,
+    src: str | os.PathLike[str],
+    outputs: Sequence[OutputSpec],
+) -> list[str]:
+    """Assemble an ffmpeg command line with one input and several outputs.
+
+    Same preamble as :func:`build_argv` (``BASE_FLAGS``, ``-y``, ``-i``); each
+    output then contributes its options, ``-f <muxer>`` and its path through
+    :func:`cli_path`. ffmpeg applies options to the next output file, so the
+    order of each group is what binds them to their path.
+    """
+    argv = [ffmpeg, *BASE_FLAGS, "-y", "-i", cli_path(src)]
+    for output in outputs:
+        argv += [*output.options, "-f", output.muxer, cli_path(output.path)]
+    return argv
 
 
 #: Guards `_shutdown` and `_live_processes` below, and is held across `run`'s
@@ -359,6 +398,9 @@ def _parse_stream(raw: dict[str, object]) -> Stream | None:
         # JSON one, so the plain str(..., "") fallback every other field above
         # already uses is correct here too.
         pix_fmt=str(raw.get("pix_fmt", "")),
+        # Nested under "tags", and the whole object is absent for an untagged
+        # stream, hence the `or {}` before the lookup.
+        language=str((raw.get("tags") or {}).get("language", "")),
     )
 
 
@@ -386,9 +428,12 @@ def probe_streams(tools: Tools, src: str | os.PathLike[str]) -> list[Stream]:
             # spec's own measurements ruled out. stream_disposition= is a
             # separate entry clause because disposition flags arrive nested
             # under their own JSON object rather than alongside the plain
-            # stream fields.
+            # stream fields. stream_tags=language is one more clause for the
+            # same reason (docs/specs/spec-subtitle-sidecars.md): tags are
+            # nested under "tags" in the JSON, and reading one costs no
+            # second process.
             "stream=index,codec_type,codec_name,codec_tag_string,pix_fmt:"
-            "stream_disposition=attached_pic",
+            "stream_disposition=attached_pic:stream_tags=language",
             "-of",
             "json",
             cli_path(src),

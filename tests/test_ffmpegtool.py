@@ -24,6 +24,69 @@ from converter.ffmpegtool import (
 TOOLS = Tools(ffmpeg="ffmpeg", ffprobe="ffprobe")
 
 
+class TestBuildMultiOutputArgv:
+    """One input, several outputs (issue #176)."""
+
+    def test_two_outputs_pin_their_options_muxer_and_path_in_order(self):
+        argv = ffmpegtool.build_multi_output_argv(
+            "ffmpeg",
+            "in.mkv",
+            [
+                ffmpegtool.OutputSpec(("-map", "0:3", "-c:s", "webvtt"), "webvtt", "a.vtt.partial"),
+                ffmpegtool.OutputSpec(("-map", "0:5", "-c:s", "webvtt"), "webvtt", "b.vtt.partial"),
+            ],
+        )
+
+        assert argv == [
+            "ffmpeg",
+            *ffmpegtool.BASE_FLAGS,
+            "-y",
+            "-i",
+            "in.mkv",
+            "-map",
+            "0:3",
+            "-c:s",
+            "webvtt",
+            "-f",
+            "webvtt",
+            "a.vtt.partial",
+            "-map",
+            "0:5",
+            "-c:s",
+            "webvtt",
+            "-f",
+            "webvtt",
+            "b.vtt.partial",
+        ]
+
+    def test_dash_leading_paths_are_anchored_for_input_and_every_output(self):
+        argv = ffmpegtool.build_multi_output_argv(
+            "ffmpeg",
+            "-in.mkv",
+            [
+                ffmpegtool.OutputSpec(("-map", "0:1"), "webvtt", "-a.vtt.partial"),
+                ffmpegtool.OutputSpec(("-map", "0:2"), "webvtt", Path("-b.vtt.partial")),
+            ],
+        )
+
+        assert argv[argv.index("-i") + 1] == ffmpegtool.cli_path("-in.mkv")
+        assert ffmpegtool.cli_path("-a.vtt.partial") in argv
+        assert argv[-1] == ffmpegtool.cli_path("-b.vtt.partial")
+        assert not any(arg.startswith("-") and arg.endswith((".mkv", ".partial")) for arg in argv)
+
+    def test_build_argv_is_unchanged_alongside(self):
+        assert build_argv("ffmpeg", "in.mkv", ("-c", "copy"), "out.mp4") == [
+            "ffmpeg",
+            *ffmpegtool.BASE_FLAGS,
+            "-y",
+            "-i",
+            "in.mkv",
+            "-c",
+            "copy",
+            "out.mp4",
+        ]
+
+
 class TestBuildArgvOutputFormat:
     """``output_format`` (issue #144): the ``-f <muxer>`` a ``.partial`` write
     needs, since it defeats ffmpeg's own suffix-based muxer choice."""
@@ -236,7 +299,7 @@ class TestProbeStreams:
 
         assert (
             "stream=index,codec_type,codec_name,codec_tag_string,pix_fmt:"
-            "stream_disposition=attached_pic" in seen[0]
+            "stream_disposition=attached_pic:stream_tags=language" in seen[0]
         )
         assert [stream.codec_tag for stream in streams] == ["tmcd", "mebx"]
 
@@ -257,7 +320,7 @@ class TestProbeStreams:
 
         assert (
             "stream=index,codec_type,codec_name,codec_tag_string,pix_fmt:"
-            "stream_disposition=attached_pic" in calls[0]
+            "stream_disposition=attached_pic:stream_tags=language" in calls[0]
         )
         assert "-count_packets" not in calls[0]
         assert len(calls) == 1
@@ -282,6 +345,20 @@ class TestProbeStreams:
         streams = ffmpegtool.probe_streams(TOOLS, "in.mp3")
 
         assert streams[0].pix_fmt == ""
+
+    def test_language_is_parsed_from_the_tags_object(self, monkeypatch):
+        payload = {
+            "streams": [
+                {"index": 0, "codec_type": "subtitle", "tags": {"language": "eng"}},
+                {"index": 1, "codec_type": "subtitle", "tags": {}},
+                {"index": 2, "codec_type": "subtitle"},
+            ]
+        }
+        stub_run(monkeypatch, 0, json.dumps(payload))
+
+        streams = ffmpegtool.probe_streams(TOOLS, "in.mkv")
+
+        assert [stream.language for stream in streams] == ["eng", "", ""]
 
     def test_exactly_one_ffprobe_call_is_made_per_file(self, monkeypatch):
         calls: list[list[str]] = []
