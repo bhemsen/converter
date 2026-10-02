@@ -21,6 +21,9 @@ from converter.paths import (
     output_for,
     partial_for,
     select_input,
+    sidecar_language,
+    sidecar_paths,
+    stale_sidecar_partials,
 )
 
 on_windows = pytest.mark.skipif(os.name != "nt", reason="Windows drive-letter semantics")
@@ -650,3 +653,143 @@ class TestSourceSelectionScenarios:
         victim, writer = hazards[0]
         assert victim.name == "a.mp4"
         assert writer.name == "a.mkv"
+
+
+@pytest.mark.parametrize(
+    ("tag", "expected"),
+    [
+        ("eng", "eng"),
+        ("EN", "en"),
+        ("pt-BR", "pt-br"),
+        ("", "und"),
+        ("12", "und"),
+        ("en.x", "und"),
+        ("english", "und"),
+    ],
+)
+def test_sidecar_language_normalises_or_falls_back_to_und(tag, expected):
+    assert sidecar_language(tag) == expected
+
+
+class TestSidecarPaths:
+    dst = Path("out") / "ep1.mp4"
+
+    def names(self, languages):
+        return [p.name for p in sidecar_paths(self.dst, languages, ".vtt")]
+
+    def test_one_stream_is_bare(self):
+        assert self.names(["eng"]) == ["ep1.eng.vtt"]
+
+    def test_same_language_counts_from_two(self):
+        assert self.names(["eng", "eng"]) == ["ep1.eng.vtt", "ep1.eng.2.vtt"]
+        assert self.names(["eng"] * 3) == ["ep1.eng.vtt", "ep1.eng.2.vtt", "ep1.eng.3.vtt"]
+
+    def test_raw_tags_are_normalised_before_counting(self):
+        assert self.names(["EN", "en"]) == ["ep1.en.vtt", "ep1.en.2.vtt"]
+
+    def test_several_und_are_counted_like_any_language(self):
+        assert self.names(["", "12", "english"]) == [
+            "ep1.und.vtt",
+            "ep1.und.2.vtt",
+            "ep1.und.3.vtt",
+        ]
+
+    def test_mixed_languages_count_independently_in_order(self):
+        assert self.names(["eng", "ger", "eng", "", "ger", ""]) == [
+            "ep1.eng.vtt",
+            "ep1.ger.vtt",
+            "ep1.eng.2.vtt",
+            "ep1.und.vtt",
+            "ep1.ger.2.vtt",
+            "ep1.und.2.vtt",
+        ]
+
+    def test_sidecars_sit_beside_the_mp4(self):
+        assert sidecar_paths(self.dst, ["eng"], ".vtt") == [Path("out") / "ep1.eng.vtt"]
+
+
+def test_adversarial_stems_never_share_a_sidecar_or_mp4_name():
+    stems = ["ep1", "ep1.eng", "ep1.eng.2", "ep1.und", "ep1.eng.2.eng", "Ep1"]
+    languages = ["eng", "eng", "eng", "und", "", "12", "pt-BR", "en.x"]
+    owners: dict[str, tuple[str, str]] = {}
+    for stem in stems:
+        dst = Path(f"{stem}.mp4")
+        entries = [(dst, "mp4")] + [(p, "sidecar") for p in sidecar_paths(dst, languages, ".vtt")]
+        for path, kind in entries:
+            key = os.path.normcase(path.name)
+            if key in owners:
+                # Two names of one stem may repeat only if normcase folds the stems together.
+                assert owners[key][0] != stem or kind == "sidecar"
+                assert os.path.normcase(owners[key][0]) == os.path.normcase(stem), (
+                    f"{path.name} produced by {owners[key]} and {(stem, kind)}"
+                )
+            owners[key] = (stem, kind)
+
+
+class TestStaleSidecarPartials:
+    def names(self, directory, stem="ep1", suffix=".vtt"):
+        return sorted(p.name for p in stale_sidecar_partials(directory / f"{stem}.mp4", suffix))
+
+    def test_finds_the_partials_of_this_stem_only(self, tmp_path):
+        for name in ("ep1.eng.vtt.partial", "ep1.eng.2.vtt.partial", "ep1.und.vtt.partial"):
+            touch(tmp_path / name)
+        touch(tmp_path / "ep1.eng.vtt")
+        touch(tmp_path / "ep1.mp4.partial")
+        touch(tmp_path / "ep10.eng.vtt.partial")
+        touch(tmp_path / "other.eng.vtt.partial")
+
+        assert self.names(tmp_path) == [
+            "ep1.eng.2.vtt.partial",
+            "ep1.eng.vtt.partial",
+            "ep1.und.vtt.partial",
+        ]
+
+    def test_does_not_take_the_partials_of_a_longer_dotted_stem(self, tmp_path):
+        touch(tmp_path / "ep1.eng.eng.vtt.partial")
+        touch(tmp_path / "ep1.eng.2.eng.vtt.partial")
+        touch(tmp_path / "ep1.eng.2.vtt.partial")
+
+        assert self.names(tmp_path, "ep1.eng") == ["ep1.eng.eng.vtt.partial"]
+        assert self.names(tmp_path, "ep1.eng.2") == ["ep1.eng.2.eng.vtt.partial"]
+        assert self.names(tmp_path, "ep1") == ["ep1.eng.2.vtt.partial"]
+
+    def test_counter_is_an_integer_of_at_least_two(self, tmp_path):
+        for name in ("ep1.eng.1.vtt.partial", "ep1.eng.0.vtt.partial", "ep1.eng.12.vtt.partial"):
+            touch(tmp_path / name)
+
+        assert self.names(tmp_path) == ["ep1.eng.12.vtt.partial"]
+
+    def test_strasse_does_not_sweep_strasse_sharp_s(self, tmp_path):
+        touch(tmp_path / "Straße.eng.vtt.partial")
+        touch(tmp_path / "Strasse.eng.vtt.partial")
+
+        assert self.names(tmp_path, "Strasse") == ["Strasse.eng.vtt.partial"]
+        assert self.names(tmp_path, "Straße") == ["Straße.eng.vtt.partial"]
+
+    @pytest.mark.skipif(
+        os.path.normcase("Ep1") != "Ep1",
+        reason="normcase folds case here, so Ep1 and ep1 are one name",
+    )
+    def test_case_distinct_stems_stay_apart_where_normcase_is_identity(self, tmp_path):
+        touch(tmp_path / "Ep1.eng.vtt.partial")
+        touch(tmp_path / "ep1.eng.vtt.partial")
+
+        assert self.names(tmp_path, "ep1") == ["ep1.eng.vtt.partial"]
+        assert self.names(tmp_path, "Ep1") == ["Ep1.eng.vtt.partial"]
+
+    @pytest.mark.skipif(os.path.normcase("Ep1") == "Ep1", reason="normcase is the identity here")
+    def test_case_variants_are_one_name_where_normcase_folds(self, tmp_path):
+        touch(tmp_path / "Ep1.eng.vtt.partial")
+
+        assert self.names(tmp_path, "ep1") == ["Ep1.eng.vtt.partial"]
+
+    def test_a_stem_with_regex_metacharacters_matches_literally(self, tmp_path):
+        stem = "a[1](x)+b"
+        touch(tmp_path / f"{stem}.eng.vtt.partial")
+        touch(tmp_path / "a1x+b.eng.vtt.partial")
+        touch(tmp_path / "a[1](x)b.eng.vtt.partial")
+
+        assert self.names(tmp_path, stem) == [f"{stem}.eng.vtt.partial"]
+
+    def test_a_missing_directory_yields_nothing(self, tmp_path):
+        assert stale_sidecar_partials(tmp_path / "gone" / "ep1.mp4", ".vtt") == []
