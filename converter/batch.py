@@ -492,6 +492,28 @@ def _plan_ladder(
     return _probe_first(profile, task, tools, partial)
 
 
+def _probe_after_failure(
+    profile: Profile,
+    task: Task,
+    tools: Tools,
+    partial: Path,
+    errors: list[str],
+    pending: list[Attempt],
+) -> Result | None:
+    """:func:`_climb_ladder`, then the termination check and the clean-up it owes.
+
+    `_climb_ladder`'s own probe can be the thing that gets killed -- it surfaces
+    as an ordinary `ProbeError`, appended to *errors*, not as `Terminated`, so
+    nothing short of checking here would ever notice and this attempt would
+    silently become FAILED. A ready-made ``Result`` ends the run, partial gone.
+    """
+    outcome = _climb_ladder(profile, task, tools, errors, pending)
+    _raise_if_terminated(partial)
+    if outcome is not None:
+        _delete_partial(partial)
+    return outcome
+
+
 def _climb_the_ladder(
     profile: Profile, task: Task, tools: Tools, partial: Path, *, overwrite: bool
 ) -> Result:
@@ -535,14 +557,8 @@ def _climb_the_ladder(
         errors.append(f"[{attempt.label}] {result.stderr or f'exit code {result.returncode}'}")
         if not probed:
             probed = True
-            outcome = _climb_ladder(profile, task, tools, errors, pending)
-            # `_climb_ladder`'s own probe can be the thing that gets killed --
-            # it surfaces as an ordinary `ProbeError`, appended to `errors`,
-            # not as `Terminated`, so nothing short of checking here would
-            # ever notice and this attempt would silently become FAILED.
-            _raise_if_terminated(partial)
+            outcome = _probe_after_failure(profile, task, tools, partial, errors, pending)
             if outcome is not None:
-                _delete_partial(partial)
                 return outcome
 
     _delete_partial(partial)
