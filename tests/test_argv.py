@@ -3157,18 +3157,19 @@ class TestWebProfileArgvPinning:
         ]
         assert selective.notes == ("audio stream 2 (ac3) re-encoded to aac",)
 
-    def test_text_and_bitmap_subtitles_are_both_dropped_with_the_note(self):
-        """The reason is the rule's, so neither codec is special-cased. The
-        structural drops (no rule) are not on the rung -- a subtitle drop is
-        codec-level (D3), so its note is."""
-        selective = self._first(
-            [
-                Stream(0, "video", "h264", pix_fmt="yuv420p"),
-                Stream(1, "audio", "aac"),
-                Stream(2, "subtitle", "subrip"),
-                Stream(3, "subtitle", "hdmv_pgs_subtitle"),
-            ]
-        )
+    SUBTITLE_SOURCE: ClassVar[list[Stream]] = [
+        Stream(0, "video", "h264", pix_fmt="yuv420p"),
+        Stream(1, "audio", "aac"),
+        Stream(2, "subtitle", "subrip", language="eng"),
+        Stream(3, "subtitle", "subrip", language="eng"),
+        Stream(4, "subtitle", "ass"),
+        Stream(5, "subtitle", "hdmv_pgs_subtitle"),
+    ]
+
+    def test_text_subtitles_are_sidecars_and_bitmap_ones_are_dropped_with_the_note(self):
+        """Text subtitles leave the primary argv without a drop note; only the
+        bitmap stream, which WebVTT cannot hold, is named."""
+        selective = self._first(self.SUBTITLE_SOURCE)
 
         assert self._argv(selective) == [
             *self.HEAD,
@@ -3183,10 +3184,28 @@ class TestWebProfileArgvPinning:
             *self.TAIL,
         ]
         assert selective.notes == (
-            "subtitle stream 2 (subrip) dropped: "
-            "subtitles are not shown by a browser from inside an MP4",
-            "subtitle stream 3 (hdmv_pgs_subtitle) dropped: "
-            "subtitles are not shown by a browser from inside an MP4",
+            "subtitle stream 5 (hdmv_pgs_subtitle) dropped: "
+            "bitmap subtitles cannot be written as WebVTT",
+        )
+
+    def test_the_text_subtitles_are_planned_as_sidecars_with_only_the_ass_note(self):
+        planned = jobs.plan_sidecars(WEB, self.SUBTITLE_SOURCE)
+
+        assert [p.stream.index for p in planned] == [2, 3, 4]
+        assert all(p.muxer == "webvtt" and p.suffix == ".vtt" for p in planned)
+        assert all(p.options[2:] == ("-c:s", "webvtt") for p in planned)
+        assert [p.styling_note is None for p in planned] == [True, True, False]
+        assert planned[2].styling_note == (
+            f"subtitle stream 4 (ass) written to {jobs.SIDECAR_NAME_PLACEHOLDER}: "
+            "styling and positioning are not carried by WebVTT"
+        )
+
+    def test_the_last_resort_no_longer_claims_text_subtitles_are_dropped(self):
+        last_resort = jobs.retries(WEB, [Stream(0, "video", "hevc")])[-1]
+
+        assert last_resort.notes[0] == (
+            "re-encoded to h264/aac (lossy); bitmap subtitles, cover art and extra video "
+            "streams dropped"
         )
 
     def test_an_mjpeg_cover_is_copied_not_reencoded_as_video(self):
@@ -4187,7 +4206,6 @@ class TestSidecarRouting:
     def test_a_profile_without_a_sidecar_plans_none(self):
         assert jobs.plan_sidecars(_probe_first_profile(), _sidecar_source()) == ()
         assert jobs.plan_sidecars(MP4, _sidecar_source()) == ()
-        assert jobs.plan_sidecars(WEB, _sidecar_source()) == ()
 
     def test_a_source_without_text_subtitles_plans_none(self):
         assert jobs.plan_sidecars(_sidecar_profile(), _sidecar_source()[:2]) == ()
@@ -4195,11 +4213,10 @@ class TestSidecarRouting:
     def test_the_suffix_comes_from_the_rule(self):
         assert jobs.sidecar_suffix(_sidecar_profile()) == ".vtt"
         assert jobs.sidecar_suffix(_probe_first_profile()) is None
-        assert jobs.sidecar_suffix(WEB) is None
 
-    def test_no_shipped_profile_declares_a_sidecar_yet(self):
-        """Issue #181 adds `WEB`'s declaration, once batch can write one."""
-        assert all(jobs.sidecar_suffix(profile) is None for profile in PROFILES.values())
+    def test_only_web_declares_a_sidecar(self):
+        assert {name for name, p in PROFILES.items() if jobs.sidecar_suffix(p)} == {"web"}
+        assert jobs.sidecar_suffix(WEB) == ".vtt"
 
     def test_a_copyable_codec_is_never_a_sidecar(self):
         profile = _sidecar_profile(copy_mask=frozenset({"subrip"}))

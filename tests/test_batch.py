@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from tqdm import tqdm
 
-from converter import batch, ffmpegtool, jobs
+from converter import batch, ffmpegtool, jobs, report
 from converter.batch import Outcome, Result, Task, convert_one, run_batch, summarise
 from converter.ffmpegtool import CommandResult, ProbeError, Stream, Tools
 from converter.paths import partial_for
@@ -26,6 +26,7 @@ from converter.profiles import (
     PNG,
     TIFF,
     WAV,
+    WEB,
     WEBM,
     WEBP,
     Attempt,
@@ -2495,3 +2496,43 @@ class TestSidecarSweep:
 
         assert result.outcome is Outcome.SKIPPED
         assert not mine.exists()
+
+
+class TestWebSubtitleSidecars:
+    """Issue #181: the shipped `web` profile through `run_batch`, stubbed ffmpeg."""
+
+    def test_web_writes_three_named_sidecars_and_the_record_lists_them(
+        self, tmp_path, sidecar_ffmpeg
+    ):
+        sidecar_ffmpeg.source = [
+            Stream(0, "video", "h264", pix_fmt="yuv420p"),
+            Stream(1, "audio", "aac"),
+            Stream(2, "subtitle", "subrip", language="eng"),
+            Stream(3, "subtitle", "subrip", language="eng"),
+            Stream(4, "subtitle", "ass"),
+            Stream(5, "subtitle", "hdmv_pgs_subtitle"),
+        ]
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+
+        [result] = run_batch(WEB, [task], TOOLS, jobs=1, progress=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert sidecar_names(task) == ["clip.eng.2.vtt", "clip.eng.vtt", "clip.und.vtt"]
+        assert len(sidecar_ffmpeg.sidecar) == 1
+        assert result.notes == (
+            "subtitle stream 5 (hdmv_pgs_subtitle) dropped: "
+            "bitmap subtitles cannot be written as WebVTT",
+            "subtitle stream 4 (ass) written to clip.und.vtt: "
+            "styling and positioning are not carried by WebVTT",
+        )
+        record = report.file_record(result)
+        assert list(record)[-1] == "sidecars"
+        assert [
+            (s["stream"], s["language"], Path(str(s["path"])).name) for s in record["sidecars"]
+        ] == [
+            (2, "eng", "clip.eng.vtt"),
+            (3, "eng", "clip.eng.2.vtt"),
+            (4, "und", "clip.und.vtt"),
+        ]
+        assert leftover_partials(task) == []

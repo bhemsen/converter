@@ -29,6 +29,7 @@ from converter.profiles import (
     PROFILES,
     SHALLOW_ALPHA_PIX_FMTS,
     SOURCE_SUFFIXES,
+    TEXT_SUBTITLE_CODECS,
     TIFF,
     WAV,
     WEB,
@@ -2054,12 +2055,20 @@ class TestWebProfile:
         assert rule.stream_limit is None
         assert rule.fallback_name == "aac"
 
-    def test_subtitles_are_never_copied(self):
+    def test_subtitles_are_never_copied_but_written_as_webvtt_sidecars(self):
         rule = WEB.rules["subtitle"]
 
         assert rule.copy_mask == frozenset()
         assert rule.fallback_options is None
-        assert rule.drop_reason == "subtitles are not shown by a browser from inside an MP4"
+        assert rule.drop_reason == "bitmap subtitles cannot be written as WebVTT"
+        assert rule.sidecar == Sidecar(
+            codecs=TEXT_SUBTITLE_CODECS,
+            options=flags("-c:s webvtt"),
+            muxer="webvtt",
+            suffix=".vtt",
+            styling_codecs=frozenset({"ass", "ssa"}),
+            styling_reason="styling and positioning are not carried by WebVTT",
+        )
 
     def test_cover_art_rule_copies_mjpeg_and_png_only(self):
         rule = WEB.rules["attached_pic"]
