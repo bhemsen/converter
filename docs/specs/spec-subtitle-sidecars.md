@@ -332,3 +332,7 @@ without a language tag.
 - 2026-10-01: Measured on ffmpeg 9.0 that one process writes several WebVTT
   `.partial` outputs with `-f webvtt`, and that SubRip colour and ASS
   positioning/colour do not survive.
+- 2026-10-02: Multi-output builder is `ffmpegtool.build_multi_output_argv(ffmpeg,
+  src, outputs)` taking a sequence of the frozen dataclass `OutputSpec(options,
+  muxer, path)`; `muxer` is mandatory (sidecars always write `.partial` names).
+  `Stream.language` is the raw tag; normalisation stays in `paths.sidecar_language`.
