@@ -19,6 +19,14 @@ the attempt did, and sound only because that attempt has no copy branch it
 could have taken instead. A copy-based cheap attempt (``webp``) declares no
 such field and earns no such note.
 
+Besides the attempt ladder the engine plans the files a source writes *beside*
+its output: :func:`plan_sidecars` returns, as :class:`PlannedSidecar` values, the
+streams a rule's ``sidecar`` takes instead of the output, and
+:func:`sidecar_suffix` names their suffix. Both come from the same per-stream
+walk as the selective rung, so a stream is in the output, in a sidecar, or
+dropped with a note -- never two of those. Naming the files needs ``paths``,
+which this module may not import, so ``batch`` does it.
+
 See ``docs/design/degradation-ladder.md`` for the order of attempts this module
 builds, ``docs/design/stream-decision.md`` for how one stream's fate is decided
 inside the engine-built rung, and
@@ -27,7 +35,7 @@ inside the engine-built rung, and
 """
 
 from collections.abc import Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import TypeVar
 
 from converter.ffmpegtool import Stream
@@ -37,12 +45,36 @@ from converter.profiles import (
     SHALLOW_ALPHA_PIX_FMTS,
     Attempt,
     Profile,
+    Sidecar,
     StreamRule,
 )
 
 #: What a stream is counted under -- either its full :func:`_stream_key` or its
 #: bare type. :func:`_surplus` does the same arithmetic for both.
 _K = TypeVar("_K")
+
+#: Stands for the sidecar's file name inside :attr:`PlannedSidecar.styling_note`.
+#: The engine cannot know the name -- naming needs ``paths``, which this module
+#: may not import -- so ``batch`` substitutes the basename it chose.
+SIDECAR_NAME_PLACEHOLDER = "{name}"
+
+
+@dataclass(frozen=True)
+class PlannedSidecar:
+    """One stream the engine routed to a sidecar file instead of the output.
+
+    ``options`` are the per-output options of the sidecar's ffmpeg output, led by
+    the ``-map 0:<index>`` that selects exactly this stream, so ``batch`` can hand
+    them to ``ffmpegtool.OutputSpec`` unchanged. ``styling_note`` is the note owed
+    *if the sidecar is written*, with :data:`SIDECAR_NAME_PLACEHOLDER` where the
+    file name goes, or ``None`` when the codec's styling survives the sidecar.
+    """
+
+    stream: Stream
+    options: tuple[str, ...]
+    muxer: str
+    suffix: str
+    styling_note: str | None
 
 
 def _with_container_options(attempt: Attempt, profile: Profile) -> Attempt:
@@ -205,6 +237,30 @@ def _structural_drop(profile: Profile, stream: Stream, counts: dict[str, int]) -
     return None
 
 
+def _sidecar_of(rule: StreamRule, stream: Stream) -> Sidecar | None:
+    """SIDECAR of stream-decision.md: the ``ENC -> no`` edge, answered from the rule.
+
+    The one place the question is asked, so :func:`_decide_stream` and
+    :func:`plan_sidecars` cannot disagree about which streams leave the output.
+    A stream the rule copies or re-encodes never reaches a sidecar.
+    """
+    sidecar = rule.sidecar
+    if sidecar is None or _copyable(rule, stream) or rule.fallback_options is not None:
+        return None
+    return sidecar if stream.codec_name in sidecar.codecs else None
+
+
+def _sidecar_verdict(profile: Profile, stream: Stream, counts: dict[str, int]) -> Sidecar | None:
+    """The sidecar *stream* is routed to at this point of the walk, if any.
+
+    Structural drops (D1/D2) come first, exactly as in :func:`_decide_stream`, so
+    a stream with no room is dropped, never routed. Reads *counts*, never writes.
+    """
+    if _structural_drop(profile, stream, counts) is not None:
+        return None
+    return _sidecar_of(profile.rules[_rule_key(profile, stream)], stream)
+
+
 def _stream_key(stream: Stream) -> tuple[str, str, str]:
     """What a source stream and its counterpart in an output are matched by.
 
@@ -249,6 +305,10 @@ def _predict_unmapped(
     kept: dict[tuple[str, str, str], int] = {}
     for stream in streams:
         note = _structural_drop(profile, stream, positions)
+        if note is None and _sidecar_verdict(profile, stream, positions) is not None:
+            # Leaves the output without a loss: neither kept nor predicted
+            # dropped, and it takes no output position, as in _decide_stream.
+            continue
         if note is None:
             positions[stream.codec_type] = positions.get(stream.codec_type, 0) + 1
             kept[_stream_key(stream)] = kept.get(_stream_key(stream), 0) + 1
@@ -291,7 +351,10 @@ def _decide_stream(
     produces (or ``None``). ``counts`` is mutated so later streams see how many
     output streams of their type already exist. ``structural_notes=False`` still
     drops a structurally unmappable stream but leaves its D1/D2 note to
-    :func:`verify_success`, which names it after checking the written file.
+    :func:`verify_success`, which names it after checking the written file. A
+    stream the rule's sidecar accepts contributes nothing and no note either: it
+    leaves the output for a file of its own and takes no output position
+    (:func:`plan_sidecars` names it).
     """
     structural = _structural_drop(profile, stream, counts)
     if structural is not None:
@@ -311,6 +374,10 @@ def _decide_stream(
             # every video output stream, not just this one (spec-webm-alpha.md).
             codecs += list(_substitute_position(("-pix_fmt:v:{n}", rule.alpha_pix_fmt), position))
         note = _fallback_note(stream, rule)
+    elif _sidecar_of(rule, stream) is not None:
+        # SIDECAR: written to a file of its own, so nothing is given up -- no
+        # map, no codec, no note, and no output position taken.
+        return [], [], None
     else:
         reason = rule.drop_reason or f"not supported by {profile.label}"
         return [], [], _drop_note(stream, reason)
@@ -666,6 +733,58 @@ def retries(profile: Profile, streams: Sequence[Stream]) -> list[Attempt]:
         last_resort = _with_last_resort_alpha_override(profile.last_resort, profile, streams)
         attempts.append(_with_container_options(last_resort, profile))
     return attempts
+
+
+def _styling_note(stream: Stream, sidecar: Sidecar) -> str | None:
+    """The note a sidecar owes for styling its muxer does not carry, or ``None``.
+
+    Phrased like :func:`_drop_note` and its siblings (kind, index, codec, then the
+    verb and the reason) but reports a *written* file, so it names the file --
+    through :data:`SIDECAR_NAME_PLACEHOLDER`, since only ``batch`` knows it.
+    """
+    if stream.codec_name not in sidecar.styling_codecs:
+        return None
+    kind = stream.codec_type or "unknown"
+    return (
+        f"{kind} stream {stream.index} ({stream.codec_name}) written to "
+        f"{SIDECAR_NAME_PLACEHOLDER}: {sidecar.styling_reason}"
+    )
+
+
+def plan_sidecars(profile: Profile, streams: Sequence[Stream]) -> tuple[PlannedSidecar, ...]:
+    """The streams :func:`_decide_stream` routes to a sidecar, in source order.
+
+    Walks the stream list the way :func:`_build_selective` does -- same counts,
+    same structural drops (ROOM, PIC), same rule lookup -- so the selective plan
+    and the sidecar plan cannot drift: a stream is in exactly one of the two or
+    in neither. ``()`` for a profile whose rules declare no sidecar.
+    """
+    planned: list[PlannedSidecar] = []
+    counts: dict[str, int] = {}
+    for stream in streams:
+        sidecar = _sidecar_verdict(profile, stream, counts)
+        if sidecar is not None:
+            options = ("-map", f"0:{stream.index}", *sidecar.options)
+            planned.append(
+                PlannedSidecar(
+                    stream, options, sidecar.muxer, sidecar.suffix, _styling_note(stream, sidecar)
+                )
+            )
+        _decide_stream(profile, stream, counts)
+    return tuple(planned)
+
+
+def sidecar_suffix(profile: Profile) -> str | None:
+    """The suffix of *profile*'s sidecar files, or ``None`` without a sidecar rule.
+
+    Lets ``batch`` sweep stale sidecar partials without reading a rule itself.
+    A profile declaring sidecars on several rules with different suffixes is
+    not supported; the first rule in declaration order answers.
+    """
+    for rule in profile.rules.values():
+        if rule.sidecar is not None:
+            return rule.sidecar.suffix
+    return None
 
 
 def needs_verification(profile: Profile) -> bool:

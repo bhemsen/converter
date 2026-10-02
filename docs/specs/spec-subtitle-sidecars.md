@@ -340,3 +340,17 @@ without a language tag.
   src, outputs)` taking a sequence of the frozen dataclass `OutputSpec(options,
   muxer, path)`; `muxer` is mandatory (sidecars always write `.partial` names).
   `Stream.language` is the raw tag; normalisation stays in `paths.sidecar_language`.
+- 2026-10-02: Engine contract (issue #178). `PlannedSidecar.options` starts with
+  the `-map 0:<index>` so `batch` hands it to `OutputSpec` unchanged.
+  `styling_note` carries the literal `jobs.SIDECAR_NAME_PLACEHOLDER` (`{name}`)
+  where the file name goes, because only `batch` (via `paths`) knows it; `batch`
+  substitutes the basename with `str.replace`, never `str.format`. The sidecar
+  verdict is one helper (`_sidecar_of`) used by `_decide_stream`,
+  `_predict_unmapped` and `plan_sidecars`, so a sidecar stream takes no output
+  position and is neither "kept" nor "predicted dropped" for `confirm_drops`;
+  `plan_sidecars` advances the walk by calling `_decide_stream`. `Sidecar` has no
+  field defaults (a styling set without a reason cannot be declared by
+  omission). `sidecar_suffix` answers from the first rule declaring a sidecar;
+  differing suffixes across rules are unsupported. `describe_unsupported` is
+  unchanged: a subtitle-only source still has a rule for its type and ends
+  `failed`, as the spec requires.

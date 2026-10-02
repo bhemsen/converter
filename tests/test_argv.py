@@ -29,6 +29,7 @@ from converter.profiles import (
     WEBP,
     Attempt,
     Profile,
+    Sidecar,
     StreamRule,
     flags,
 )
@@ -4092,3 +4093,188 @@ class TestPixelFormatCopyCondition:
 
         assert jobs._alpha_depth_notes(listed, [stream]) == ()
         assert jobs._alpha_depth_notes(profile, [stream]) != ()
+
+
+_STYLING_REASON = "styling and positioning are not carried by the sidecar"
+
+
+def _sidecar_profile(**rule_changes: object) -> Profile:
+    """A test-local probe-first profile whose subtitle rule declares a sidecar.
+
+    No shipped profile declares one in this phase (issue #178), so the engine is
+    exercised through a double, mirroring what `WEB` will declare later.
+    """
+    base = _probe_first_profile()
+    sidecar = Sidecar(
+        codecs=frozenset({"subrip", "ass", "mov_text"}),
+        options=flags("-c:s webvtt"),
+        muxer="webvtt",
+        suffix=".vtt",
+        styling_codecs=frozenset({"ass"}),
+        styling_reason=_STYLING_REASON,
+    )
+    subtitle = replace(
+        base.rules["subtitle"], sidecar=sidecar, drop_reason="bitmap subtitles cannot be sidecars"
+    )
+    subtitle = replace(subtitle, **rule_changes)
+    return replace(base, rules={**base.rules, "subtitle": subtitle})
+
+
+def _sidecar_source() -> list[Stream]:
+    return [
+        Stream(0, "video", "h264", pix_fmt="yuv420p"),
+        Stream(1, "audio", "aac"),
+        Stream(2, "subtitle", "subrip", language="eng"),
+        Stream(3, "subtitle", "ass"),
+        Stream(4, "subtitle", "hdmv_pgs_subtitle"),
+    ]
+
+
+class TestSidecarRouting:
+    """`_decide_stream`'s SIDECAR outcome and `plan_sidecars`/`sidecar_suffix`."""
+
+    def test_a_sidecar_stream_is_not_mapped_and_earns_no_drop_note(self):
+        [selective, _] = jobs.retries(_sidecar_profile(), _sidecar_source())
+
+        assert "0:2" not in selective.options
+        assert "0:3" not in selective.options
+        assert not any("stream 2" in note or "stream 3" in note for note in selective.notes)
+
+    def test_a_codec_the_sidecar_rejects_still_takes_the_rule_s_drop(self):
+        [selective, _] = jobs.retries(_sidecar_profile(), _sidecar_source())
+
+        assert selective.notes == (
+            "subtitle stream 4 (hdmv_pgs_subtitle) dropped: bitmap subtitles cannot be sidecars",
+        )
+
+    def test_the_argv_of_the_primary_output_is_unchanged_by_the_sidecar_streams(self):
+        with_sidecar = jobs.retries(_sidecar_profile(), _sidecar_source())[0].options
+        without = jobs.retries(_probe_first_profile(), _sidecar_source()[:2])[0].options
+
+        assert with_sidecar == without
+
+    def test_a_sidecar_stream_takes_no_output_position(self):
+        """A copied subtitle after a sidecar one is still output stream 0."""
+        profile = _sidecar_profile(copy_mask=frozenset({"mov_text"}))
+        streams = [Stream(0, "subtitle", "subrip"), Stream(1, "subtitle", "mov_text")]
+
+        [selective, _] = jobs.retries(profile, streams)
+
+        assert selective.options[:4] == ("-map", "0:1", "-c:s:0", "copy")
+
+    def test_plan_sidecars_lists_the_text_streams_in_source_order(self):
+        planned = jobs.plan_sidecars(_sidecar_profile(), _sidecar_source())
+
+        assert [p.stream.index for p in planned] == [2, 3]
+        assert planned[0] == jobs.PlannedSidecar(
+            stream=Stream(2, "subtitle", "subrip", language="eng"),
+            options=("-map", "0:2", "-c:s", "webvtt"),
+            muxer="webvtt",
+            suffix=".vtt",
+            styling_note=None,
+        )
+
+    def test_a_styling_codec_earns_a_note_with_a_name_placeholder(self):
+        [_, ass] = jobs.plan_sidecars(_sidecar_profile(), _sidecar_source())
+
+        assert ass.styling_note == (
+            f"subtitle stream 3 (ass) written to {jobs.SIDECAR_NAME_PLACEHOLDER}: {_STYLING_REASON}"
+        )
+        assert ass.styling_note.replace(jobs.SIDECAR_NAME_PLACEHOLDER, "m.und.vtt") == (
+            f"subtitle stream 3 (ass) written to m.und.vtt: {_STYLING_REASON}"
+        )
+
+    def test_a_profile_without_a_sidecar_plans_none(self):
+        assert jobs.plan_sidecars(_probe_first_profile(), _sidecar_source()) == ()
+        assert jobs.plan_sidecars(MP4, _sidecar_source()) == ()
+        assert jobs.plan_sidecars(WEB, _sidecar_source()) == ()
+
+    def test_a_source_without_text_subtitles_plans_none(self):
+        assert jobs.plan_sidecars(_sidecar_profile(), _sidecar_source()[:2]) == ()
+
+    def test_the_suffix_comes_from_the_rule(self):
+        assert jobs.sidecar_suffix(_sidecar_profile()) == ".vtt"
+        assert jobs.sidecar_suffix(_probe_first_profile()) is None
+        assert jobs.sidecar_suffix(WEB) is None
+
+    def test_no_shipped_profile_declares_a_sidecar_yet(self):
+        """Issue #181 adds `WEB`'s declaration, once batch can write one."""
+        assert all(jobs.sidecar_suffix(profile) is None for profile in PROFILES.values())
+
+    def test_a_copyable_codec_is_never_a_sidecar(self):
+        profile = _sidecar_profile(copy_mask=frozenset({"subrip"}))
+
+        assert [p.stream.index for p in jobs.plan_sidecars(profile, _sidecar_source())] == [3]
+
+    def test_a_re_encodable_codec_is_never_a_sidecar(self):
+        profile = _sidecar_profile(fallback_options=flags("-c:s:{n} mov_text"))
+
+        assert jobs.plan_sidecars(profile, _sidecar_source()) == ()
+
+    def test_room_applies_before_the_sidecar(self):
+        """The same walk: a full rule drops the stream with the ROOM note, and
+        plan_sidecars agrees with the selective rung."""
+        profile = _sidecar_profile(copy_mask=frozenset({"mov_text"}), stream_limit=1)
+        streams = [Stream(0, "subtitle", "mov_text"), Stream(1, "subtitle", "subrip")]
+
+        [selective, _] = jobs.retries(profile, streams)
+
+        assert jobs.plan_sidecars(profile, streams) == ()
+        assert jobs.verify_success(profile, streams) == (
+            "subtitle stream 1 (subrip) dropped: PF holds 1 subtitle stream",
+        )
+        assert selective.notes == ()  # structural drops are left to verify_success
+
+    def test_a_sidecar_stream_does_not_use_up_a_room_slot(self):
+        profile = _sidecar_profile(copy_mask=frozenset({"mov_text"}), stream_limit=1)
+        streams = [Stream(0, "subtitle", "subrip"), Stream(1, "subtitle", "mov_text")]
+
+        assert [p.stream.index for p in jobs.plan_sidecars(profile, streams)] == [0]
+        assert jobs.verify_success(profile, streams) == ()
+
+    def test_the_picture_key_resolves_before_the_sidecar(self):
+        """PIC: an attached picture reads its own rule, so a sidecar on the plain
+        video rule never takes it, and one on the picture rule does."""
+        base = _probe_first_profile()
+        picture = Stream(1, "video", "png", attached_pic=True)
+        sidecar = Sidecar(frozenset({"png"}), flags("-c:v png"), "image2", ".cov", frozenset(), "")
+        on_video = replace(
+            base, rules={**base.rules, "video": replace(base.rules["video"], sidecar=sidecar)}
+        )
+        on_picture = replace(
+            base,
+            rules={**base.rules, "attached_pic": StreamRule(frozenset(), (), sidecar=sidecar)},
+        )
+
+        assert jobs.plan_sidecars(on_video, [picture]) == ()
+        assert [p.stream.index for p in jobs.plan_sidecars(on_picture, [picture])] == [1]
+
+    def test_verify_success_does_not_report_a_sidecar_stream_as_dropped(self):
+        """The success-side prediction names only structural losses; the two
+        streams that became sidecars are not among them (the bitmap stream's drop
+        is a codec-level D3 note carried by the rung, not predicted here)."""
+        profile = _sidecar_profile()
+
+        assert jobs.verify_success(profile, _sidecar_source()) == ()
+        assert jobs.confirm_drops(profile, _sidecar_source(), _sidecar_source()[:2]) == ()
+
+    def test_a_sidecar_stream_is_neither_kept_nor_predicted_dropped(self):
+        """It leaves the output for a file of its own, so the confirm_drops
+        arithmetic must count it in neither column."""
+        kept, predicted = jobs._predict_unmapped(_sidecar_profile(), _sidecar_source())
+
+        assert predicted == ()
+        # The bitmap stream is a codec-level drop, which the prediction never
+        # judges (it counts as kept); the two sidecar streams are absent.
+        assert set(kept) == {
+            ("video", "h264", ""),
+            ("audio", "aac", ""),
+            ("subtitle", "hdmv_pgs_subtitle", ""),
+        }
+
+    def test_describe_unsupported_is_unchanged_for_a_subtitle_only_source(self):
+        """A rule exists for the type, so the source is not `unsupported`; it still
+        ends `failed` (spec: no rung writes an MP4 from subtitles alone)."""
+        streams = [Stream(0, "subtitle", "subrip")]
+
+        assert jobs.describe_unsupported(_sidecar_profile(), streams) is None
