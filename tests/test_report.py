@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 
 from converter import report
-from converter.batch import Outcome, Result, Summary, Task
+from converter.batch import Outcome, Result, Summary, Task, WrittenSidecar
 
 
 def _task(tmp_path: Path, name: str = "in.mkv", out: str = "out.mp4") -> Task:
@@ -91,6 +91,7 @@ class TestFileRecord:
             "attempt",
             "notes",
             "error",
+            "sidecars",
         ]
 
     def test_type_and_schema(self, tmp_path):
@@ -157,6 +158,42 @@ class TestFileRecord:
 
         assert record["source"] == str(task.src.absolute())
         assert record["output"] == str(task.dst.absolute())
+
+    def test_sidecars_null_unless_converted(self, tmp_path):
+        task = _task(tmp_path)
+        for outcome in (Outcome.SKIPPED, Outcome.FAILED, Outcome.UNSUPPORTED):
+            record = report.file_record(Result(task, outcome, error="e", notes=("n",)))
+            assert record["sidecars"] is None
+
+    def test_sidecars_empty_array_when_converted_without_any(self, tmp_path):
+        record = report.file_record(Result(_task(tmp_path), Outcome.CONVERTED, "remux"))
+
+        assert record["sidecars"] == []
+
+    def test_sidecars_listed_in_order_and_last(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        task = Task(Path("in.mkv"), Path("out.mp4"))
+        written = (
+            WrittenSidecar(Path("out.de.vtt"), 2, "de"),
+            WrittenSidecar(Path("out.en.vtt"), 3, "en"),
+        )
+        record = report.file_record(Result(task, Outcome.CONVERTED, "remux", sidecars=written))
+
+        assert record["sidecars"] == [
+            {"path": str(tmp_path / "out.de.vtt"), "stream": 2, "language": "de"},
+            {"path": str(tmp_path / "out.en.vtt"), "stream": 3, "language": "en"},
+        ]
+        assert list(record["sidecars"][0]) == ["path", "stream", "language"]
+        assert list(record)[-1] == "sidecars"
+        assert Path(record["sidecars"][0]["path"]).is_absolute()
+
+    def test_text_mode_prints_nothing_for_a_written_sidecar(self, tmp_path, capsys):
+        written = (WrittenSidecar(Path("out.en.vtt"), 2, "en"),)
+        report.render_text(Result(_task(tmp_path), Outcome.CONVERTED, "remux", sidecars=written))
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err == ""
 
 
 class TestPlannedRecord:

@@ -55,7 +55,10 @@ def file_record(result: Result) -> dict[str, object]:
     converter's working directory, not rewritten through a symlink or a
     Windows ``subst``/junction). ``attempt`` is ``null`` unless the outcome is
     ``converted``; ``error`` is ``null`` unless it is ``failed``; ``notes`` is
-    always an array, ``[]`` when there is nothing to report.
+    always an array, ``[]`` when there is nothing to report. ``sidecars`` is
+    the last key: ``null`` unless the outcome is ``converted``, otherwise an
+    array (``[]`` when none was written) of ``{path, stream, language}`` objects
+    in source-stream order, ``path`` absolute the same way as ``output``.
     """
     converted = result.outcome is Outcome.CONVERTED
     failed = result.outcome is Outcome.FAILED
@@ -68,6 +71,18 @@ def file_record(result: Result) -> dict[str, object]:
         "attempt": result.attempt if converted else None,
         "notes": list(result.notes),
         "error": result.error if failed else None,
+        "sidecars": (
+            [
+                {
+                    "path": str(sidecar.path.absolute()),
+                    "stream": sidecar.stream,
+                    "language": sidecar.language,
+                }
+                for sidecar in result.sidecars
+            ]
+            if converted
+            else None
+        ),
     }
 
 
