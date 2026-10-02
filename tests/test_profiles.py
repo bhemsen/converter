@@ -36,6 +36,7 @@ from converter.profiles import (
     WEBP,
     Attempt,
     Profile,
+    Sidecar,
     StreamRule,
     flags,
     resolve_target,
@@ -2548,3 +2549,82 @@ class TestAlphaPixFmtField:
         alpha pixel format libvpx-vp9 accepts without `-strict experimental`,
         and it round-trips the channel."""
         assert WEBM.rules["video"].alpha_pix_fmt == "yuva420p"
+
+
+def sidecar_violations(profile: Profile, registry: dict[str, Profile]) -> list[str]:
+    """What is wrong with *profile*'s sidecar declarations, as readable strings.
+
+    A function rather than inline asserts so the negative tests below can run the
+    very same check against a constructed profile and prove it bites -- the
+    registry holds no sidecar yet, so the invariants are vacuously green there.
+    """
+    found: list[str] = []
+    target_suffixes = {other.target_suffix for other in registry.values()}
+    for key, rule in profile.rules.items():
+        sidecar = rule.sidecar
+        if sidecar is None:
+            continue
+        if not profile.probe_first:
+            found.append(f"{key}: a sidecar needs a probe-first profile")
+        if sidecar.suffix in SOURCE_SUFFIXES:
+            found.append(f"{key}: sidecar suffix {sidecar.suffix} is a source suffix")
+        if sidecar.suffix in target_suffixes:
+            found.append(f"{key}: sidecar suffix {sidecar.suffix} is a target suffix")
+    return found
+
+
+def _with_sidecar(profile: Profile, suffix: str) -> Profile:
+    sidecar = Sidecar(
+        codecs=frozenset({"subrip"}),
+        options=flags("-c:s webvtt"),
+        muxer="webvtt",
+        suffix=suffix,
+        styling_codecs=frozenset(),
+        styling_reason="",
+    )
+    rule = StreamRule(frozenset(), flags("-c:s:{n} copy"), sidecar=sidecar)
+    return dataclasses.replace(profile, rules={**profile.rules, "subtitle": rule})
+
+
+class TestSidecarDeclaration:
+    """`Sidecar` / `StreamRule.sidecar` (issue #178, spec-subtitle-sidecars.md)."""
+
+    @pytest.mark.parametrize("profile", PROFILES.values(), ids=lambda profile: profile.label)
+    def test_a_shipped_sidecar_respects_the_registry_invariants(self, profile):
+        assert sidecar_violations(profile, PROFILES) == []
+
+    def test_a_rule_declares_no_sidecar_by_default(self):
+        assert StreamRule(frozenset(), ()).sidecar is None
+
+    def test_a_sidecar_on_a_cheap_attempt_profile_is_rejected(self):
+        assert sidecar_violations(_with_sidecar(MP4, ".vtt"), PROFILES) == [
+            "subtitle: a sidecar needs a probe-first profile"
+        ]
+
+    def test_a_sidecar_suffix_that_is_a_source_suffix_is_rejected(self):
+        found = sidecar_violations(_with_sidecar(WEB, ".mkv"), PROFILES)
+
+        assert "subtitle: sidecar suffix .mkv is a source suffix" in found
+
+    def test_a_sidecar_suffix_that_is_a_target_suffix_is_rejected(self):
+        extra = {**PROFILES, "x": dataclasses.replace(WEB, name="x", target_suffix=".vtt")}
+
+        found = sidecar_violations(_with_sidecar(WEB, ".vtt"), extra)
+
+        assert "subtitle: sidecar suffix .vtt is a target suffix" in found
+
+    def test_a_clean_probe_first_sidecar_passes(self):
+        assert sidecar_violations(_with_sidecar(WEB, ".vtt"), PROFILES) == []
+
+    def test_the_placeholder_test_is_not_extended_to_sidecar_options(self):
+        """Each sidecar is its own output, so `{n}` has no meaning in them."""
+        profile = _with_sidecar(WEB, ".vtt")
+
+        assert "{n}" not in " ".join(profile.rules["subtitle"].sidecar.options)
+        assert sidecar_violations(profile, PROFILES) == []
+
+    def test_sidecar_is_frozen(self):
+        sidecar = _with_sidecar(WEB, ".vtt").rules["subtitle"].sidecar
+
+        with pytest.raises(AttributeError):
+            sidecar.suffix = ".x"

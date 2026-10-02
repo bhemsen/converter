@@ -42,8 +42,46 @@ class Attempt:
 
 
 @dataclass(frozen=True)
+class Sidecar:
+    """A stream a rule writes to a file of its own instead of into the output.
+
+    Declared on a :class:`StreamRule` for a stream the primary output cannot
+    carry in-band (no copy-mask hit, no fallback) but a separate file can --
+    a text subtitle for a browser, which no player shows from inside an MP4 but
+    loads from a WebVTT file through ``<track>``
+    (``docs/specs/spec-subtitle-sidecars.md``). Written by a separate ffmpeg
+    step after the ladder, so a stream the sidecar encoder rejects can never push
+    the video down to a re-encode.
+    """
+
+    #: Codec names the sidecar can be written from. A stream outside it still
+    #: takes the rule's ordinary drop, so a codec the sidecar muxer cannot hold
+    #: (a bitmap subtitle) is named rather than lost silently.
+    codecs: frozenset[str]
+    #: Per-output options of one sidecar (the codec choice). ``{n}``-free: each
+    #: sidecar is its own output, so there is no position among output streams
+    #: of a type to substitute -- the registry's ``{n}`` test covers only
+    #: ``accept_options`` and ``fallback_options``.
+    options: tuple[str, ...]
+    #: The ``-f`` value. Required because a sidecar is written under a
+    #: ``.partial`` name, which defeats ffmpeg's suffix-based muxer choice.
+    muxer: str
+    #: The file suffix (``".vtt"``). Must be no source suffix and no target's
+    #: suffix: that is what keeps a sidecar name from ever equalling a source or
+    #: an output path, so the batch guards need not know sidecar names up front.
+    suffix: str
+    #: Codecs whose styling the sidecar muxer does not carry (ASS/SSA overrides
+    #: and positioning). Whether a stream actually uses styling cannot be read
+    #: from the probe, so the codec alone decides whether the note is owed.
+    styling_codecs: frozenset[str]
+    #: Why that styling is lost -- the reason text of the note. Profile data, so
+    #: the engine holds no target-specific wording.
+    styling_reason: str
+
+
+@dataclass(frozen=True)
 class StreamRule:
-    """How one stream type is handled: accept, re-encode, or drop.
+    """How one stream type is handled: accept, re-encode, write to a sidecar, or drop.
 
     ``accept_options`` and ``fallback_options`` may carry the literal ``{n}``
     placeholder, which the engine replaces with the stream's position among
@@ -82,6 +120,14 @@ class StreamRule:
     #: ``copy_pix_fmts`` for the note to name it; without it the ordinary
     #: re-encode note is used.
     pix_fmt_reason: str | None = None
+    #: Where a stream goes that this rule can neither copy nor re-encode but a
+    #: file of its own can hold: it is not mapped into the output and earns no
+    #: drop note, because nothing is lost. Reached only on that edge, so a codec
+    #: the sidecar does not accept still takes ``drop_reason``. Only a
+    #: probe-first profile may declare one -- a cheap attempt that succeeds has
+    #: no stream list to plan it from, and probing for it would break the probe
+    #: principle (``docs/specs/spec-subtitle-sidecars.md``).
+    sidecar: Sidecar | None = None
 
 
 @dataclass(frozen=True)
