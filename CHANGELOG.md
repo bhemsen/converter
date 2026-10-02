@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-10-02
+
+`--to web` keeps text subtitles: each one becomes a WebVTT file beside the MP4,
+so a browser loads it through `<track>`. This is the first release in which one
+source can write more than one file.
+
+### Added
+
+- **WebVTT sidecars for `--to web`.** Every text subtitle stream (SubRip, ASS,
+  SSA, `mov_text`, WebVTT) is written as `<stem>.<lang>.vtt` next to the MP4.
+  `<lang>` is the stream's language tag as the container wrote it (`eng`,
+  `ger`), or `und` when the stream has none or it is not a language code. A
+  further stream of the same language becomes `<stem>.<lang>.2.vtt`,
+  `.3.vtt`, and so on. Sidecars are written after the MP4 succeeded, under
+  `.partial` names, and renamed into place before the MP4. A subtitle the
+  WebVTT encoder rejects costs a note, never the video.
+- **`sidecars` in the `--json` `file` record**, as its last key: `null` unless
+  the file was converted, otherwise one `{"path", "stream", "language"}` object
+  per sidecar actually written. `schema` stays `1`.
+- **ASS and SSA sidecars carry a note** saying that styling and positioning are
+  not carried by WebVTT.
+
+### Changed
+
+- `--to web` no longer drops text subtitles. Bitmap subtitles (PGS, DVD, DVB)
+  are still dropped, now with the note "bitmap subtitles cannot be written as
+  WebVTT". The last-resort note now names only bitmap subtitles as dropped.
+- An existing sidecar path is never replaced without `--overwrite`. It is
+  kept, and a note names it.
+- An MP4 that already exists still counts as done, sidecars or not. To add
+  sidecars to output written by 3.2.0, re-run with `--overwrite`, which is a
+  full reconversion.
+
+### Known limitations
+
+- SubRip and `mov_text` lose `<font color>` tags without a note, because
+  whether a stream uses them is only visible in its payload.
+- `--dry-run` cannot list sidecars, because selection does not probe.
+
 ## [3.2.0] - 2026-09-30
 
 The converter becomes a dependable child process: a machine-readable output
@@ -192,6 +231,7 @@ the history starts somewhere honest rather than at 3.0.0.
   `converter` CLI with `video` and `audio` sub-commands, installable with
   `pip install -e .`.
 
+[3.3.0]: https://github.com/bhemsen/converter/releases/tag/v3.3.0
 [3.2.0]: https://github.com/bhemsen/converter/releases/tag/v3.2.0
 [3.1.0]: https://github.com/bhemsen/converter/releases/tag/v3.1.0
 [3.0.0]: https://github.com/bhemsen/converter/releases/tag/v3.0.0
