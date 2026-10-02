@@ -155,7 +155,7 @@ flowchart TD
   their own, and `cli.py` is unchanged. `EXISTS` is the one guard that is asked
   **per sidecar, after the ladder**, not here: an existing sidecar path is left
   alone without `--overwrite` and named in a note, and the output's own
-  existence alone decides the skip (`docs/specs/spec-subtitle-sidecars.md`).
+  existence alone decides the skip (`docs/specs/archive/spec-subtitle-sidecars.md`).
 - **Selection cannot tell whether a source can *produce* the target.** Whether a
   video-only file has audio to put in a WAV is only knowable from a probe, and
   selection has no probe to spend: the one the ladder may now spend on a

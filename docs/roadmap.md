@@ -24,7 +24,7 @@
 | 11 | json-output | [spec-json-output.md](specs/archive/spec-json-output.md) | [#11](https://github.com/bhemsen/converter/milestone/11) |
 | 12 | abort-safe-writes | [spec-abort-safe-writes.md](specs/archive/spec-abort-safe-writes.md) | [#12](https://github.com/bhemsen/converter/milestone/12) |
 | 13 | web-target | [spec-web-target.md](specs/archive/spec-web-target.md) | [#13](https://github.com/bhemsen/converter/milestone/13) |
-| 14 | subtitle-sidecars | [spec-subtitle-sidecars.md](specs/spec-subtitle-sidecars.md) | [#14](https://github.com/bhemsen/converter/milestone/14) |
+| 14 | subtitle-sidecars | [spec-subtitle-sidecars.md](specs/archive/spec-subtitle-sidecars.md) | [#14](https://github.com/bhemsen/converter/milestone/14) |
 
 A phase gets a Spec link once `/plan` drafts it, and a Milestone link once the
 spec is merged. The milestone (open/closed + issue progress) is where status

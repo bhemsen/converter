@@ -167,7 +167,7 @@ def sidecar_language(tag: str) -> str:
     The lower-cased tag when it matches ``[a-z]{2,3}(-[a-z0-9]{1,8})*``,
     otherwise ``und``. The pattern admits no ``.`` and nothing purely numeric,
     which is what keeps the dot-separated components of a sidecar name from
-    lining up with another MP4's (``docs/specs/spec-subtitle-sidecars.md``,
+    lining up with another MP4's (``docs/specs/archive/spec-subtitle-sidecars.md``,
     *Guards by construction*; ``docs/design/source-selection.md``).
     """
     lowered = tag.lower()
@@ -183,7 +183,7 @@ def sidecar_paths(dst: Path, languages: Sequence[str], suffix: str) -> list[Path
     the language never is, so for two distinct MP4 names no component sequence
     coincides: a sidecar equals no other source's sidecar or MP4, and *suffix*
     (in no source-suffix set, no target suffix) keeps it from any walked input.
-    See ``docs/specs/spec-subtitle-sidecars.md`` (*Guards by construction*) and
+    See ``docs/specs/archive/spec-subtitle-sidecars.md`` (*Guards by construction*) and
     ``docs/design/source-selection.md``. Pure: no filesystem access.
     """
     seen: dict[str, int] = {}
@@ -207,7 +207,7 @@ def stale_sidecar_partials(dst: Path, suffix: str) -> list[Path]:
     and never ``str.casefold``, which folds ``ß`` to ``ss`` and would join names
     NTFS keeps apart. So exactly the names the collision check treats as one are
     one here, and two concurrent tasks never sweep each other's partials
-    (``docs/specs/spec-subtitle-sidecars.md``, *Prior decisions*;
+    (``docs/specs/archive/spec-subtitle-sidecars.md``, *Prior decisions*;
     ``docs/design/source-selection.md``). The one filesystem read among the
     sidecar helpers; a missing directory yields ``[]``.
     """

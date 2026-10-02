@@ -71,7 +71,7 @@ flowchart TD
   or — only where the rule declares a sidecar (`web`'s text subtitles) — moved
   into a sidecar file of its own. `SIDE` sits on `ENC`'s `no` edge, so a stream
   the output itself can carry is never diverted: the sidecar is the alternative
-  to a drop, not to a copy (`docs/specs/spec-subtitle-sidecars.md`). A sidecar
+  to a drop, not to a copy (`docs/specs/archive/spec-subtitle-sidecars.md`). A sidecar
   is not a drop and earns no drop note; a sidecar format that cannot hold the
   stream's styling earns a styling note instead. Every drop edge names the
   reason, because a silent drop is exactly what the vision forbids.

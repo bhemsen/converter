@@ -49,7 +49,7 @@ class Sidecar:
     carry in-band (no copy-mask hit, no fallback) but a separate file can --
     a text subtitle for a browser, which no player shows from inside an MP4 but
     loads from a WebVTT file through ``<track>``
-    (``docs/specs/spec-subtitle-sidecars.md``). Written by a separate ffmpeg
+    (``docs/specs/archive/spec-subtitle-sidecars.md``). Written by a separate ffmpeg
     step after the ladder, so a stream the sidecar encoder rejects can never push
     the video down to a re-encode.
     """
@@ -126,7 +126,7 @@ class StreamRule:
     #: the sidecar does not accept still takes ``drop_reason``. Only a
     #: probe-first profile may declare one -- a cheap attempt that succeeds has
     #: no stream list to plan it from, and probing for it would break the probe
-    #: principle (``docs/specs/spec-subtitle-sidecars.md``).
+    #: principle (``docs/specs/archive/spec-subtitle-sidecars.md``).
     sidecar: Sidecar | None = None
 
 
@@ -1748,7 +1748,7 @@ AVIF = Profile(
 #: blind: the source is probed first and the engine's selective rung is the
 #: first attempt. Text subtitles are not mapped into the MP4 at all: the
 #: ``subtitle`` rule's sidecar writes each as a WebVTT file beside it in a
-#: separate step (``docs/specs/spec-subtitle-sidecars.md``).
+#: separate step (``docs/specs/archive/spec-subtitle-sidecars.md``).
 WEB = Profile(
     label="Web",
     name="web",
