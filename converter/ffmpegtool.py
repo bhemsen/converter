@@ -103,7 +103,7 @@ class Stream:
     #: text -- whatever the muxer wrote), ``""`` when untagged. ffprobe's JSON
     #: nests it under ``tags`` and omits the whole key for an untagged stream.
     #: Kept raw: normalising it into a filename component is the naming
-    #: layer's job (docs/specs/spec-subtitle-sidecars.md).
+    #: layer's job (docs/specs/archive/spec-subtitle-sidecars.md).
     language: str = ""
 
 
@@ -429,7 +429,7 @@ def probe_streams(tools: Tools, src: str | os.PathLike[str]) -> list[Stream]:
             # separate entry clause because disposition flags arrive nested
             # under their own JSON object rather than alongside the plain
             # stream fields. stream_tags=language is one more clause for the
-            # same reason (docs/specs/spec-subtitle-sidecars.md): tags are
+            # same reason (docs/specs/archive/spec-subtitle-sidecars.md): tags are
             # nested under "tags" in the JSON, and reading one costs no
             # second process.
             "stream=index,codec_type,codec_name,codec_tag_string,pix_fmt:"

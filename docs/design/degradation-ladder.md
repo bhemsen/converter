@@ -68,7 +68,7 @@ flowchart TD
   carrying sidecars as extra outputs on a rung would let a subtitle the WebVTT
   encoder rejects push the video down to a re-encode. Every sidecar is renamed
   before the output, so an output at its final path implies its sidecar step
-  finished (`docs/specs/spec-subtitle-sidecars.md`).
+  finished (`docs/specs/archive/spec-subtitle-sidecars.md`).
 - **A probe-first profile starts at `P`.** It declares no cheap attempt, because a
   blind remux is precisely what would carry streams the target accepts but cannot
   use — `web`'s HEVC or AC-3 in an MP4 a browser cannot play. Its one probe is the

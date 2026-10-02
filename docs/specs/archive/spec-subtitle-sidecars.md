@@ -160,15 +160,15 @@ second file per source has nowhere to go.
 
 ## Prior art
 
-- [Subtitle sidecars for browsers (Phase 14)](../prior-art.md#subtitle-sidecars-for-browsers-phase-14)
+- [Subtitle sidecars for browsers (Phase 14)](../../prior-art.md#subtitle-sidecars-for-browsers-phase-14)
   — WebVTT beside the video through `<track>` (ADOPT); in-band `mov_text` for a
   browser and burned-in subtitles (AVOID). Jellyfin extracts subtitles in a run
   of its own, separate from the transcode — the precedent for the separate
   sidecar step.
-- [Machine-readable CLI output (Phase 11)](../prior-art.md#machine-readable-cli-output-phase-11)
+- [Machine-readable CLI output (Phase 11)](../../prior-art.md#machine-readable-cli-output-phase-11)
   — the open schema that lets the `file` record gain `sidecars` without raising
   `schema`.
-- [Abort-safe writes and child-process termination (Phase 12)](../prior-art.md#abort-safe-writes-and-child-process-termination-phase-12)
+- [Abort-safe writes and child-process termination (Phase 12)](../../prior-art.md#abort-safe-writes-and-child-process-termination-phase-12)
   — the `.partial`-then-rename discipline the sidecars inherit.
 
 ## Human prerequisites
@@ -362,3 +362,18 @@ without a language tag.
   or unrenamed sidecar replaces any styling note for that stream; the styling
   note is attached only at rename time. `Result.sidecars` is empty on every
   non-`converted` outcome.
+- 2026-10-02: Milestone QA gate, smoke-tested against real ffmpeg 9.0 on
+  Windows 11 and accepted by the human. An MKV with H.264, AAC, two `eng`
+  SubRip streams and one untagged ASS stream became `film.mp4` (H.264 + AAC
+  only) plus `film.eng.vtt`, `film.eng.2.vtt` and `film.und.vtt`, each valid
+  WebVTT; the `--json` record listed all three as its last key, and only the ASS
+  sidecar carried the styling note. An HEVC 10-bit source with a `ger` SubRip
+  stream was re-encoded and still gained `hevc10.ger.vtt`. A second run
+  reported 0 converted, 2 skipped, exit 0, with no `.partial` left. In place
+  beside a user's own `film.eng.vtt`, that file was kept and named in a note;
+  `--overwrite` replaced it. `--to mp4` on the same source kept its three
+  `mov_text` tracks and wrote no sidecar, as in v3.2.0. Shipped as v3.3.0.
+- 2026-10-02: Close-out. One deviation the #179 review found is filed as
+  `track:adhoc` issue #189 instead of being fixed here: a sidecar rename that
+  fails with an `OSError` other than `PermissionError` fails the whole file,
+  where *Rename order* asks for a note and `converted`.

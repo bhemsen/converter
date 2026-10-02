@@ -102,7 +102,7 @@ only on `cli`.
    `.partial` output per sidecar. A failure there drops the sidecars with a
    note each and never the output. Every sidecar is renamed into place
    **before** the output, so an output at its final path implies its sidecar
-   step finished (`docs/specs/spec-subtitle-sidecars.md`).
+   step finished (`docs/specs/archive/spec-subtitle-sidecars.md`).
 2. **Degradation.** The attempt exits non-zero, so *now* `ffmpegtool.probe_streams`
    describes the file. Each stream is first resolved to a rule — by its
    disposition when it is an attached picture and the profile declares a rule for
