@@ -332,6 +332,10 @@ without a language tag.
 - 2026-10-01: Measured on ffmpeg 9.0 that one process writes several WebVTT
   `.partial` outputs with `-f webvtt`, and that SubRip colour and ASS
   positioning/colour do not survive.
+- 2026-10-02: `stale_sidecar_partials` treats a missing directory and a parent
+  that is not a directory alike (`[]`), returns names sorted, and shares one
+  duplicate-counter pattern (integer >= 2, no leading zero) with the naming
+  grammar so `.1`, `.0` and `.02` are never swept.
 - 2026-10-02: Multi-output builder is `ffmpegtool.build_multi_output_argv(ffmpeg,
   src, outputs)` taking a sequence of the frozen dataclass `OutputSpec(options,
   muxer, path)`; `muxer` is mandatory (sidecars always write `.partial` names).

@@ -7,7 +7,8 @@ that is worth unit-testing.
 
 import errno
 import os
-from collections.abc import Iterable
+import re
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 
@@ -148,6 +149,81 @@ def partial_for(dst: str | os.PathLike[str]) -> Path:
     call once and hold onto the result.
     """
     return Path(os.fspath(dst) + ".partial")
+
+
+#: A normalised sidecar language, also what ``sidecar_language`` accepts. Two
+#: letters at least in the first component keep it from ever being purely
+#: numeric, so it can never be mistaken for a duplicate counter.
+_LANGUAGE_PATTERN = r"[a-z]{2,3}(?:-[a-z0-9]{1,8})*"
+_LANGUAGE_RE = re.compile(_LANGUAGE_PATTERN)
+
+#: The duplicate counter of a sidecar name: an integer of at least 2.
+_DUPLICATE_PATTERN = r"(?:\.(?:[2-9]|[1-9][0-9]+))?"
+
+
+def sidecar_language(tag: str) -> str:
+    """Return the sidecar language for a raw stream language *tag*.
+
+    The lower-cased tag when it matches ``[a-z]{2,3}(-[a-z0-9]{1,8})*``,
+    otherwise ``und``. The pattern admits no ``.`` and nothing purely numeric,
+    which is what keeps the dot-separated components of a sidecar name from
+    lining up with another MP4's (``docs/specs/spec-subtitle-sidecars.md``,
+    *Guards by construction*; ``docs/design/source-selection.md``).
+    """
+    lowered = tag.lower()
+    return lowered if _LANGUAGE_RE.fullmatch(lowered) else "und"
+
+
+def sidecar_paths(dst: Path, languages: Sequence[str], suffix: str) -> list[Path]:
+    """Return one sidecar path per entry of *languages*, beside *dst*.
+
+    *languages* are raw tags and are normalised here. The first stream of a
+    language gets ``<stem>.<lang><suffix>``, further ones ``.2``, ``.3``, ...
+    per language in order, ``und`` included. The counter is always numeric and
+    the language never is, so for two distinct MP4 names no component sequence
+    coincides: a sidecar equals no other source's sidecar or MP4, and *suffix*
+    (in no source-suffix set, no target suffix) keeps it from any walked input.
+    See ``docs/specs/spec-subtitle-sidecars.md`` (*Guards by construction*) and
+    ``docs/design/source-selection.md``. Pure: no filesystem access.
+    """
+    seen: dict[str, int] = {}
+    paths = []
+    for tag in languages:
+        language = sidecar_language(tag)
+        count = seen.get(language, 0) + 1
+        seen[language] = count
+        dup = "" if count == 1 else f".{count}"
+        paths.append(dst.with_name(f"{dst.stem}.{language}{dup}{suffix}"))
+    return paths
+
+
+def stale_sidecar_partials(dst: Path, suffix: str) -> list[Path]:
+    """List the sidecar partials in ``dst.parent`` that only *dst*'s task can produce.
+
+    A name matches ``<stem>.<lang>[.<k>]<suffix>.partial``: *stem* is *dst*'s
+    name minus its suffix, run through ``re.escape``; *lang* the normalised
+    language pattern; *k* an integer of at least 2. Both sides are compared
+    through ``os.path.normcase`` -- the comparison ``find_collisions`` uses --
+    and never ``str.casefold``, which folds ``ß`` to ``ss`` and would join names
+    NTFS keeps apart. So exactly the names the collision check treats as one are
+    one here, and two concurrent tasks never sweep each other's partials
+    (``docs/specs/spec-subtitle-sidecars.md``, *Prior decisions*;
+    ``docs/design/source-selection.md``). The one filesystem read among the
+    sidecar helpers; a missing directory yields ``[]``.
+    """
+    pattern = re.compile(
+        re.escape(os.path.normcase(dst.stem))
+        + r"\."
+        + _LANGUAGE_PATTERN
+        + _DUPLICATE_PATTERN
+        + re.escape(os.path.normcase(suffix))
+        + r"\.partial"
+    )
+    try:
+        names = sorted(p.name for p in dst.parent.iterdir())
+    except (FileNotFoundError, NotADirectoryError):
+        return []
+    return [dst.parent / name for name in names if pattern.fullmatch(os.path.normcase(name))]
 
 
 def mirror_to_drive(
