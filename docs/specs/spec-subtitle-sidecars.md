@@ -354,3 +354,11 @@ without a language tag.
   differing suffixes across rules are unsupported. `describe_unsupported` is
   unchanged: a subtitle-only source still has a rule for its type and ends
   `failed`, as the spec requires.
+- 2026-10-02: Batch step (issue #179). `sidecar_suffix` is a keyword defaulting to
+  `None` on `convert_one`, `_interruptible`, `_handle_interrupt` and
+  `_submit_and_drain`, so existing callers are unchanged and `None` sweeps nothing;
+  only `run_batch` computes it. The sweep helper suppresses `OSError` around the
+  whole listing-and-delete, never just the delete. A note for an existing, failed
+  or unrenamed sidecar replaces any styling note for that stream; the styling
+  note is attached only at rename time. `Result.sidecars` is empty on every
+  non-`converted` outcome.

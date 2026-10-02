@@ -1,7 +1,9 @@
 """Tests for batch behaviour: the failures the old scripts swallowed."""
 
 import threading
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -28,6 +30,7 @@ from converter.profiles import (
     WEBP,
     Attempt,
     Profile,
+    Sidecar,
     StreamRule,
     flags,
 )
@@ -2024,3 +2027,471 @@ class TestProbeFirstProfile:
 
         assert result.attempt == "selective"
         assert probes == [task.src]
+
+
+_STYLING = "styling is not carried"
+
+
+def sidecar_profile() -> Profile:
+    """A test-local probe-first profile whose subtitle rule declares a sidecar.
+
+    No shipped profile declares one until issue #181, so the batch step is
+    proven against this double, shaped like what ``web`` will declare.
+    """
+    base = probe_first_profile()
+    sidecar = Sidecar(
+        codecs=frozenset({"subrip", "ass"}),
+        options=flags("-c:s webvtt"),
+        muxer="webvtt",
+        suffix=".vtt",
+        styling_codecs=frozenset({"ass"}),
+        styling_reason=_STYLING,
+    )
+    subtitle = replace(base.rules["subtitle"], sidecar=sidecar)
+    return replace(base, rules={**base.rules, "subtitle": subtitle})
+
+
+def sidecar_source() -> list[Stream]:
+    return [
+        Stream(0, "video", "h264", pix_fmt="yuv420p"),
+        Stream(1, "audio", "aac"),
+        Stream(2, "subtitle", "subrip", language="ENG"),
+        Stream(3, "subtitle", "ass"),
+        Stream(4, "subtitle", "subrip", language="eng"),
+    ]
+
+
+class SidecarFfmpeg:
+    """A scripted ffmpeg that tells the primary run from the sidecar step.
+
+    Every ``.partial`` argument is created, as a multi-output ffmpeg would; the
+    sidecar process is the one whose argv carries the ``webvtt`` muxer.
+    """
+
+    def __init__(self, source: list[Stream]) -> None:
+        self.source = source
+        self.output_streams: list[Stream] = []
+        self.primary: list[list[str]] = []
+        self.sidecar: list[list[str]] = []
+        self.sidecar_code = 0
+        self.sidecar_stderr = ""
+        self.probes: list[Path] = []
+        self.after_sidecar: Callable[[], None] | None = None
+
+    def run(self, argv, **_kwargs):
+        argv = list(argv)
+        is_sidecar = "webvtt" in argv
+        (self.sidecar if is_sidecar else self.primary).append(argv)
+        code = self.sidecar_code if is_sidecar else 0
+        for arg in argv:
+            if arg.endswith(".partial"):
+                Path(arg).write_bytes(b"partial")
+        if is_sidecar and self.after_sidecar is not None:
+            self.after_sidecar()
+        stderr = self.sidecar_stderr if is_sidecar and code else ""
+        return CommandResult(tuple(argv), code, "", stderr)
+
+    def probe(self, _tools, src):
+        self.probes.append(Path(src))
+        return list(self.output_streams if str(src).endswith(".partial") else self.source)
+
+
+@pytest.fixture
+def sidecar_ffmpeg(monkeypatch):
+    fake = SidecarFfmpeg(sidecar_source())
+    monkeypatch.setattr(batch.ffmpegtool, "run", fake.run)
+    monkeypatch.setattr(batch.ffmpegtool, "probe_streams", fake.probe)
+    monkeypatch.setattr(batch, "_is_windows", lambda: False)
+    return fake
+
+
+def run_sidecar(task: Task, *, overwrite: bool = False) -> Result:
+    return convert_one(sidecar_profile(), task, TOOLS, overwrite=overwrite, sidecar_suffix=".vtt")
+
+
+def sidecar_names(task: Task) -> list[str]:
+    return sorted(p.name for p in task.dst.parent.iterdir() if p.suffix == ".vtt")
+
+
+def leftover_partials(task: Task) -> list[str]:
+    return sorted(p.name for p in task.dst.parent.iterdir() if p.name.endswith(".partial"))
+
+
+def record_renames(monkeypatch, events: list[tuple[str, str]]) -> None:
+    real_replace = Path.replace
+
+    def replace(self, target):
+        events.append(("rename", Path(target).name))
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", replace)
+
+
+class TestSidecarStep:
+    def _task(self, tmp_path: Path) -> Task:
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        return task
+
+    def test_sidecars_are_written_in_one_process_and_renamed_before_the_output(
+        self, tmp_path, sidecar_ffmpeg, monkeypatch
+    ):
+        task = self._task(tmp_path)
+        events: list[tuple[str, str]] = []
+        record_renames(monkeypatch, events)
+
+        result = run_sidecar(task)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert events == [
+            ("rename", "clip.eng.vtt"),
+            ("rename", "clip.und.vtt"),
+            ("rename", "clip.eng.2.vtt"),
+            ("rename", "clip.mp4"),
+        ]
+        assert len(sidecar_ffmpeg.sidecar) == 1
+        assert sidecar_ffmpeg.sidecar[0] == ffmpegtool.build_multi_output_argv(
+            "ffmpeg",
+            task.src,
+            [
+                ffmpegtool.OutputSpec(
+                    ("-map", f"0:{i}", "-c:s", "webvtt"),
+                    "webvtt",
+                    partial_for(task.dst.with_name(name)),
+                )
+                for i, name in ((2, "clip.eng.vtt"), (3, "clip.und.vtt"), (4, "clip.eng.2.vtt"))
+            ],
+        )
+        assert result.sidecars == (
+            batch.WrittenSidecar(task.dst.with_name("clip.eng.vtt"), 2, "eng"),
+            batch.WrittenSidecar(task.dst.with_name("clip.und.vtt"), 3, "und"),
+            batch.WrittenSidecar(task.dst.with_name("clip.eng.2.vtt"), 4, "eng"),
+        )
+        assert leftover_partials(task) == []
+
+    def test_a_written_ass_sidecar_earns_the_styling_note_with_its_basename(
+        self, tmp_path, sidecar_ffmpeg
+    ):
+        task = self._task(tmp_path)
+
+        result = run_sidecar(task)
+
+        assert result.notes == (f"subtitle stream 3 (ass) written to clip.und.vtt: {_STYLING}",)
+
+    def test_written_sidecar_is_frozen(self):
+        sidecar = batch.WrittenSidecar(Path("a.vtt"), 2, "eng")
+
+        with pytest.raises(AttributeError):
+            sidecar.stream = 3  # type: ignore[misc]
+
+    def test_a_failing_step_keeps_the_output_and_names_every_sidecar(
+        self, tmp_path, sidecar_ffmpeg
+    ):
+        task = self._task(tmp_path)
+        sidecar_ffmpeg.sidecar_code = 1
+        sidecar_ffmpeg.sidecar_stderr = "first line\nEncoder failed\n\n"
+
+        result = run_sidecar(task)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert result.sidecars == ()
+        assert result.notes == (
+            "subtitle stream 2 (subrip) not written as a sidecar: Encoder failed",
+            "subtitle stream 3 (ass) not written as a sidecar: Encoder failed",
+            "subtitle stream 4 (subrip) not written as a sidecar: Encoder failed",
+        )
+        assert task.dst.exists()
+        assert sidecar_names(task) == []
+        assert leftover_partials(task) == []
+
+    def test_a_failing_step_without_stderr_reports_the_exit_code(self, tmp_path, sidecar_ffmpeg):
+        task = self._task(tmp_path)
+        sidecar_ffmpeg.sidecar_code = 3
+
+        result = run_sidecar(task)
+
+        assert result.notes[0] == "subtitle stream 2 (subrip) not written as a sidecar: exit code 3"
+
+    def test_a_single_rename_failure_drops_only_that_sidecar(
+        self, tmp_path, sidecar_ffmpeg, monkeypatch
+    ):
+        task = self._task(tmp_path)
+        real_replace = Path.replace
+
+        def replace(self, target):
+            if Path(target).name == "clip.und.vtt":
+                raise PermissionError("locked")
+            return real_replace(self, target)
+
+        monkeypatch.setattr(Path, "replace", replace)
+
+        result = run_sidecar(task)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert [s.path.name for s in result.sidecars] == ["clip.eng.vtt", "clip.eng.2.vtt"]
+        assert result.notes == (
+            "subtitle stream 3 (ass) not written: could not rename clip.und.vtt into place: "
+            "could not replace the existing output; it appears locked: locked",
+        )
+        assert sidecar_names(task) == ["clip.eng.2.vtt", "clip.eng.vtt"]
+        assert leftover_partials(task) == []
+
+    def test_a_failed_output_rename_fails_the_file_and_keeps_the_sidecars(
+        self, tmp_path, sidecar_ffmpeg, monkeypatch
+    ):
+        task = self._task(tmp_path)
+        real_replace = Path.replace
+
+        def replace(self, target):
+            if Path(target) == task.dst:
+                raise PermissionError("locked")
+            return real_replace(self, target)
+
+        monkeypatch.setattr(Path, "replace", replace)
+
+        result = run_sidecar(task)
+
+        assert result.outcome is Outcome.FAILED
+        assert result.sidecars == ()
+        assert not task.dst.exists()
+        assert sidecar_names(task) == ["clip.eng.2.vtt", "clip.eng.vtt", "clip.und.vtt"]
+        assert leftover_partials(task) == []
+
+    def test_an_existing_sidecar_is_left_alone_and_named(self, tmp_path, sidecar_ffmpeg):
+        task = self._task(tmp_path)
+        existing = task.dst.with_name("clip.eng.vtt")
+        existing.write_bytes(b"mine")
+
+        result = run_sidecar(task)
+
+        assert existing.read_bytes() == b"mine"
+        assert result.notes[0] == (
+            "subtitle stream 2 (subrip) not written: clip.eng.vtt already exists; "
+            "pass --overwrite to replace it"
+        )
+        assert [s.stream for s in result.sidecars] == [3, 4]
+        assert "0:2" not in sidecar_ffmpeg.sidecar[0]
+
+    def test_overwrite_replaces_an_existing_sidecar(self, tmp_path, sidecar_ffmpeg):
+        task = self._task(tmp_path)
+        existing = task.dst.with_name("clip.eng.vtt")
+        existing.write_bytes(b"mine")
+
+        result = run_sidecar(task, overwrite=True)
+
+        assert existing.read_bytes() == b"partial"
+        assert [s.stream for s in result.sidecars] == [2, 3, 4]
+
+    def test_every_sidecar_existing_spends_no_sidecar_process(self, tmp_path, sidecar_ffmpeg):
+        task = self._task(tmp_path)
+        for name in ("clip.eng.vtt", "clip.und.vtt", "clip.eng.2.vtt"):
+            task.dst.with_name(name).write_bytes(b"mine")
+
+        result = run_sidecar(task)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert sidecar_ffmpeg.sidecar == []
+        assert result.sidecars == ()
+        assert len(result.notes) == 3
+        assert all("already exists" in note for note in result.notes)
+        assert not any("written to" in note for note in result.notes)
+
+    def test_notes_follow_attempt_verification_then_sidecars_in_stream_order(
+        self, tmp_path, sidecar_ffmpeg
+    ):
+        task = self._task(tmp_path)
+        sidecar_ffmpeg.source = [*sidecar_source(), Stream(5, "attachment", "ttf")]
+        task.dst.with_name("clip.eng.vtt").write_bytes(b"mine")
+        task.dst.with_name("clip.und.vtt").write_bytes(b"mine")
+
+        result = run_sidecar(task)
+
+        # The existing ass sidecar earns its existing-path note, never the
+        # styling note; the written subrip one earns none.
+        assert len(result.notes) == 3
+        assert result.notes[0].startswith("attachment stream 5")
+        assert result.notes[1:] == (
+            "subtitle stream 2 (subrip) not written: clip.eng.vtt already exists; "
+            "pass --overwrite to replace it",
+            "subtitle stream 3 (ass) not written: clip.und.vtt already exists; "
+            "pass --overwrite to replace it",
+        )
+
+    def test_the_output_probe_precedes_any_sidecar_rename(
+        self, tmp_path, sidecar_ffmpeg, monkeypatch
+    ):
+        task = self._task(tmp_path)
+        sidecar_ffmpeg.source = [*sidecar_source(), Stream(5, "attachment", "ttf")]
+        events: list[tuple[str, str]] = []
+        record_renames(monkeypatch, events)
+        real_probe = sidecar_ffmpeg.probe
+
+        def probe(tools, src):
+            events.append(("probe", Path(src).name))
+            return real_probe(tools, src)
+
+        monkeypatch.setattr(batch.ffmpegtool, "probe_streams", probe)
+
+        run_sidecar(task)
+
+        assert events[:3] == [
+            ("probe", "clip.mkv"),
+            ("probe", "clip.mp4.partial"),
+            ("rename", "clip.eng.vtt"),
+        ]
+
+    def test_probe_count_is_unchanged(self, tmp_path, sidecar_ffmpeg):
+        task = self._task(tmp_path)
+
+        run_sidecar(task)
+
+        assert sidecar_ffmpeg.probes == [task.src]
+
+    def test_no_text_subtitle_means_no_sidecar_process(self, tmp_path, sidecar_ffmpeg):
+        task = self._task(tmp_path)
+        sidecar_ffmpeg.source = sidecar_source()[:2]
+
+        result = run_sidecar(task)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert sidecar_ffmpeg.sidecar == []
+        assert result.sidecars == ()
+
+    def test_a_profile_without_a_sidecar_behaves_as_before(self, tmp_path, sidecar_ffmpeg):
+        task = self._task(tmp_path)
+
+        result = convert_one(probe_first_profile(), task, TOOLS, overwrite=False)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert sidecar_ffmpeg.sidecar == []
+        assert len(sidecar_ffmpeg.primary) == 1
+        assert result.sidecars == ()
+
+    def test_termination_during_the_sidecar_step_leaves_no_partial(self, tmp_path, sidecar_ffmpeg):
+        task = self._task(tmp_path)
+        sidecar_ffmpeg.after_sidecar = ffmpegtool.terminate_all
+
+        with pytest.raises(ffmpegtool.Terminated):
+            run_sidecar(task)
+
+        assert not task.dst.exists()
+        assert sidecar_names(task) == []
+        assert leftover_partials(task) == []
+
+    def test_terminated_at_spawn_is_cleaned_by_the_outer_net(
+        self, tmp_path, sidecar_ffmpeg, monkeypatch
+    ):
+        task = self._task(tmp_path)
+        real_run = sidecar_ffmpeg.run
+
+        def run(argv, **kwargs):
+            if "webvtt" in argv:
+                # What an interrupted step leaves behind before the raise.
+                task.dst.with_name("clip.eng.vtt.partial").write_bytes(b"x")
+                raise ffmpegtool.Terminated
+            return real_run(argv, **kwargs)
+
+        monkeypatch.setattr(batch.ffmpegtool, "run", run)
+
+        with pytest.raises(ffmpegtool.Terminated):
+            run_sidecar(task)
+
+        assert leftover_partials(task) == []
+        assert not task.dst.exists()
+
+
+class TestSidecarSweep:
+    def _task(self, tmp_path: Path) -> Task:
+        task = make_task(tmp_path)
+        task.dst.parent.mkdir(parents=True)
+        return task
+
+    def _stale(self, task: Task) -> tuple[Path, Path]:
+        mine = task.dst.with_name("clip.eng.vtt.partial")
+        theirs = task.dst.with_name("other.eng.vtt.partial")
+        mine.write_bytes(b"stale")
+        theirs.write_bytes(b"not mine")
+        return mine, theirs
+
+    def test_a_skipped_task_sweeps_its_stale_sidecar_partials(self, tmp_path, sidecar_ffmpeg):
+        task = self._task(tmp_path)
+        task.dst.write_bytes(b"done")
+        mine, theirs = self._stale(task)
+
+        result = run_sidecar(task)
+
+        assert result.outcome is Outcome.SKIPPED
+        assert not mine.exists()
+        assert theirs.exists()
+
+    def test_a_converting_task_sweeps_them_too(self, tmp_path, sidecar_ffmpeg):
+        task = self._task(tmp_path)
+        sidecar_ffmpeg.source = sidecar_source()[:2]
+        mine, theirs = self._stale(task)
+
+        result = run_sidecar(task)
+
+        assert result.outcome is Outcome.CONVERTED
+        assert not mine.exists()
+        assert theirs.exists()
+
+    def test_without_a_suffix_nothing_is_swept(self, tmp_path, sidecar_ffmpeg):
+        task = self._task(tmp_path)
+        task.dst.write_bytes(b"done")
+        mine, _ = self._stale(task)
+
+        convert_one(sidecar_profile(), task, TOOLS, overwrite=False)
+
+        assert mine.exists()
+
+    def test_a_failing_listing_never_aborts_the_task(self, tmp_path, sidecar_ffmpeg, monkeypatch):
+        task = self._task(tmp_path)
+        task.dst.write_bytes(b"done")
+
+        def denied(_dst, _suffix):
+            raise PermissionError("denied")
+
+        monkeypatch.setattr(batch, "stale_sidecar_partials", denied)
+
+        assert run_sidecar(task).outcome is Outcome.SKIPPED
+
+    def test_the_outer_net_sweeps_by_grammar(self, tmp_path, sidecar_ffmpeg, monkeypatch):
+        task = self._task(tmp_path)
+
+        def probe(_tools, _src):
+            task.dst.with_name("clip.und.vtt.partial").write_bytes(b"x")
+            raise ffmpegtool.Terminated
+
+        monkeypatch.setattr(batch.ffmpegtool, "probe_streams", probe)
+
+        with pytest.raises(ffmpegtool.Terminated):
+            run_sidecar(task)
+
+        assert leftover_partials(task) == []
+
+    def test_the_stuck_future_clean_up_sweeps_sidecar_partials(self, tmp_path, monkeypatch):
+        task = self._task(tmp_path)
+        mine, theirs = self._stale(task)
+        monkeypatch.setattr(batch, "_SHUTDOWN_WAIT_TIMEOUT", 0.05)
+        release = threading.Event()
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(lambda: release.wait(timeout=2))
+
+            batch._handle_interrupt(
+                {future: task}, [], tqdm(total=1, disable=True), None, sidecar_suffix=".vtt"
+            )
+
+            assert not mine.exists()
+            assert theirs.exists()
+            release.set()
+
+    def test_run_batch_threads_the_suffix_into_the_worker(self, tmp_path, sidecar_ffmpeg):
+        task = self._task(tmp_path)
+        task.dst.write_bytes(b"done")
+        mine, _ = self._stale(task)
+
+        [result] = run_batch(sidecar_profile(), [task], TOOLS, jobs=1, progress=False)
+
+        assert result.outcome is Outcome.SKIPPED
+        assert not mine.exists()
